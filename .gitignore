@@ -1,0 +1,81 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+
+# macOS / editor
+.DS_Store
+.idea/
+.vscode/
+
+# Secrets and local environment
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.crt
+*.p12
+*.p8
+*secret*
+*credential*
+
+# Runtime output
+*.log
+logs/
+tmp/
+*.pid
+
+# Generated analysis artifacts
+results/
+report_*.txt
+*.zip
+
+# Unrelated third-party libraries dropped in project root
+markitdown/
+
+# Local account/trading state
+positions.json
+orders.json
+fills.json
+*.sqlite
+*.db
+
+# Legacy monolithic versions (superseded by kalshi_btc_bot/ package)
+kalshi_btc_v2.py
+kalshi_btc_v3.py
+kalshi_btc_v4.py
+kalshi_btc_v4.1.py
+kalshi_btc_v4.2.py
+kalshi_btc_v4.3.py
+kalshi_btc_v3_execution_flow.svg
+
+# Other research scripts not part of the BTC bot
+kalshi_es_analysis.py
+kalshi_gamma_scalper.py
+kalshi_mm_backtest.py
+kalshi_paper_trader.py
+kalshi_spx_hf_paper_trader.py
+kalshi_btc_hf_paper_trader.py
+kalshi_live_account_watch.py
+arb_scanner.py
+btc_live_watch.py
+live_monitor.py
+unified_analysis.py
+options_signals.py
+strategy_engine.py
+dashboard.html
+kalshi_bot.py
+main.py
+
+# Root-level files superseded by kalshi_btc_bot/ package (anchored to root)
+/config.py
+/feeds.py
+/paper_trader.py
+/portfolio.py
+/positions.py
+/signals.py
