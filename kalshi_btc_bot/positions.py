@@ -140,8 +140,8 @@ class PositionManager:
                   f"{'✅' if itm else '❌'} dist={dist:+.0f} "
                   f"{rep_str} {mins_left:.0f}m left")
 
-            # TIER 1 — Scalp lock: up 40%, unconditional
-            if bid > 0 and pnl_pct >= SCALP_LOCK_PCT:
+            # TIER 1 — Scalp lock: up 40% + < 15 min left
+            if bid > 0 and pnl_pct >= SCALP_LOCK_PCT and hours < 0.25:
                 self.portfolio.sell(ticker, bid, reason="scalp_lock 🔄")
                 continue
 
