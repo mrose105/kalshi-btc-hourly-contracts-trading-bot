@@ -117,14 +117,21 @@ class Portfolio:
     def cancel_resting_orders(self) -> int:
         if PAPER_TRADING:
             return 0
-        data = self.client._request("GET", "/portfolio/orders", params={"status": "resting"})
+        try:
+            data = self.client._request("GET", "/portfolio/orders", params={"status": "resting"})
+        except Exception as e:
+            print(f"  ⚠️  Could not fetch resting orders: {e}")
+            return 0
         canceled = 0
         for order in data.get("orders", []):
             order_id = order.get("order_id") or order.get("id")
             if not order_id:
                 continue
-            self.client._request("DELETE", f"/portfolio/orders/{order_id}")
-            canceled += 1
+            try:
+                self.client._request("DELETE", f"/portfolio/orders/{order_id}")
+                canceled += 1
+            except Exception as e:
+                print(f"  ⚠️  Could not cancel order {order_id}: {e}")
         if canceled:
             print(f"  🧯 Canceled {canceled} resting order(s) at startup")
         return canceled

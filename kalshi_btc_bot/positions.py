@@ -1,5 +1,13 @@
 import datetime
 
+def _hours_from(close_time: str) -> float:
+    """Hours until (positive) or since (negative) close_time."""
+    try:
+        ct = datetime.datetime.fromisoformat(close_time.replace("Z", "+00:00"))
+        return (ct - datetime.datetime.now(datetime.timezone.utc)).total_seconds() / 3600
+    except Exception:
+        return 1.0
+
 from .config import (
     BID_EXIT_THRESHOLD,
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
@@ -22,12 +30,13 @@ class PositionManager:
         try:
             m   = self.client._request("GET", f"/markets/{ticker}", timeout=8)
             mkt = m.get("market", m)
-            bid = float(mkt.get("yes_bid_dollars") or 0)
-            ask = float(mkt.get("yes_ask_dollars") or 0)
-            ct  = mkt.get("close_time", "")
-            return bid, ask, ct
+            bid    = float(mkt.get("yes_bid_dollars") or 0)
+            ask    = float(mkt.get("yes_ask_dollars") or 0)
+            ct     = mkt.get("close_time", "")
+            status = mkt.get("status", "")
+            return bid, ask, ct, status
         except:
-            return 0.0, 0.0, ""
+            return 0.0, 0.0, "", ""
 
     def manage(self, spot: float, vol: float, regime: dict):
         """
@@ -39,7 +48,19 @@ class PositionManager:
             if not pos:
                 continue
 
-            bid, ask, close_time = self.get_price(ticker)
+            bid, ask, close_time, status = self.get_price(ticker)
+
+            # Detect settled/expired contracts and purge from local tracking.
+            # Kalshi auto-credits the settlement payout; next portfolio.sync() reflects it.
+            _SETTLED = {"finalized", "settled", "closed", "determined"}
+            _expired = _hours_from(close_time) < -0.05 and bid == 0 and ask == 0
+            if status in _SETTLED or _expired:
+                itm_flag = is_in_money(pos["contract"], spot)
+                print(f"  🏁 SETTLED {ticker[-22:]} status={status or 'expired'} "
+                      f"ITM={'✅' if itm_flag else '❌'} — removing from tracking")
+                del self.portfolio.positions[ticker]
+                continue
+
             if ask <= 0:
                 continue
 
@@ -57,14 +78,8 @@ class PositionManager:
                 peak = mid
 
             # Hours left
-            try:
-                ct    = datetime.datetime.fromisoformat(
-                    close_time.replace("Z", "+00:00"))
-                hours = max(0, (ct - datetime.datetime.now(
-                    datetime.timezone.utc)).total_seconds() / 3600)
-                mins_left = hours * 60
-            except:
-                hours, mins_left = 1.0, 60.0
+            hours     = max(0.0, _hours_from(close_time))
+            mins_left = hours * 60
 
             # True prob + rolling 2-tick tracking
             true_prob = self.dist.true_prob(contract, spot, vol, hours, regime)

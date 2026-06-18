@@ -86,8 +86,8 @@ MIN_EDGE_COMPRESSION  = 0.010  # lower entry bar when compressed (structural edg
 BID_EXIT_THRESHOLD    = 0.75  # exit any position when bid hits 75¢ (near full settlement)
 
 # Intervals
-SCAN_INTERVAL       = 12
-POSITION_CHECK      = 8
-PRICE_FETCH         = 4
-SYNC_INTERVAL       = 30
-LADDER_CACHE_SECONDS = 10
+SCAN_INTERVAL        = 8
+POSITION_CHECK       = 6
+PRICE_FETCH          = 4
+SYNC_INTERVAL        = 20
+LADDER_CACHE_SECONDS = 5

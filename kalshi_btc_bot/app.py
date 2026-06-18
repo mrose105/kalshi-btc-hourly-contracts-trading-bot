@@ -34,7 +34,8 @@ def main():
     client    = KalshiClient(
         api_key_id=os.environ["KALSHI_API_KEY_ID"],
         private_key_path=os.environ["KALSHI_PRIVATE_KEY_PATH"],
-        base_url="https://api.elections.kalshi.com/trade-api/v2"
+        base_url=os.environ.get("KALSHI_BASE_URL",
+                                "https://api.elections.kalshi.com/trade-api/v2"),
     )
     client.login()
 
