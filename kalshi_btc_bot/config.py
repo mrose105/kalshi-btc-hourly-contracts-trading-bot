@@ -23,7 +23,7 @@ FORCE_EXIT_SLIPPAGE_CENTS = 2    # cross stale bids by this many cents on urgent
 
 # Entry filters (YES signals)
 MIN_EDGE            = 0.015
-MIN_VOLUME          = 200
+MIN_VOLUME          = 50
 MAX_ASK             = 0.45
 MAX_SPREAD          = 0.05       # max 5c bid/ask spread
 MAX_SPREAD_PCT      = 0.25       # max spread as 25% of ask

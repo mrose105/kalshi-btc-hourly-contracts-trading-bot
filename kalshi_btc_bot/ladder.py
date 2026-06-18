@@ -46,6 +46,7 @@ class Ladder:
         if not self._window or now - self._cache_t > 120:
             self._window = self.find_window()
         if not self._window:
+            print(f"  ⏳ No active window (no open KXBTC markets in {MIN_HOURS:.2f}–{MAX_HOURS:.1f}h range)")
             return []
         try:
             data = self.client._request("GET", "/markets",
