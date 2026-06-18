@@ -140,10 +140,9 @@ class PositionManager:
                   f"{'✅' if itm else '❌'} dist={dist:+.0f} "
                   f"{rep_str} {mins_left:.0f}m left")
 
-            # TIER 1 — Scalp lock: up 60% + true_prob fading 2 consecutive ticks
-            prob_fading = (true_prob < tp_curr) and (tp_curr < tp_prev)
-            if bid > 0 and pnl_pct >= SCALP_LOCK_PCT and prob_fading:
-                self.portfolio.sell(ticker, bid, reason="scalp_reversal 🔄")
+            # TIER 1 — Scalp lock: up 40%, unconditional
+            if bid > 0 and pnl_pct >= SCALP_LOCK_PCT:
+                self.portfolio.sell(ticker, bid, reason="scalp_lock 🔄")
                 continue
 
             # TIER 2 — Momentum lock: up 100% + < 9 min

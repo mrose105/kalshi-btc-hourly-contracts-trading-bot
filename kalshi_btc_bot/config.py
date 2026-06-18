@@ -35,7 +35,7 @@ MAX_OTM_T           = 100
 MAX_OTM_B           = 150
 
 # Exit thresholds — unified tiered ladder
-SCALP_LOCK_PCT      = 0.60       # TIER 1: up 60% + prob fading
+SCALP_LOCK_PCT      = 0.40       # TIER 1: up 40%, unconditional lock
 MOMENTUM_LOCK_PCT   = 1.00       # TIER 2: up 100% + < 9 min
 STRONG_PROFIT_PCT   = 1.50       # TIER 3: up 150% + < 15 min
 PROFIT_EXIT_MEGA    = 3.00       # TIER 4: up 300%, no conditions
