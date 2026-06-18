@@ -1,6 +1,12 @@
+import csv
 import datetime
+import os
 import time
 import uuid
+from pathlib import Path
+
+_LOG_PATH = Path(__file__).parent.parent / "trades.csv"
+_LOG_FIELDS = ["timestamp", "action", "ticker", "side", "count", "price", "true_prob", "pnl", "reason", "mode"]
 
 from .config import (
     MAX_EXPOSURE_PCT, MAX_POSITIONS, MAX_TRADE_PCT, MIN_CASH_FLOOR,
@@ -24,6 +30,26 @@ class Portfolio:
         self.real_cash    = 0.0
         self.real_port    = 0.0
         self.stop_cooldowns: dict = {}   # ticker → expiry timestamp after stop loss
+
+        if not _LOG_PATH.exists():
+            with open(_LOG_PATH, "w", newline="") as f:
+                csv.DictWriter(f, fieldnames=_LOG_FIELDS).writeheader()
+
+    def _log_trade(self, action, ticker, side, count, price, true_prob=None, pnl=None, reason=""):
+        row = {
+            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "action":    action,
+            "ticker":    ticker,
+            "side":      side,
+            "count":     count,
+            "price":     round(price, 4),
+            "true_prob": round(true_prob, 4) if true_prob is not None else "",
+            "pnl":       round(pnl, 4) if pnl is not None else "",
+            "reason":    reason,
+            "mode":      "paper" if PAPER_TRADING else "live",
+        }
+        with open(_LOG_PATH, "a", newline="") as f:
+            csv.DictWriter(f, fieldnames=_LOG_FIELDS).writerow(row)
 
     def sync(self):
         if PAPER_TRADING:
@@ -270,6 +296,7 @@ class Portfolio:
         improve = f" limit=${limit:.4f}" if limit > contract["ask"] else ""
         print(f"  📥 {mode}BUY [{contract['type']:5}] {ticker[-22:]} "
               f"x{count} @ ${ask:.4f}{improve} true={true_prob:.0%} edge={edge:.0%} {itm_str}")
+        self._log_trade("buy", ticker, "yes", count, ask, true_prob)
         return True
 
     def buy_no(self, contract: dict, true_prob: float) -> bool:
@@ -422,6 +449,8 @@ class Portfolio:
         mode  = "[PAPER] " if PAPER_TRADING else ""
         print(f"  📤 {mode}SELL {emoji} [{reason:22}] {ticker[-22:]} "
               f"x{count} @ ${bid:.4f} pnl=${pnl:+.4f}")
+        self._log_trade("sell", ticker, "no" if is_no else "yes", count, bid,
+                        pnl=pnl, reason=reason)
 
         self.positions[ticker]["count"] -= count
         if self.positions[ticker]["count"] <= 0:
