@@ -7,7 +7,7 @@ from .config import (
     MIN_CASH_PCT, NO_TRADE_PCT, PAPER_CAPITAL, PAPER_TRADING,
     EXIT_RETRY_COOLDOWN, FORCE_EXIT_SLIPPAGE_CENTS, SESSION_STOP_PCT,
     UNTRACKED_EXPOSURE_LIMIT, MAX_ASK, STRONG_EDGE_PRICE_IMPROVE,
-    ENTRY_PRICE_IMPROVE_CENTS, KELLY_FRACTION, KELLY_CAP,
+    ENTRY_PRICE_IMPROVE_CENTS, KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS,
 )
 
 # ─────────────────────────────────────────────
@@ -23,6 +23,7 @@ class Portfolio:
 
         self.real_cash    = 0.0
         self.real_port    = 0.0
+        self.stop_cooldowns: dict = {}   # ticker → expiry timestamp after stop loss
 
     def sync(self):
         if PAPER_TRADING:
@@ -425,6 +426,9 @@ class Portfolio:
         self.positions[ticker]["count"] -= count
         if self.positions[ticker]["count"] <= 0:
             del self.positions[ticker]
+            if reason.startswith("stop_"):
+                self.stop_cooldowns[ticker] = time.time() + STOP_COOLDOWN_SECS
+                print(f"  🚫 Stop cooldown: {ticker[-22:]} blocked for {STOP_COOLDOWN_SECS//60}m")
         return True
 
     def summary(self):

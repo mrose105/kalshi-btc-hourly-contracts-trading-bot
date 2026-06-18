@@ -19,6 +19,7 @@ SESSION_STOP_PCT    = 0.80       # stop NEW entries if down 80%
 MIN_CASH_FLOOR      = 0.25       # never trade with less than $0.25
 UNTRACKED_EXPOSURE_LIMIT = 0.25  # block new trades if live exposure exceeds tracked exposure by this much
 EXIT_RETRY_COOLDOWN = 10         # seconds to wait before retrying an unfilled live exit
+STOP_COOLDOWN_SECS  = 300        # block re-entry on same ticker for 5 min after stop loss
 FORCE_EXIT_SLIPPAGE_CENTS = 2    # cross stale bids by this many cents on urgent exits
 
 # Entry filters (YES signals)
@@ -28,7 +29,7 @@ MAX_ASK             = 0.45
 MAX_SPREAD          = 0.05       # max 5c bid/ask spread
 MAX_SPREAD_PCT      = 0.25       # max spread as 25% of ask
 STRONG_EDGE_PRICE_IMPROVE = 0.00 # always cross the ask to ensure IOC fills
-ENTRY_PRICE_IMPROVE_CENTS = 2    # cross by 2c on all IOC entries
+ENTRY_PRICE_IMPROVE_CENTS = 4    # cross by 4c on all IOC entries
 MIN_HOURS           = 0.08
 MAX_HOURS           = 4.0
 MAX_OTM_T           = 100
@@ -41,7 +42,7 @@ STRONG_PROFIT_PCT   = 1.50       # TIER 3: up 150% + < 15 min
 PROFIT_EXIT_MEGA    = 3.00       # TIER 4: up 300%, no conditions
 TIME_EXIT_MINS      = 10         # TIER 5: OTM with < 10 min left
 STOP_LOSS_PCT       = 0.40       # TIER 6: base stop
-STOP_MIN_HOURS      = 0.20       # TIER 6 gate: stop only fires if > 12 min left.
+STOP_MIN_HOURS      = 0.30       # TIER 6 gate: stop only fires if > 18 min left.
                                   # Below this, TIME_EXIT_MINS handles OTM exits and
                                   # expiry_settle captures ITM wins — don't stop binary
                                   # options in their last bars when the binary payoff

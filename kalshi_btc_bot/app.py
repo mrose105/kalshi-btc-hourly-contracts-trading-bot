@@ -105,9 +105,15 @@ def main():
                           f"dist={c['otm_dist']:+.0f} vol={c['vol']:.0f} hrs={c['hours']:.2f}")
 
             if portfolio.can_trade() and ladder:
+                # Filter out recently-stopped tickers
+                _now = time.time()
+                portfolio.stop_cooldowns = {t: e for t, e in portfolio.stop_cooldowns.items() if _now < e}
+                _cd  = set(portfolio.stop_cooldowns)
+                _ladder = [c for c in ladder if c["ticker"] not in _cd]
+
                 # YES signal
                 sig = signal_e.find_best(
-                    spot, vol, regime, ladder, portfolio.positions)
+                    spot, vol, regime, _ladder, portfolio.positions)
                 if sig:
                     print(f"\n  🎯 [{sig['type']}] {sig['ticker'][-22:]}")
                     print(f"     Window: {sig['label']} | "
@@ -124,7 +130,7 @@ def main():
                 no_sig = None
                 if ENABLE_MISPRICE_NO:
                     no_sig = signal_e.find_no_scalp(
-                        spot, vol, regime, ladder, portfolio.positions,
+                        spot, vol, regime, _ladder, portfolio.positions,
                         portfolio.real_cash, portfolio.start_total)
                 if no_sig:
                     print(f"\n  🎯 [MISPRICE_NO] {no_sig['ticker'][-22:]}")
@@ -136,7 +142,8 @@ def main():
                     portfolio.buy_no(no_sig, no_sig["true_prob"])
 
                 if not sig and not no_sig:
-                    print(f"  — No edge (ladder: {len(ladder)} contracts)")
+                    cd_str = f" [{len(_cd)} cooling]" if _cd else ""
+                    print(f"  — No edge (ladder: {len(_ladder)} contracts{cd_str})")
 
             scan_t = now + SCAN_INTERVAL
 
