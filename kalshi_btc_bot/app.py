@@ -91,14 +91,13 @@ def main():
             regime = regime_e.detect(feed)
             ladder = ladder_e.get(spot)
             total  = portfolio.total_value()
-            exp    = portfolio.current_exposure()
 
             print(f"[{t}] BTC=${spot:,.0f} | "
                   f"{regime['regime']} {regime['direction']} "
                   f"conf={regime['conf']:.0%} | "
                   f"mom={regime['mom']:+.3%} z={regime['zscore']:+.2f} | "
-                  f"cash=${portfolio.real_cash:.2f} port=${exp:.2f} "
-                  f"pos={len(portfolio.positions)}")
+                  f"cash=${portfolio.real_cash:.2f} pos=${portfolio.exposure():.2f} "
+                  f"n={len(portfolio.positions)}")
 
             if ladder:
                 for c in sorted(ladder, key=lambda x: abs(x["otm_dist"]))[:8]:

@@ -211,10 +211,15 @@ class Portfolio:
             return False
 
         kelly_pct = Portfolio.kelly_fraction(true_prob, ask)
-        budget = self.budget(trade_pct=kelly_pct)
-        count  = int(budget / limit) if limit > 0 else 0
-        cost   = limit * count
+        budget    = self.budget(trade_pct=kelly_pct)
+        count     = int(budget / limit) if limit > 0 else 0
 
+        # Kelly rounds to 0 — fall back to 1 contract within MAX_TRADE_PCT
+        if count <= 0:
+            budget = self.budget(trade_pct=MAX_TRADE_PCT)
+            count  = int(budget / limit) if limit > 0 else 0
+
+        cost = limit * count
         if cost > self.real_cash or cost > budget or count <= 0:
             return False
 
@@ -430,7 +435,7 @@ class Portfolio:
         print(f"  💰 BTC QUANT v4.3 | {datetime.datetime.now().strftime('%H:%M:%S')} | {mode_tag}")
         print(f"{'─'*62}")
         label = "Simulated" if PAPER_TRADING else "Real"
-        print(f"  Cash ({label}): ${self.real_cash:>7.2f} | Port ({label}): ${self.real_port:>7.2f}")
+        print(f"  Cash ({label}): ${self.real_cash:>7.2f} | Positions:     ${self.exposure():>7.2f}")
         pct = (pnl/self.start_total*100) if self.start_total > 0 else 0.0
         print(f"  Total:        ${total:>7.2f} | P&L:          ${pnl:>+7.2f} ({pct:>+.1f}%)")
         print(f"  Trades: {self.trades} | Realized: ${self.realized_pnl:>+.2f}")
