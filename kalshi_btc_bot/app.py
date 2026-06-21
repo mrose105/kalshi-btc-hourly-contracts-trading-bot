@@ -11,6 +11,7 @@ from .config import (
     MAX_EXPOSURE_PCT, MAX_TRADE_PCT, MIN_CASH_PCT, NO_TRADE_PCT,
     ENABLE_MISPRICE_NO, PAPER_TRADING, POSITION_CHECK, PRICE_FETCH, SCAN_INTERVAL, SYNC_INTERVAL,
 )
+from .dashboard import start as dashboard_start, update as dashboard_update
 from .feed import BTCFeed
 from .ladder import Ladder
 from .model import DistModel
@@ -61,6 +62,7 @@ def main():
     portfolio.sync()
     if not portfolio.startup_safety_check():
         return
+    dashboard_start()
     print(f"  Ready. BTC=${feed.last:,.0f} | "
           f"Cash=${portfolio.real_cash:.2f} | Port=${portfolio.real_port:.2f}\n")
 
@@ -91,6 +93,35 @@ def main():
             regime = regime_e.detect(feed)
             ladder = ladder_e.get(spot)
             total  = portfolio.total_value()
+
+            # Push dashboard state
+            _pos_list = []
+            for _tk, _p in portfolio.positions.items():
+                try:
+                    import datetime as _dt
+                    _ct  = _dt.datetime.fromisoformat(
+                        _p.get("close_time", "").replace("Z", "+00:00"))
+                    _min = max(0, (_ct - _dt.datetime.now(
+                        _dt.timezone.utc)).total_seconds() / 60)
+                except Exception:
+                    _min = 0
+                _pos_list.append({
+                    "ticker":    _tk[-22:],
+                    "count":     _p["count"],
+                    "entry":     _p["entry"],
+                    "true_prob": _p.get("true_prob", 0),
+                    "pnl_pct":   0,
+                    "mins_left": _min,
+                })
+            dashboard_update({
+                "btc":       spot,
+                "regime":    regime["regime"],
+                "direction": regime["direction"],
+                "cash":      portfolio.real_cash,
+                "total":     total,
+                "pnl":       total - portfolio.start_total,
+                "positions": _pos_list,
+            })
 
             print(f"[{t}] BTC=${spot:,.0f} | "
                   f"{regime['regime']} {regime['direction']} "
