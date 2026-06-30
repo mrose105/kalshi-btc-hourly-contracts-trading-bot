@@ -15,7 +15,7 @@ MAX_TRADE_PCT       = 0.05       # max 5% of real portfolio per trade
 NO_TRADE_PCT        = 0.04       # max 4% of real portfolio per MISPRICE_NO trade
 ENABLE_MISPRICE_NO = False      # disabled live until pending NO order reconciliation is fixed
 MAX_POSITIONS       = 4
-SESSION_STOP_PCT    = 0.80       # stop NEW entries if down 80%
+SESSION_STOP_PCT    = 0.05       # stop NEW entries if down 5%
 MIN_CASH_FLOOR      = 0.25       # never trade with less than $0.25
 UNTRACKED_EXPOSURE_LIMIT = 0.25  # block new trades if live exposure exceeds tracked exposure by this much
 EXIT_RETRY_COOLDOWN = 10         # seconds to wait before retrying an unfilled live exit
@@ -73,7 +73,7 @@ BREAKOUT_ACCEL      = 0.004
 
 # Kelly position sizing
 KELLY_FRACTION      = 0.25    # quarter-Kelly multiplier
-KELLY_CAP           = 0.08    # cap on Kelly-derived fraction
+KELLY_CAP           = 0.05    # hard cap on Kelly-derived fraction (matches MAX_TRADE_PCT)
 
 # Vol regime thresholds (hourly vol units = per-bar vol × sqrt(900))
 VOL_REGIME_LOW_H    = 0.005   # < LOW  → calm market (~50% annualized)
