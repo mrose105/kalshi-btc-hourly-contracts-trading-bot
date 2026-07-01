@@ -274,32 +274,11 @@ class Portfolio:
                 self.real_cash -= cost
                 self.real_port += cost
             except Exception as e:
-                if "410" in str(e):
-                    print(f"  🔄 Session expired — re-authenticating...")
-                    try:
-                        self.client.login()
-                        print(f"  ✅ Re-auth OK — retrying buy")
-                        result = self.client._request(
-                            "POST", "/portfolio/orders",
-                            json_body=self.order_payload(ticker, "buy", "yes", count, limit),
-                        )
-                        order  = result.get("order", {})
-                        filled = float(order.get("fill_count_fp", 0))
-                        if filled <= 0:
-                            print(f"  ⚠️  BUY IOC not filled after re-auth: {order.get('status')}")
-                            self.cancel_order(order, "BUY")
-                            return False
-                        ask   = float(order.get("yes_price_dollars", ask))
-                        count = int(filled)
-                        cost  = ask * count
-                        self.real_cash -= cost
-                        self.real_port += cost
-                    except Exception as e2:
-                        print(f"  ❌ BUY after re-auth: {e2}")
-                        return False
-                else:
-                    print(f"  ❌ BUY: {e}")
-                    return False
+                body = ""
+                if hasattr(e, "response") and e.response is not None:
+                    body = f" — {e.response.text}"
+                print(f"  ❌ BUY {ticker[-18:]}: {e}{body}")
+                return False
 
         self.trades += 1
         self.positions[ticker] = {
@@ -431,13 +410,10 @@ class Portfolio:
                 else:
                     self.cancel_order(order, "SELL")
             except Exception as e:
-                if "410" in str(e):
-                    print(f"  🔄 Session expired — re-authenticating for sell...")
-                    try:
-                        self.client.login()
-                    except Exception:
-                        pass
-                print(f"  ⚠️  SELL: {e}")
+                body = ""
+                if hasattr(e, "response") and e.response is not None:
+                    body = f" — {e.response.text}"
+                print(f"  ⚠️  SELL {ticker[-18:]}: {e}{body}")
                 return False
             # Retry unfilled remainder (YES only — NO retry pricing is complex)
             if not is_no:
