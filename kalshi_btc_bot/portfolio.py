@@ -204,20 +204,17 @@ class Portfolio:
         reduce_only: bool = False,
     ) -> dict:
         cents = max(1, min(99, int(round(price * 100))))
+        v2_side = "bid" if action == "buy" else "ask"
         payload = {
             "ticker": ticker,
-            "action": action,
-            "side": side,
-            "count": count,
-            "type": "limit",
+            "side": v2_side,
+            "count": str(count),
+            "price": cents,
             "time_in_force": "immediate_or_cancel",
+            "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": f"btc-v43-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}",
             "cancel_order_on_pause": True,
         }
-        if side == "yes":
-            payload["yes_price"] = cents
-        else:
-            payload["no_price"] = cents
         if reduce_only:
             payload["reduce_only"] = True
         return payload
@@ -258,17 +255,15 @@ class Portfolio:
             try:
                 result = self.client._request(
                     "POST",
-                    "/portfolio/orders",
+                    "/portfolio/events/orders",
                     json_body=self.order_payload(ticker, "buy", "yes", count, limit),
                 )
-                order  = result.get("order", {})
-                filled = float(order.get("fill_count_fp", 0))
+                filled = float(result.get("fill_count", 0))
                 if filled <= 0:
                     improve = f" limit=${limit:.4f}" if limit > ask else ""
-                    print(f"  ⚠️  BUY IOC not filled{improve}: {order.get('status')}")
-                    self.cancel_order(order, "BUY")
+                    print(f"  ⚠️  BUY IOC not filled{improve}")
                     return False
-                ask   = float(order.get("yes_price_dollars", ask))
+                ask   = float(result.get("average_fill_price", ask))
                 count = int(filled)
                 cost  = ask * count
                 self.real_cash -= cost
@@ -391,7 +386,7 @@ class Portfolio:
             try:
                 result = self.client._request(
                     "POST",
-                    "/portfolio/orders",
+                    "/portfolio/events/orders",
                     json_body=self.order_payload(
                         ticker,
                         "sell",
@@ -401,14 +396,10 @@ class Portfolio:
                         reduce_only=True,
                     ),
                 )
-                order  = result.get("order", {})
-                filled = float(order.get("fill_count_fp", 0))
+                filled = float(result.get("fill_count", 0))
                 if filled > 0:
-                    fill_key = "no_price_dollars" if is_no else "yes_price_dollars"
-                    bid = float(order.get(fill_key, bid))
+                    bid = float(result.get("average_fill_price", bid))
                     filled_count = int(filled)
-                else:
-                    self.cancel_order(order, "SELL")
             except Exception as e:
                 body = ""
                 if hasattr(e, "response") and e.response is not None:
@@ -423,7 +414,7 @@ class Portfolio:
                     try:
                         r2 = self.client._request(
                             "POST",
-                            "/portfolio/orders",
+                            "/portfolio/events/orders",
                             json_body=self.order_payload(
                                 ticker,
                                 "sell",
@@ -433,7 +424,7 @@ class Portfolio:
                                 reduce_only=True,
                             ),
                         )
-                        r2_filled = float(r2.get("order", {}).get("fill_count_fp", 0))
+                        r2_filled = float(r2.get("fill_count", 0))
                         if r2_filled > 0:
                             filled_count += int(r2_filled)
                             print(f"  🔄 Retry filled {r2_filled:.0f} more @ ${retry_price/100:.4f}")
