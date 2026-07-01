@@ -203,13 +203,13 @@ class Portfolio:
         price: float,
         reduce_only: bool = False,
     ) -> dict:
-        cents = max(1, min(99, int(round(price * 100))))
+        price_str = f"{max(0.01, min(0.99, price)):.4f}"
         v2_side = "bid" if action == "buy" else "ask"
         payload = {
             "ticker": ticker,
             "side": v2_side,
             "count": str(count),
-            "price": cents,
+            "price": price_str,
             "time_in_force": "immediate_or_cancel",
             "self_trade_prevention_type": "taker_at_cross",
             "client_order_id": f"btc-v43-{int(time.time() * 1000)}-{uuid.uuid4().hex[:8]}",
