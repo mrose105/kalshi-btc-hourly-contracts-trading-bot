@@ -30,7 +30,7 @@ MAX_SPREAD          = 0.05       # max 5c bid/ask spread
 MAX_SPREAD_PCT      = 0.25       # max spread as 25% of ask
 STRONG_EDGE_PRICE_IMPROVE = 0.00 # always cross the ask to ensure IOC fills
 ENTRY_PRICE_IMPROVE_CENTS = 4    # cross by 4c on all IOC entries
-MIN_HOURS           = 0.08
+MIN_HOURS           = 0.10       # 6 min — keeps entries clear of the TIME_EXIT_MINS kill zone
 MAX_HOURS           = 4.0
 MAX_OTM_T           = 100
 MAX_OTM_B           = 150
@@ -40,8 +40,8 @@ SCALP_LOCK_PCT      = 0.40       # TIER 1: up 40% + < 15 min left
 MOMENTUM_LOCK_PCT   = 1.00       # TIER 2: up 100% + < 9 min
 STRONG_PROFIT_PCT   = 1.50       # TIER 3: up 150% + < 15 min
 PROFIT_EXIT_MEGA    = 3.00       # TIER 4: up 300%, no conditions
-TIME_EXIT_MINS      = 10         # TIER 5: OTM with < 10 min left
-STOP_LOSS_PCT       = 0.40       # TIER 6: base stop
+TIME_EXIT_MINS      = 3          # TIER 5: OTM with < 3 min left — let late-window mispricing play out
+STOP_LOSS_PCT       = 0.60       # TIER 6: base stop
 STOP_MIN_HOURS      = 0.30       # TIER 6 gate: stop only fires if > 18 min left.
                                   # Below this, TIME_EXIT_MINS handles OTM exits and
                                   # expiry_settle captures ITM wins — don't stop binary
