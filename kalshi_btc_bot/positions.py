@@ -9,7 +9,7 @@ def _hours_from(close_time: str) -> float:
         return 1.0
 
 from .config import (
-    BID_EXIT_THRESHOLD,
+    BID_EXIT_THRESHOLD, GAMMA_HIGH_THRESHOLD, GAMMA_LOCK_MIN_PROFIT,
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
     MOMENTUM_LOCK_PCT, PROFIT_EXIT_MEGA, SCALP_LOCK_PCT, STOP_LOSS_PCT,
     STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS,
@@ -131,14 +131,23 @@ class PositionManager:
 
             # ── YES POSITION (unified tiered ladder) ─────────────────────
             pnl_pct = (bid - entry) / entry if entry > 0 else 0
+            gam     = self.dist.gamma(contract, spot, vol, hours, regime)
 
             repriced = pnl_pct > 0.15
             rep_str  = "repriced:YES ⬆" if repriced else "repriced:NO  "
 
             print(f"  👁  {ticker[-22:]:<22} bid=${bid:.4f} "
-                  f"pnl={pnl_pct:+.0%} true={true_prob:.0%} "
+                  f"pnl={pnl_pct:+.0%} true={true_prob:.0%} gam={gam:+.1f} "
                   f"{'✅' if itm else '❌'} dist={dist:+.0f} "
                   f"{rep_str} {mins_left:.0f}m left")
+
+            # TIER 0.5 — Gamma-aware convexity lock: profitable + true_prob reversing
+            # (2-tick fade) + high convexity risk (near strike/expiry) → lock in now
+            # rather than wait for a fixed P&L tier, since edge can flip fast here.
+            if (bid > 0 and pnl_pct >= GAMMA_LOCK_MIN_PROFIT
+                    and tp_curr < tp_prev and abs(gam) >= GAMMA_HIGH_THRESHOLD):
+                self.portfolio.sell(ticker, bid, reason="gamma_lock 📐")
+                continue
 
             # TIER 1 — Scalp lock: up 40% + < 15 min left
             if bid > 0 and pnl_pct >= SCALP_LOCK_PCT and hours < 0.25:

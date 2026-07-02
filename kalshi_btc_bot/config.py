@@ -36,6 +36,15 @@ MAX_OTM_T           = 100
 MAX_OTM_B           = 150
 
 # Exit thresholds — unified tiered ladder
+# TIER 0.5: Gamma-aware convexity lock — closes the asymmetry where YES positions
+# had no "sell when overpriced" check (the NO side already has one via NO_EDGE_GONE_RATIO).
+# Fires when profitable + true_prob is reversing (2-tick fade) + gamma is high, i.e. we're
+# in the near-strike/near-expiry zone where the model's edge can flip faster than the fixed
+# P&L tiers below would catch. GAMMA_HIGH_THRESHOLD is an initial estimate, not backtested —
+# tune it from the "gam=" values printed in the live position ticker once you've watched a
+# session or two.
+GAMMA_LOCK_MIN_PROFIT = 0.15     # don't fire on noise — require at least 15% gain first
+GAMMA_HIGH_THRESHOLD  = 50.0     # dollar-gamma magnitude considered high convexity risk
 SCALP_LOCK_PCT      = 0.40       # TIER 1: up 40% + < 15 min left
 MOMENTUM_LOCK_PCT   = 1.00       # TIER 2: up 100% + < 9 min
 STRONG_PROFIT_PCT   = 1.50       # TIER 3: up 150% + < 15 min

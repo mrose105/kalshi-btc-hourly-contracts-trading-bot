@@ -71,3 +71,21 @@ class DistModel:
         except Exception:
             return 0.0
         return 0.0
+
+    def gamma(self, contract: dict, spot: float, vol: float,
+              hours: float, regime: dict, bump_pct: float = 0.001) -> float:
+        """
+        Simulated gamma: d^2(true_prob)/d(spot)^2 via central finite difference,
+        dollar-scaled (x spot^2) so magnitude is comparable across price levels.
+
+        High gamma = true_prob is highly sensitive to a small spot move — the
+        near-strike / near-expiry zone where a binary's edge can flip faster
+        than a fixed P&L exit threshold reacts.
+        """
+        if spot <= 0 or hours <= 0:
+            return 0.0
+        h = spot * bump_pct
+        p_up  = self.true_prob(contract, spot + h, vol, hours, regime)
+        p_mid = self.true_prob(contract, spot,     vol, hours, regime)
+        p_dn  = self.true_prob(contract, spot - h, vol, hours, regime)
+        return (p_up - 2 * p_mid + p_dn) / (h * h) * spot * spot
