@@ -15,6 +15,7 @@ from .config import (
     EXIT_RETRY_COOLDOWN, FORCE_EXIT_SLIPPAGE_CENTS, SESSION_STOP_PCT,
     UNTRACKED_EXPOSURE_LIMIT, MAX_ASK, STRONG_EDGE_PRICE_IMPROVE,
     ENTRY_PRICE_IMPROVE_CENTS, KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS,
+    SNIPE_TRADE_PCT,
 )
 
 # ─────────────────────────────────────────────
@@ -234,8 +235,11 @@ class Portfolio:
             return ask
         return min(MAX_ASK, ask + ENTRY_PRICE_IMPROVE_CENTS / 100)
 
-    def buy(self, contract: dict, true_prob: float) -> bool:
-        """Buy YES contracts. Position size is Kelly-derived (quarter-Kelly, capped)."""
+    def buy(self, contract: dict, true_prob: float, is_snipe: bool = False) -> bool:
+        """Buy YES contracts. Position size is Kelly-derived (quarter-Kelly, capped)
+        for normal entries, or fixed SNIPE_TRADE_PCT for is_snipe entries — Kelly
+        sizing off a noisy deep-OTM tail probability isn't trustworthy enough to
+        let it drive size on a lottery-ticket bet."""
         ticker = contract["ticker"]
         ask    = contract["ask"]
         limit  = self.entry_limit_price(ask, true_prob)
@@ -243,13 +247,14 @@ class Portfolio:
         with self.lock:
             if ticker in self.positions:
                 return False
-            kelly_pct = Portfolio.kelly_fraction(true_prob, ask)
+            kelly_pct = SNIPE_TRADE_PCT if is_snipe else Portfolio.kelly_fraction(true_prob, ask)
             budget    = self.budget(trade_pct=kelly_pct)
             count     = int(budget / limit) if limit > 0 else 0
 
             # Kelly rounds to 0 — fall back to 1 contract within MAX_TRADE_PCT
             if count <= 0:
-                budget = self.budget(trade_pct=MAX_TRADE_PCT)
+                fallback_pct = SNIPE_TRADE_PCT if is_snipe else MAX_TRADE_PCT
+                budget = self.budget(trade_pct=fallback_pct)
                 count  = int(budget / limit) if limit > 0 else 0
 
             cost = limit * count
@@ -299,14 +304,17 @@ class Portfolio:
                 "contract":       contract,
                 "close_time":     contract.get("close_time", ""),
                 "is_no":          False,
+                "is_snipe":       is_snipe,
             }
-        edge    = true_prob - ask
-        itm_str = "✅ITM" if contract["itm"] else ("❌OTM " + str(round(contract["otm_dist"])))
-        mode    = "[PAPER] " if PAPER_TRADING else ""
-        improve = f" limit=${limit:.4f}" if limit > contract["ask"] else ""
-        print(f"  📥 {mode}BUY [{contract['type']:5}] {ticker[-22:]} "
+        edge     = true_prob - ask
+        itm_str  = "✅ITM" if contract["itm"] else ("❌OTM " + str(round(contract["otm_dist"])))
+        mode     = "[PAPER] " if PAPER_TRADING else ""
+        improve  = f" limit=${limit:.4f}" if limit > contract["ask"] else ""
+        tag      = "🎯SNIPE " if is_snipe else ""
+        print(f"  📥 {mode}{tag}BUY [{contract['type']:5}] {ticker[-22:]} "
               f"x{count} @ ${ask:.4f}{improve} true={true_prob:.0%} edge={edge:.0%} {itm_str}")
-        self._log_trade("buy", ticker, "yes", count, ask, true_prob)
+        self._log_trade("buy", ticker, "yes", count, ask, true_prob,
+                         reason="snipe" if is_snipe else "")
         return True
 
     def buy_no(self, contract: dict, true_prob: float) -> bool:

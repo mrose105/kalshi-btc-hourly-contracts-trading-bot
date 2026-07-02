@@ -9,9 +9,9 @@ def _hours_from(close_time: str) -> float:
         return 1.0
 
 from .config import (
-    BID_EXIT_THRESHOLD, GAMMA_HIGH_THRESHOLD, GAMMA_LOCK_MIN_PROFIT,
+    BID_EXIT_THRESHOLD, GAMMA_HIGH_THRESHOLD, GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT,
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
-    MOMENTUM_LOCK_PCT, PROFIT_EXIT_MEGA, SCALP_LOCK_PCT, STOP_LOSS_PCT,
+    MOMENTUM_LOCK_PCT, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT, STOP_LOSS_PCT,
     STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS,
 )
 from .contracts import is_in_money, otm_distance
@@ -130,68 +130,84 @@ class PositionManager:
                 continue
 
             # ── YES POSITION (unified tiered ladder) ─────────────────────
-            pnl_pct = (bid - entry) / entry if entry > 0 else 0
-            gam     = self.dist.gamma(contract, spot, vol, hours, regime)
+            pnl_pct  = (bid - entry) / entry if entry > 0 else 0
+            gam      = self.dist.gamma(contract, spot, vol, hours, regime)
+            is_snipe = pos.get("is_snipe", False)
 
             repriced = pnl_pct > 0.15
             rep_str  = "repriced:YES ⬆" if repriced else "repriced:NO  "
+            snipe_tag = " 🎯SNIPE" if is_snipe else ""
 
             print(f"  👁  {ticker[-22:]:<22} bid=${bid:.4f} "
                   f"pnl={pnl_pct:+.0%} true={true_prob:.0%} gam={gam:+.1f} "
                   f"{'✅' if itm else '❌'} dist={dist:+.0f} "
-                  f"{rep_str} {mins_left:.0f}m left")
+                  f"{rep_str} {mins_left:.0f}m left{snipe_tag}")
 
-            # TIER 0.5 — Gamma-aware convexity lock: profitable + true_prob reversing
-            # (2-tick fade) + high convexity risk (near strike/expiry) → lock in now
-            # rather than wait for a fixed P&L tier, since edge can flip fast here.
-            if (bid > 0 and pnl_pct >= GAMMA_LOCK_MIN_PROFIT
-                    and tp_curr < tp_prev and abs(gam) >= GAMMA_HIGH_THRESHOLD):
-                self.portfolio.sell(ticker, bid, reason="gamma_lock 📐")
-                continue
+            # SNIPE positions skip every early profit-lock/stop tier below (0.5-4, 6) —
+            # those tiers exist to protect ordinary trades, but a snipe's whole thesis
+            # is riding a cheap entry to a 1000%+ payout. Locking at pnl>=40% or stopping
+            # at -60% defeats that on purpose-built lottery tickets. Max loss is already
+            # sunk at entry either way, so there's no capital-protection case for bailing
+            # early. Only near-certain settlement (3.5) and the OTM time exit (5) still
+            # apply, plus the unconditional SETTLED/expiry purge above.
+            if not is_snipe:
+                # TIER 0.5 — Gamma-aware convexity lock: profitable + true_prob reversing
+                # (2-tick fade) + high convexity risk (near strike/expiry) → lock in now
+                # rather than wait for a fixed P&L tier, since edge can flip fast here.
+                # Gated on absolute bid too — pnl% alone was locking cheap entries at
+                # $0.17-$0.37, cutting real winners short before they reached meaningful value.
+                if (bid >= GAMMA_LOCK_MIN_BID and pnl_pct >= GAMMA_LOCK_MIN_PROFIT
+                        and tp_curr < tp_prev and abs(gam) >= GAMMA_HIGH_THRESHOLD):
+                    self.portfolio.sell(ticker, bid, reason="gamma_lock 📐")
+                    continue
 
-            # TIER 1 — Scalp lock: up 40% + < 15 min left
-            if bid > 0 and pnl_pct >= SCALP_LOCK_PCT and hours < 0.25:
-                self.portfolio.sell(ticker, bid, reason="scalp_lock 🔄")
-                continue
+                # TIER 1 — Scalp lock: up 40% + < 15 min left, bid at a meaningful absolute price
+                if bid >= SCALP_LOCK_MIN_BID and pnl_pct >= SCALP_LOCK_PCT and hours < 0.25:
+                    self.portfolio.sell(ticker, bid, reason="scalp_lock 🔄")
+                    continue
 
-            # TIER 2 — Momentum lock: up 100% + < 9 min
-            if bid > 0 and pnl_pct >= MOMENTUM_LOCK_PCT and hours < 0.15:
-                self.portfolio.sell(ticker, bid, reason="momentum_locked 💰")
-                continue
+                # TIER 2 — Momentum lock: up 100% + < 9 min
+                if bid > 0 and pnl_pct >= MOMENTUM_LOCK_PCT and hours < 0.15:
+                    self.portfolio.sell(ticker, bid, reason="momentum_locked 💰")
+                    continue
 
-            # TIER 3 — Strong profit: up 150% + < 15 min
-            if bid > 0 and pnl_pct >= STRONG_PROFIT_PCT and hours < 0.25:
-                self.portfolio.sell(ticker, bid, reason="profit_extracted 💰")
-                continue
+                # TIER 3 — Strong profit: up 150% + < 15 min
+                if bid > 0 and pnl_pct >= STRONG_PROFIT_PCT and hours < 0.25:
+                    self.portfolio.sell(ticker, bid, reason="profit_extracted 💰")
+                    continue
 
             # TIER 3.5 — Near-settlement exit: bid at 75¢+ means expiry ITM is near-certain.
             # Critical for vol-compression plays entered at 2-4¢ — without this, PROFIT_EXIT_MEGA
             # (300%) would fire at 8¢ from a 2¢ entry, leaving 92¢ of settlement value on the table.
+            # Stays active for snipes too — for a 5-10¢ entry this is already the 650-1400%+
+            # payout, and near-certain settlement isn't worth risking for the last few cents.
             if bid >= BID_EXIT_THRESHOLD:
                 self.portfolio.sell(ticker, bid, reason="near_settlement 🏆")
                 continue
 
-            # TIER 4 — Mega: up 300%
-            if bid > 0 and pnl_pct >= PROFIT_EXIT_MEGA:
-                self.portfolio.sell(ticker, bid, reason="mega_profit 🚀")
-                continue
+            if not is_snipe:
+                # TIER 4 — Mega: up 300%
+                if bid > 0 and pnl_pct >= PROFIT_EXIT_MEGA:
+                    self.portfolio.sell(ticker, bid, reason="mega_profit 🚀")
+                    continue
 
             # TIER 5 — Time exit OTM
             if mins_left < TIME_EXIT_MINS and not itm and bid > 0:
                 self.portfolio.sell(ticker, bid, reason="time_exit_OTM")
                 continue
 
-            # TIER 6 — Stop loss (gated: only fires with > STOP_MIN_HOURS left).
-            # Short-duration contracts are binary — TIME_EXIT_MINS handles OTM exits
-            # and expiry_settle captures ITM wins. Stopping in the final bars kills
-            # positions that would resolve naturally.
-            stop_thr = -(STOP_LOSS_PCT / time_urgency)
-            if (bid > 0 and pnl_pct <= stop_thr and hours > STOP_MIN_HOURS
-                    and not (itm and mins_left < TIME_EXIT_MINS)):
-                self.portfolio.sell(ticker, bid, reason=f"stop_{abs(stop_thr):.0%}")
-                continue
+            if not is_snipe:
+                # TIER 6 — Stop loss (gated: only fires with > STOP_MIN_HOURS left).
+                # Short-duration contracts are binary — TIME_EXIT_MINS handles OTM exits
+                # and expiry_settle captures ITM wins. Stopping in the final bars kills
+                # positions that would resolve naturally.
+                stop_thr = -(STOP_LOSS_PCT / time_urgency)
+                if (bid > 0 and pnl_pct <= stop_thr and hours > STOP_MIN_HOURS
+                        and not (itm and mins_left < TIME_EXIT_MINS)):
+                    self.portfolio.sell(ticker, bid, reason=f"stop_{abs(stop_thr):.0%}")
+                    continue
 
-            # Safety — near zero
-            if mid <= 0.005 and bid > 0:
-                self.portfolio.sell(ticker, bid, reason="near_zero")
-                continue
+                # Safety — near zero
+                if mid <= 0.005 and bid > 0:
+                    self.portfolio.sell(ticker, bid, reason="near_zero")
+                    continue

@@ -154,7 +154,21 @@ def main():
                       f"{no_sig['hours']*60:.0f}m left")
                 portfolio.buy_no(no_sig, no_sig["true_prob"])
 
-            if not sig and not no_sig:
+            # SNIPE signal — deep-OTM lottery tickets, ROI-ranked, separate scan from
+            # find_best() (see config.py SNIPE_* comment for why they'd otherwise be
+            # starved out by the main edge ranking)
+            snipe_sig = signal_e.find_snipe(spot, vol, regime, _ladder, portfolio.positions)
+            if snipe_sig:
+                print(f"\n  🎯 [SNIPE] {snipe_sig['ticker'][-22:]}")
+                print(f"     Window: {snipe_sig['label']} | "
+                      f"Ask: ${snipe_sig['ask']:.4f} | "
+                      f"True: {snipe_sig['true_prob']:.0%} | "
+                      f"ROI edge: {snipe_sig['edge_ratio']:.0%} | "
+                      f"dist={snipe_sig['otm_dist']:+.0f} | "
+                      f"Hours: {snipe_sig['hours']:.2f}h\n")
+                portfolio.buy(snipe_sig, snipe_sig["true_prob"], is_snipe=True)
+
+            if not sig and not no_sig and not snipe_sig:
                 cd_str = f" [{len(_cd)} cooling]" if _cd else ""
                 print(f"  — No edge (ladder: {len(_ladder)} contracts{cd_str})")
 

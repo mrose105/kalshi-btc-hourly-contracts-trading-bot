@@ -1,8 +1,9 @@
 from . import config as _C
 from .config import (
-    MAX_HOURS, MAX_OTM_B, MAX_OTM_T, MIN_HOURS,
+    MAX_HOURS, MAX_OTM_B, MAX_OTM_T, MIN_HOURS, MIN_RANGE_BOUNDARY_BUFFER,
     NO_CASH_MIN_PCT, NO_DIST_MAX, NO_DIST_MIN, NO_HOURS_MAX, NO_HOURS_MIN,
     NO_OVERPRICING_MIN, NO_TRUE_PROB_MAX, NO_YES_ASK_MAX, NO_YES_ASK_MIN, TIME_EXIT_MINS,
+    SNIPE_MAX_ENTRY_PRICE, SNIPE_MIN_EDGE_RATIO,
 )
 # MIN_EDGE and MIN_EDGE_COMPRESSION intentionally NOT imported as local names —
 # read via _C.MIN_EDGE so that run_backtest()'s C.MIN_EDGE = override takes effect.
@@ -55,11 +56,13 @@ class SignalEngine:
                     continue
                 if c["otm_dist"] < -otm_gate:
                     continue
-                # Without a confirmed directional regime, OTM RANGE entries are pure
-                # lottery tickets — BTC must move TO the range for us to win.
-                # Only take OTM entries under vol compression (structural mispricing)
-                # OR with a confirmed trending/reverting signal aimed at the range.
-                if (not vol_comp and c["otm_dist"] < -20
+                # Without a confirmed directional regime, entries near either boundary
+                # are pure lottery tickets — ordinary spot drift over the remaining
+                # window can flip them (OTM->never-ITM, or comfortably-ITM->OTM by
+                # expiry). Only take near-boundary entries under vol compression
+                # (structural mispricing) OR with a confirmed trending/reverting
+                # signal aimed at the range.
+                if (not vol_comp and abs(c["otm_dist"]) < MIN_RANGE_BOUNDARY_BUFFER
                         and (regime["regime"] == "RANGING" or regime["conf"] < 0.60)):
                     continue
 
@@ -108,6 +111,42 @@ class SignalEngine:
                 best = {**c, "true_prob": true_p, "edge": raw_edge,
                         "vol_compression": vol_comp,
                         "vol_term_edge": vol_edge_v}
+
+        return best
+
+    def find_snipe(self, spot, vol, regime, ladder, existing) -> dict | None:
+        """Deep-OTM lottery tickets: cheap ask, ranked by ROI (true_prob/ask) instead
+        of raw probability-point edge. find_best() never surfaces these — see config.py
+        SNIPE_* comment for why. Directional gate reused from find_best() to avoid
+        buying a long-shot straight into a confirmed opposing trend."""
+        use_t     = regime["use_t"]
+        direction = regime["direction"]
+
+        best_ratio = 1.0 + SNIPE_MIN_EDGE_RATIO
+        best       = None
+
+        for c in ladder:
+            if c["ticker"] in existing:
+                continue
+            if c["hours"] < MIN_HOURS or c["hours"] > MAX_HOURS:
+                continue
+            if c["ask"] <= 0 or c["ask"] > SNIPE_MAX_ENTRY_PRICE:
+                continue
+            ctype = c["type"]
+            if use_t:
+                if ctype == "ABOVE" and direction == "DN":
+                    continue
+                if ctype == "BELOW" and direction == "UP":
+                    continue
+
+            true_p = self.dist.true_prob(c, spot, vol, c["hours"], regime)
+            if true_p <= c["ask"]:
+                continue
+            ratio = true_p / c["ask"]
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best = {**c, "true_prob": true_p, "edge": true_p - c["ask"],
+                        "edge_ratio": ratio - 1.0}
 
         return best
 

@@ -34,6 +34,12 @@ MIN_HOURS           = 0.10       # 6 min — keeps entries clear of the TIME_EXI
 MAX_HOURS           = 4.0
 MAX_OTM_T           = 100
 MAX_OTM_B           = 150
+MIN_RANGE_BOUNDARY_BUFFER = 40   # RANGING/low-conf regime: skip RANGE entries within $40 of
+                                  # either boundary (ITM or OTM side). Old logic only guarded
+                                  # the OTM side (dist < -20) — near-money ITM entries like
+                                  # dist +1..+38 with no directional confirmation were let
+                                  # through and flipped OTM by expiry on ordinary spot drift
+                                  # (observed: B61650 losers, 2026-07-01/02 overnight session).
 
 # Exit thresholds — unified tiered ladder
 # TIER 0.5: Gamma-aware convexity lock — closes the asymmetry where YES positions
@@ -49,6 +55,12 @@ GAMMA_HIGH_THRESHOLD  = 40000.0  # dollar-gamma magnitude considered high convex
                                   # deep-OTM/quiet positions showed |gam| ~1,000-30,000,
                                   # near-strike/high-true_prob positions ~60,000-150,000+.
                                   # 50.0 was non-selective (fired on nearly every tick).
+GAMMA_LOCK_MIN_BID  = 0.35       # TIER 0.5 gate: don't lock gamma risk below this absolute
+                                  # price — observed live fires at bid $0.17-$0.37 on cheap
+                                  # entries cut real winners short before they reached meaningful
+                                  # value (2026-07-01/02 overnight session).
+SCALP_LOCK_MIN_BID  = 0.30       # TIER 1 gate: same rationale — pnl% alone let tiny-entry
+                                  # positions lock at trivial absolute prices.
 SCALP_LOCK_PCT      = 0.40       # TIER 1: up 40% + < 15 min left
 MOMENTUM_LOCK_PCT   = 1.00       # TIER 2: up 100% + < 9 min
 STRONG_PROFIT_PCT   = 1.50       # TIER 3: up 150% + < 15 min
@@ -60,6 +72,18 @@ STOP_MIN_HOURS      = 0.30       # TIER 6 gate: stop only fires if > 18 min left
                                   # expiry_settle captures ITM wins — don't stop binary
                                   # options in their last bars when the binary payoff
                                   # hasn't resolved yet.
+
+# ── SNIPE MODE — deep-OTM cheap lottery tickets aimed at asymmetric 1000%+ payouts ──
+# find_best()'s ranking picks the largest raw probability-point edge, which structurally
+# favors near-money contracts (both true_prob and ask are larger there). A 3¢ contract
+# with true_prob=8% has only 5pts of raw edge and never wins that ranking even though its
+# ROI (true_prob/ask) is 167%. find_snipe() is a separate ROI-ranked scan so these aren't
+# starved out by the main signal.
+SNIPE_MAX_ENTRY_PRICE = 0.10     # only ask <= this counts as a snipe entry
+SNIPE_MIN_EDGE_RATIO  = 0.30     # true_prob must beat ask by >= 30% (true_prob/ask - 1)
+SNIPE_TRADE_PCT       = 0.02     # sized down vs MAX_TRADE_PCT — tail-probability estimates
+                                  # are noisier, so size the bet down rather than Kelly-size
+                                  # off an uncertain edge
 
 # MISPRICE_NO entry filters
 NO_OVERPRICING_MIN  = 1.40       # YES_ask / true_prob must exceed this
