@@ -1,6 +1,7 @@
 import csv
 import datetime
 import os
+import threading
 import time
 import uuid
 from pathlib import Path
@@ -31,6 +32,12 @@ class Portfolio:
         self.real_port    = 0.0
         self.stop_cooldowns: dict = {}   # ticker → expiry timestamp after stop loss
 
+        # Guards real_cash/real_port/positions/stop_cooldowns mutation now that
+        # entry scanning and position management run on independent threads.
+        # Network calls (order placement) stay OUTSIDE this lock so a slow buy
+        # never blocks an exit — see positions.py "exits NEVER blocked".
+        self.lock = threading.Lock()
+
         if not _LOG_PATH.exists():
             with open(_LOG_PATH, "w", newline="") as f:
                 csv.DictWriter(f, fieldnames=_LOG_FIELDS).writeheader()
@@ -53,19 +60,21 @@ class Portfolio:
 
     def sync(self):
         if PAPER_TRADING:
-            if self.start_total == 0.0:
-                self.real_cash   = PAPER_CAPITAL
-                self.real_port   = 0.0
-                self.start_total = PAPER_CAPITAL
-                print(f"  📊 [PAPER] Session baseline: ${self.start_total:.2f}")
+            with self.lock:
+                if self.start_total == 0.0:
+                    self.real_cash   = PAPER_CAPITAL
+                    self.real_port   = 0.0
+                    self.start_total = PAPER_CAPITAL
+                    print(f"  📊 [PAPER] Session baseline: ${self.start_total:.2f}")
             return
         try:
             b = self.client._request("GET", "/portfolio/balance")
-            self.real_cash = b.get("balance", 0) / 100
-            self.real_port = b.get("portfolio_value", 0) / 100
-            if self.start_total == 0.0:
-                self.start_total = self.total_value()
-                print(f"  📊 Session baseline: ${self.start_total:.2f}")
+            with self.lock:
+                self.real_cash = b.get("balance", 0) / 100
+                self.real_port = b.get("portfolio_value", 0) / 100
+                if self.start_total == 0.0:
+                    self.start_total = self.total_value()
+                    print(f"  📊 Session baseline: ${self.start_total:.2f}")
         except Exception as e:
             print(f"  ⚠️  Sync failed: {e}")
 
@@ -231,27 +240,28 @@ class Portfolio:
         ask    = contract["ask"]
         limit  = self.entry_limit_price(ask, true_prob)
 
-        if ticker in self.positions:
-            return False
+        with self.lock:
+            if ticker in self.positions:
+                return False
+            kelly_pct = Portfolio.kelly_fraction(true_prob, ask)
+            budget    = self.budget(trade_pct=kelly_pct)
+            count     = int(budget / limit) if limit > 0 else 0
 
-        kelly_pct = Portfolio.kelly_fraction(true_prob, ask)
-        budget    = self.budget(trade_pct=kelly_pct)
-        count     = int(budget / limit) if limit > 0 else 0
+            # Kelly rounds to 0 — fall back to 1 contract within MAX_TRADE_PCT
+            if count <= 0:
+                budget = self.budget(trade_pct=MAX_TRADE_PCT)
+                count  = int(budget / limit) if limit > 0 else 0
 
-        # Kelly rounds to 0 — fall back to 1 contract within MAX_TRADE_PCT
-        if count <= 0:
-            budget = self.budget(trade_pct=MAX_TRADE_PCT)
-            count  = int(budget / limit) if limit > 0 else 0
+            cost = limit * count
+            if cost > self.real_cash or cost > budget or count <= 0:
+                return False
 
-        cost = limit * count
-        if cost > self.real_cash or cost > budget or count <= 0:
-            return False
+            if PAPER_TRADING:
+                ask = limit
+                cost = ask * count
+                self.real_cash -= cost
 
-        if PAPER_TRADING:
-            ask = limit
-            cost = ask * count
-            self.real_cash -= cost
-        else:
+        if not PAPER_TRADING:
             try:
                 result = self.client._request(
                     "POST",
@@ -266,8 +276,9 @@ class Portfolio:
                 ask   = float(result.get("average_fill_price", ask))
                 count = int(filled)
                 cost  = ask * count
-                self.real_cash -= cost
-                self.real_port += cost
+                with self.lock:
+                    self.real_cash -= cost
+                    self.real_port += cost
             except Exception as e:
                 body = ""
                 if hasattr(e, "response") and e.response is not None:
@@ -275,19 +286,20 @@ class Portfolio:
                 print(f"  ❌ BUY {ticker[-18:]}: {e}{body}")
                 return False
 
-        self.trades += 1
-        self.positions[ticker] = {
-            "count":          count,
-            "entry":          ask,
-            "cost":           cost,
-            "peak":           ask,
-            "true_prob":      true_prob,
-            "true_prob_prev": true_prob,
-            "true_prob_curr": true_prob,
-            "contract":       contract,
-            "close_time":     contract.get("close_time", ""),
-            "is_no":          False,
-        }
+        with self.lock:
+            self.trades += 1
+            self.positions[ticker] = {
+                "count":          count,
+                "entry":          ask,
+                "cost":           cost,
+                "peak":           ask,
+                "true_prob":      true_prob,
+                "true_prob_prev": true_prob,
+                "true_prob_curr": true_prob,
+                "contract":       contract,
+                "close_time":     contract.get("close_time", ""),
+                "is_no":          False,
+            }
         edge    = true_prob - ask
         itm_str = "✅ITM" if contract["itm"] else ("❌OTM " + str(round(contract["otm_dist"])))
         mode    = "[PAPER] " if PAPER_TRADING else ""
@@ -303,21 +315,23 @@ class Portfolio:
         yes_ask = contract["ask"]
         no_cost = 1.0 - yes_ask
 
-        if ticker in self.positions:
-            return False
-        if no_cost <= 0 or no_cost >= 1.0:
-            return False
+        with self.lock:
+            if ticker in self.positions:
+                return False
+            if no_cost <= 0 or no_cost >= 1.0:
+                return False
 
-        budget = self.budget(NO_TRADE_PCT)
-        count  = int(budget / no_cost) if no_cost > 0 else 0
-        cost   = no_cost * count
+            budget = self.budget(NO_TRADE_PCT)
+            count  = int(budget / no_cost) if no_cost > 0 else 0
+            cost   = no_cost * count
 
-        if cost > self.real_cash or cost > budget or count <= 0:
-            return False
+            if cost > self.real_cash or cost > budget or count <= 0:
+                return False
 
-        if PAPER_TRADING:
-            self.real_cash -= cost
-        else:
+            if PAPER_TRADING:
+                self.real_cash -= cost
+
+        if not PAPER_TRADING:
             try:
                 result = self.client._request(
                     "POST",
@@ -332,25 +346,27 @@ class Portfolio:
                     return False
                 count = int(filled)
                 cost  = no_cost * count
-                self.real_cash -= cost
-                self.real_port += cost
+                with self.lock:
+                    self.real_cash -= cost
+                    self.real_port += cost
             except Exception as e:
                 print(f"  ❌ BUY NO: {e}")
                 return False
 
-        self.trades += 1
-        self.positions[ticker] = {
-            "count":          count,
-            "entry":          no_cost,
-            "cost":           cost,
-            "peak":           no_cost,
-            "true_prob":      true_prob,
-            "true_prob_prev": true_prob,
-            "true_prob_curr": true_prob,
-            "contract":       contract,
-            "close_time":     contract.get("close_time", ""),
-            "is_no":          True,
-        }
+        with self.lock:
+            self.trades += 1
+            self.positions[ticker] = {
+                "count":          count,
+                "entry":          no_cost,
+                "cost":           cost,
+                "peak":           no_cost,
+                "true_prob":      true_prob,
+                "true_prob_prev": true_prob,
+                "true_prob_curr": true_prob,
+                "contract":       contract,
+                "close_time":     contract.get("close_time", ""),
+                "is_no":          True,
+            }
         mode = "[PAPER] " if PAPER_TRADING else ""
         print(f"  📥 {mode}BUY_NO [MISPRICE] {ticker[-22:]} "
               f"x{count} @ NO=${no_cost:.4f} (YES_ask=${yes_ask:.4f}) true={true_prob:.0%}")
@@ -358,23 +374,25 @@ class Portfolio:
 
     def sell(self, ticker: str, bid: float,
              count: int = None, reason: str = "") -> bool:
-        if ticker not in self.positions:
-            return False
-        pos   = self.positions[ticker]
-        count = count or pos["count"]
-        count = min(count, pos["count"])
-        requested = count
-        is_no = pos.get("is_no", False)
-
-        if PAPER_TRADING:
-            self.real_cash += bid * count
-        else:
-            now = time.time()
-            last_attempt = pos.get("last_exit_attempt", 0)
-            if now - last_attempt < EXIT_RETRY_COOLDOWN:
+        with self.lock:
+            if ticker not in self.positions:
                 return False
-            self.positions[ticker]["last_exit_attempt"] = now
+            pos   = self.positions[ticker]
+            count = count or pos["count"]
+            count = min(count, pos["count"])
+            requested = count
+            is_no = pos.get("is_no", False)
 
+            if PAPER_TRADING:
+                self.real_cash += bid * count
+            else:
+                now = time.time()
+                last_attempt = pos.get("last_exit_attempt", 0)
+                if now - last_attempt < EXIT_RETRY_COOLDOWN:
+                    return False
+                self.positions[ticker]["last_exit_attempt"] = now
+
+        if not PAPER_TRADING:
             filled_count = 0
             side      = "no" if is_no else "yes"
             urgent = any(token in reason for token in (
@@ -435,9 +453,10 @@ class Portfolio:
                 print(f"  ⚠️  SELL IOC not filled: {ticker[-22:]} reason={reason}")
                 return False
             count = min(filled_count, requested)
-            cost_basis = pos["cost"] * (count / pos["count"]) if pos["count"] else 0
-            self.real_cash += bid * count
-            self.real_port = max(0, self.real_port - cost_basis)
+            with self.lock:
+                cost_basis = pos["cost"] * (count / pos["count"]) if pos["count"] else 0
+                self.real_cash += bid * count
+                self.real_port = max(0, self.real_port - cost_basis)
 
         pnl = (bid - pos["entry"]) * count
         self.realized_pnl += pnl
@@ -449,12 +468,15 @@ class Portfolio:
         self._log_trade("sell", ticker, "no" if is_no else "yes", count, bid,
                         pnl=pnl, reason=reason)
 
-        self.positions[ticker]["count"] -= count
-        if self.positions[ticker]["count"] <= 0:
-            del self.positions[ticker]
-            if reason.startswith("stop_"):
-                self.stop_cooldowns[ticker] = time.time() + STOP_COOLDOWN_SECS
-                print(f"  🚫 Stop cooldown: {ticker[-22:]} blocked for {STOP_COOLDOWN_SECS//60}m")
+        with self.lock:
+            self.positions[ticker]["count"] -= count
+            done = self.positions[ticker]["count"] <= 0
+            if done:
+                del self.positions[ticker]
+                if reason.startswith("stop_"):
+                    self.stop_cooldowns[ticker] = time.time() + STOP_COOLDOWN_SECS
+        if done and reason.startswith("stop_"):
+            print(f"  🚫 Stop cooldown: {ticker[-22:]} blocked for {STOP_COOLDOWN_SECS//60}m")
         return True
 
     def summary(self):
