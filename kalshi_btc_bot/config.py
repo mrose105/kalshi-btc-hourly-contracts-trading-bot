@@ -44,7 +44,11 @@ MAX_OTM_B           = 150
 # tune it from the "gam=" values printed in the live position ticker once you've watched a
 # session or two.
 GAMMA_LOCK_MIN_PROFIT = 0.15     # don't fire on noise — require at least 15% gain first
-GAMMA_HIGH_THRESHOLD  = 50.0     # dollar-gamma magnitude considered high convexity risk
+GAMMA_HIGH_THRESHOLD  = 40000.0  # dollar-gamma magnitude considered high convexity risk.
+                                  # Calibrated from live overnight gam= prints (2026-07-01):
+                                  # deep-OTM/quiet positions showed |gam| ~1,000-30,000,
+                                  # near-strike/high-true_prob positions ~60,000-150,000+.
+                                  # 50.0 was non-selective (fired on nearly every tick).
 SCALP_LOCK_PCT      = 0.40       # TIER 1: up 40% + < 15 min left
 MOMENTUM_LOCK_PCT   = 1.00       # TIER 2: up 100% + < 9 min
 STRONG_PROFIT_PCT   = 1.50       # TIER 3: up 150% + < 15 min
