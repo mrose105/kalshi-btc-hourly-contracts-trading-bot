@@ -56,15 +56,20 @@ class SignalEngine:
                     continue
                 if c["otm_dist"] < -otm_gate:
                     continue
-                # Without a confirmed directional regime, entries near either boundary
-                # are pure lottery tickets — ordinary spot drift over the remaining
-                # window can flip them (OTM->never-ITM, or comfortably-ITM->OTM by
-                # expiry). Only take near-boundary entries under vol compression
-                # (structural mispricing) OR with a confirmed trending/reverting
-                # signal aimed at the range.
-                if (not vol_comp and abs(c["otm_dist"]) < MIN_RANGE_BOUNDARY_BUFFER
-                        and (regime["regime"] == "RANGING" or regime["conf"] < 0.60)):
-                    continue
+
+            # Near-boundary RANGE entries are pure flip risk regardless of regime
+            # read — a 3-bar TRENDING/REVERTING/BREAKOUT signal doesn't guarantee
+            # the boundary holds through expiry any more than RANGING does.
+            # Previously this guard only ran in the non-trending (use_t=False)
+            # branch above, so a trending regime read let RANGE contracts sail in
+            # right on the boundary with only the wide MAX_OTM_B floor — observed
+            # live 2026-07-03 on B62050, repeatedly re-entered at the same
+            # boundary and stopped out three times via boundary_risk in 36 min.
+            # Vol compression is still exempt: that's structural mispricing, not
+            # a directional read, so it's not the same flip risk.
+            if (ctype == "RANGE" and not vol_comp
+                    and abs(c["otm_dist"]) < MIN_RANGE_BOUNDARY_BUFFER):
+                continue
 
             # Tighten OTM limits as expiry approaches
             mins_left     = c["hours"] * 60

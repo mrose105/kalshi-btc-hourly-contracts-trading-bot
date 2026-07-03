@@ -489,14 +489,20 @@ class Portfolio:
         self._log_trade("sell", ticker, "no" if is_no else "yes", count, bid,
                         pnl=pnl, reason=reason)
 
+        # Any loss-cutting exit (not just literal stop_*) means the signal that
+        # justified re-entry is still there — without a cooldown here, the same
+        # ticker gets immediately re-bought at escalating Kelly size and whipsaws
+        # (observed live 2026-07-03: boundary_risk exits with no cooldown led to
+        # 3 re-entries on B62050 in 36 min, -$4.98).
+        is_loss_cut = reason.startswith("stop_") or "boundary_risk" in reason
         with self.lock:
             self.positions[ticker]["count"] -= count
             done = self.positions[ticker]["count"] <= 0
             if done:
                 del self.positions[ticker]
-                if reason.startswith("stop_"):
+                if is_loss_cut:
                     self.stop_cooldowns[ticker] = time.time() + STOP_COOLDOWN_SECS
-        if done and reason.startswith("stop_"):
+        if done and is_loss_cut:
             print(f"  🚫 Stop cooldown: {ticker[-22:]} blocked for {STOP_COOLDOWN_SECS//60}m")
         return True
 
