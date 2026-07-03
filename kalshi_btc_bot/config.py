@@ -73,6 +73,19 @@ STOP_MIN_HOURS      = 0.30       # TIER 6 gate: stop only fires if > 18 min left
                                   # options in their last bars when the binary payoff
                                   # hasn't resolved yet.
 
+# TIER 5.25: Boundary risk — ITM but marginal + underwater + near expiry.
+# TIME_EXIT_MINS (TIER 5) only protects positions once already OTM; a marginal ITM
+# position carries the same flip risk right up until it crosses. Momentum-gated
+# (2-tick true_prob fade, same signal as gamma_lock) so ordinary chop doesn't
+# trigger it — gives the position room to be volatile — but exits once the move
+# is actually working against it. Hard floor below fires unconditionally as a
+# backstop even without momentum confirmation.
+BOUNDARY_RISK_DIST      = 15     # points from boundary considered "at risk" while ITM
+BOUNDARY_RISK_MINS      = 10     # window before expiry this tier is active — wider
+                                  # than TIME_EXIT_MINS so it can act before the flip
+BOUNDARY_RISK_MIN_LOSS  = -0.10  # ignore trivial pnl noise, require real drawdown first
+BOUNDARY_RISK_HARD_STOP = -0.65  # unconditional cap — fires even without momentum confirm
+
 # ── SNIPE MODE — deep-OTM cheap lottery tickets aimed at asymmetric 1000%+ payouts ──
 # find_best()'s ranking picks the largest raw probability-point edge, which structurally
 # favors near-money contracts (both true_prob and ask are larger there). A 3¢ contract
@@ -84,6 +97,15 @@ SNIPE_MIN_EDGE_RATIO  = 0.30     # true_prob must beat ask by >= 30% (true_prob/
 SNIPE_TRADE_PCT       = 0.02     # sized down vs MAX_TRADE_PCT — tail-probability estimates
                                   # are noisier, so size the bet down rather than Kelly-size
                                   # off an uncertain edge
+SNIPE_PROFIT_LOCK_PCT     = 1.50 # TIER 3.75 gate: lock in profit only when a big snipe run
+                                  # (150%+) reverses — gated on true_prob fading (2-tick signal,
+                                  # same as gamma_lock), NOT a fixed price cap. A snipe that keeps
+                                  # climbing without reversing is untouched and can still ride to
+                                  # 1000%+. This only catches the failure mode observed live
+                                  # 2026-07-02: B61250 (+300%) and B61350 (+195%) both held peak
+                                  # gains for 7-8 min then fully round-tripped to near-total losses
+                                  # with no tier between "hold" and 75c near_settlement.
+SNIPE_PROFIT_LOCK_MIN_BID = 0.12 # absolute price floor — same rationale as GAMMA_LOCK_MIN_BID
 
 # MISPRICE_NO entry filters
 NO_OVERPRICING_MIN  = 1.40       # YES_ask / true_prob must exceed this

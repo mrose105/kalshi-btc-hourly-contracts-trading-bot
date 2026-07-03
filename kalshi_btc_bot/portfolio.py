@@ -402,6 +402,7 @@ class Portfolio:
 
         if not PAPER_TRADING:
             filled_count = 0
+            proceeds  = 0.0
             side      = "no" if is_no else "yes"
             urgent = any(token in reason for token in (
                 "stop", "time", "near_zero", "failed", "forced",
@@ -424,8 +425,9 @@ class Portfolio:
                 )
                 filled = float(result.get("fill_count", 0))
                 if filled > 0:
-                    bid = float(result.get("average_fill_price", bid))
+                    fill_price   = float(result.get("average_fill_price", bid))
                     filled_count = int(filled)
+                    proceeds    += fill_price * filled_count
             except Exception as e:
                 body = ""
                 if hasattr(e, "response") and e.response is not None:
@@ -435,35 +437,46 @@ class Portfolio:
             # Retry unfilled remainder (YES only — NO retry pricing is complex)
             if not is_no:
                 remaining = requested - filled_count
-                if remaining > 0 and bid > 0.01:
-                    retry_price = max(1, int(round(bid * 100)) - 1)
-                    try:
-                        r2 = self.client._request(
-                            "POST",
-                            "/portfolio/events/orders",
-                            json_body=self.order_payload(
-                                ticker,
-                                "sell",
-                                "yes",
-                                remaining,
-                                retry_price / 100,
-                                reduce_only=True,
-                            ),
-                        )
-                        r2_filled = float(r2.get("fill_count", 0))
-                        if r2_filled > 0:
-                            filled_count += int(r2_filled)
-                            print(f"  🔄 Retry filled {r2_filled:.0f} more @ ${retry_price/100:.4f}")
-                    except:
-                        pass
+                if remaining > 0:
+                    # Anchor the retry price off the actual primary fill (if any),
+                    # not the stale target bid — avoids under/over-cutting the cross.
+                    anchor = (proceeds / filled_count) if filled_count > 0 else bid
+                    if anchor > 0.01:
+                        retry_price = max(1, int(round(anchor * 100)) - 1)
+                        try:
+                            r2 = self.client._request(
+                                "POST",
+                                "/portfolio/events/orders",
+                                json_body=self.order_payload(
+                                    ticker,
+                                    "sell",
+                                    "yes",
+                                    remaining,
+                                    retry_price / 100,
+                                    reduce_only=True,
+                                ),
+                            )
+                            r2_filled = float(r2.get("fill_count", 0))
+                            if r2_filled > 0:
+                                r2_price      = float(r2.get("average_fill_price", retry_price / 100))
+                                filled_count += int(r2_filled)
+                                proceeds     += r2_price * r2_filled
+                                print(f"  🔄 Retry filled {r2_filled:.0f} more @ ${r2_price:.4f}")
+                        except:
+                            pass
 
             if filled_count <= 0:
                 print(f"  ⚠️  SELL IOC not filled: {ticker[-22:]} reason={reason}")
                 return False
             count = min(filled_count, requested)
+            # bid becomes the proceeds-weighted average fill price across the
+            # primary + retry orders — previously this stayed pinned to the
+            # primary order's price even when the retry filled at a different
+            # price, overstating both real_cash and the logged/printed pnl.
+            bid = proceeds / filled_count
             with self.lock:
                 cost_basis = pos["cost"] * (count / pos["count"]) if pos["count"] else 0
-                self.real_cash += bid * count
+                self.real_cash += proceeds
                 self.real_port = max(0, self.real_port - cost_basis)
 
         pnl = (bid - pos["entry"]) * count

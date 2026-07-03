@@ -9,9 +9,12 @@ def _hours_from(close_time: str) -> float:
         return 1.0
 
 from .config import (
-    BID_EXIT_THRESHOLD, GAMMA_HIGH_THRESHOLD, GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT,
+    BID_EXIT_THRESHOLD, BOUNDARY_RISK_DIST, BOUNDARY_RISK_HARD_STOP,
+    BOUNDARY_RISK_MIN_LOSS, BOUNDARY_RISK_MINS, GAMMA_HIGH_THRESHOLD,
+    GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT,
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
-    MOMENTUM_LOCK_PCT, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT, STOP_LOSS_PCT,
+    MOMENTUM_LOCK_PCT, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT,
+    SNIPE_PROFIT_LOCK_MIN_BID, SNIPE_PROFIT_LOCK_PCT, STOP_LOSS_PCT,
     STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS,
 )
 from .contracts import is_in_money, otm_distance
@@ -176,6 +179,16 @@ class PositionManager:
                     self.portfolio.sell(ticker, bid, reason="profit_extracted 💰")
                     continue
 
+            if is_snipe:
+                # TIER 3.75 — Snipe reversal lock: doesn't cap upside — only fires once a big
+                # run (150%+) shows true_prob fading (2-tick reversal, same signal gamma_lock
+                # uses). A snipe that keeps climbing without reversing is untouched and can
+                # still ride to 1000%+. See config.py SNIPE_PROFIT_LOCK_PCT comment.
+                if (bid >= SNIPE_PROFIT_LOCK_MIN_BID and pnl_pct >= SNIPE_PROFIT_LOCK_PCT
+                        and tp_curr < tp_prev):
+                    self.portfolio.sell(ticker, bid, reason="snipe_lock 🔒")
+                    continue
+
             # TIER 3.5 — Near-settlement exit: bid at 75¢+ means expiry ITM is near-certain.
             # Critical for vol-compression plays entered at 2-4¢ — without this, PROFIT_EXIT_MEGA
             # (300%) would fire at 8¢ from a 2¢ entry, leaving 92¢ of settlement value on the table.
@@ -197,6 +210,20 @@ class PositionManager:
                 continue
 
             if not is_snipe:
+                # TIER 5.25 — Boundary risk: ITM but marginal + underwater + near
+                # expiry. TIER 5 above only protects positions once already OTM;
+                # a marginal ITM position carries the same flip risk right up
+                # until it crosses. Momentum-gated (2-tick true_prob fade, same
+                # signal as gamma_lock) so ordinary chop doesn't trigger it — gives
+                # room to be volatile — but exits once the move works against it.
+                # Hard floor fires unconditionally as a backstop.
+                if (itm and bid > 0 and pnl_pct <= BOUNDARY_RISK_MIN_LOSS
+                        and mins_left < BOUNDARY_RISK_MINS
+                        and abs(dist) <= BOUNDARY_RISK_DIST
+                        and (tp_curr < tp_prev or pnl_pct <= BOUNDARY_RISK_HARD_STOP)):
+                    self.portfolio.sell(ticker, bid, reason="boundary_risk ⚠️")
+                    continue
+
                 # TIER 6 — Stop loss (gated: only fires with > STOP_MIN_HOURS left).
                 # Short-duration contracts are binary — TIME_EXIT_MINS handles OTM exits
                 # and expiry_settle captures ITM wins. Stopping in the final bars kills
