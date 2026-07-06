@@ -1,21 +1,26 @@
 # ─────────────────────────────────────────────
 # MODE — switch here before running
 # ─────────────────────────────────────────────
-PAPER_TRADING = False   # True = paper mode (no real orders), False = live trading
-PAPER_CAPITAL = 25.00   # simulated capital for paper mode
+PAPER_TRADING = True    # True = paper mode (no real orders), False = live trading
+PAPER_CAPITAL = 10000.00   # simulated capital for paper mode
 
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
 
 # Risk controls
-MAX_EXPOSURE_PCT    = 0.40       # max 40% of real portfolio value in positions
+# 2026-07-06: tightened across the board after a live session lost ~7% in under
+# 40 minutes via repeated max-Kelly-sized re-entries on the same boundary
+# (see boundary_risk cooldown fix same week). Smaller per-trade size + smaller
+# exposure cap + faster stop + faster session breaker compound together so no
+# single bad regime can reproduce that drawdown rate.
+MAX_EXPOSURE_PCT    = 0.18       # max 18% of real portfolio value in positions (was 0.40)
 MIN_CASH_PCT        = 0.05       # keep 5% as cash reserve
-MAX_TRADE_PCT       = 0.05       # max 5% of real portfolio per trade
-NO_TRADE_PCT        = 0.04       # max 4% of real portfolio per MISPRICE_NO trade
+MAX_TRADE_PCT       = 0.025      # max 2.5% of real portfolio per trade (was 0.05)
+NO_TRADE_PCT        = 0.02       # max 2% of real portfolio per MISPRICE_NO trade (was 0.04)
 ENABLE_MISPRICE_NO = False      # disabled live until pending NO order reconciliation is fixed
 MAX_POSITIONS       = 4
-SESSION_STOP_PCT    = 0.05       # stop NEW entries if down 5%
+SESSION_STOP_PCT    = 0.03       # stop NEW entries if down 3% (was 0.05)
 MIN_CASH_FLOOR      = 0.25       # never trade with less than $0.25
 UNTRACKED_EXPOSURE_LIMIT = 0.25  # block new trades if live exposure exceeds tracked exposure by this much
 EXIT_RETRY_COOLDOWN = 10         # seconds to wait before retrying an unfilled live exit
@@ -59,6 +64,18 @@ GAMMA_LOCK_MIN_BID  = 0.35       # TIER 0.5 gate: don't lock gamma risk below th
                                   # price — observed live fires at bid $0.17-$0.37 on cheap
                                   # entries cut real winners short before they reached meaningful
                                   # value (2026-07-01/02 overnight session).
+
+# TIER 0.75: Peak giveback — `peak` was tracked per-position but never used to
+# gate an exit. A trade that ran to +140% and fully round-tripped back to
+# breakeven/loss had zero protection unless it happened to cross gamma_lock or
+# one of the fixed pnl tiers below. This generalizes the snipe-reversal-lock
+# idea (TIER 3.75) to ordinary trades: once a real gain has formed, give back
+# only so much of it before locking. Independent of gamma/convexity, so it
+# catches reversals gamma_lock's high-convexity gate would miss.
+PEAK_GIVEBACK_MIN_PEAK = 0.25    # only protect peaks of at least 25% unrealized gain
+PEAK_GIVEBACK_FRACTION = 0.50    # exit once current pnl has faded to <= 50% of that peak
+PEAK_GIVEBACK_MIN_BID  = 0.20    # same rationale as GAMMA_LOCK_MIN_BID — don't lock trivial cents
+
 SCALP_LOCK_MIN_BID  = 0.30       # TIER 1 gate: same rationale — pnl% alone let tiny-entry
                                   # positions lock at trivial absolute prices.
 SCALP_LOCK_PCT      = 0.40       # TIER 1: up 40% + < 15 min left
@@ -66,7 +83,10 @@ MOMENTUM_LOCK_PCT   = 1.00       # TIER 2: up 100% + < 9 min
 STRONG_PROFIT_PCT   = 1.50       # TIER 3: up 150% + < 15 min
 PROFIT_EXIT_MEGA    = 3.00       # TIER 4: up 300%, no conditions
 TIME_EXIT_MINS      = 3          # TIER 5: OTM with < 3 min left — let late-window mispricing play out
-STOP_LOSS_PCT       = 0.60       # TIER 6: base stop
+STOP_LOSS_PCT       = 0.35       # TIER 6: base stop. 2026-07-06: tightened from 0.60 (which had
+                                  # itself been widened from 0.40 on 2026-07-01 "to allow late
+                                  # recoveries") — cut losers quickly, let winners ride via the
+                                  # profit-lock tiers above instead of hoping for a comeback.
 STOP_MIN_HOURS      = 0.30       # TIER 6 gate: stop only fires if > 18 min left.
                                   # Below this, TIME_EXIT_MINS handles OTM exits and
                                   # expiry_settle captures ITM wins — don't stop binary
@@ -132,7 +152,7 @@ BREAKOUT_ACCEL      = 0.004
 
 # Kelly position sizing
 KELLY_FRACTION      = 0.25    # quarter-Kelly multiplier
-KELLY_CAP           = 0.05    # hard cap on Kelly-derived fraction (matches MAX_TRADE_PCT)
+KELLY_CAP           = 0.025   # hard cap on Kelly-derived fraction (matches MAX_TRADE_PCT)
 
 # Vol regime thresholds (hourly vol units = per-bar vol × sqrt(900))
 VOL_REGIME_LOW_H    = 0.005   # < LOW  → calm market (~50% annualized)

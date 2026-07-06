@@ -13,7 +13,8 @@ from .config import (
     BOUNDARY_RISK_MIN_LOSS, BOUNDARY_RISK_MINS, GAMMA_HIGH_THRESHOLD,
     GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT,
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
-    MOMENTUM_LOCK_PCT, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT,
+    MOMENTUM_LOCK_PCT, PEAK_GIVEBACK_FRACTION, PEAK_GIVEBACK_MIN_BID,
+    PEAK_GIVEBACK_MIN_PEAK, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT,
     SNIPE_PROFIT_LOCK_MIN_BID, SNIPE_PROFIT_LOCK_PCT, STOP_LOSS_PCT,
     STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS,
 )
@@ -133,7 +134,8 @@ class PositionManager:
                 continue
 
             # ── YES POSITION (unified tiered ladder) ─────────────────────
-            pnl_pct  = (bid - entry) / entry if entry > 0 else 0
+            pnl_pct      = (bid - entry) / entry if entry > 0 else 0
+            peak_pnl_pct = (peak - entry) / entry if entry > 0 else 0
             gam      = self.dist.gamma(contract, spot, vol, hours, regime)
             is_snipe = pos.get("is_snipe", False)
 
@@ -162,6 +164,14 @@ class PositionManager:
                 if (bid >= GAMMA_LOCK_MIN_BID and pnl_pct >= GAMMA_LOCK_MIN_PROFIT
                         and tp_curr < tp_prev and abs(gam) >= GAMMA_HIGH_THRESHOLD):
                     self.portfolio.sell(ticker, bid, reason="gamma_lock 📐")
+                    continue
+
+                # TIER 0.75 — Peak giveback: once a real gain has formed, exit once
+                # price has faded back to a fraction of its own peak — independent of
+                # gamma/convexity, so it catches reversals TIER 0.5 above would miss.
+                if (peak_pnl_pct >= PEAK_GIVEBACK_MIN_PEAK and bid >= PEAK_GIVEBACK_MIN_BID
+                        and pnl_pct <= peak_pnl_pct * PEAK_GIVEBACK_FRACTION):
+                    self.portfolio.sell(ticker, bid, reason="peak_giveback 📉")
                     continue
 
                 # TIER 1 — Scalp lock: up 40% + < 15 min left, bid at a meaningful absolute price
