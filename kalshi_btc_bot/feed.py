@@ -44,9 +44,15 @@ class BTCFeed:
         rets = [math.log(r[i]/r[i-1]) for i in range(1, len(r)) if r[i-1] > 0]
         return statistics.stdev(rets) if len(rets) >= 2 else 0.001
 
-    def ewma_volatility(self, lam: float = 0.94) -> float:
-        """RiskMetrics EWMA vol — weights recent returns more than rolling stdev.
-        λ=0.94 is the standard daily decay factor from J.P. Morgan RiskMetrics."""
+    def ewma_volatility(self, lam: float = 0.99) -> float:
+        """Fast EWMA vol — weights recent returns more than rolling stdev.
+        λ=0.99 → ~69-bar half-life ≈ 4.6 min at 4s ticks. 2026-07-06: was
+        λ=0.94, commented as "the standard daily decay factor from RiskMetrics" —
+        that provenance is for daily bars (~11-day half-life); applied to 4s
+        ticks it gave a ~45s half-life, letting one large tick flip the fast/slow
+        vol_ratio and the HIGH/LOW regime read almost instantly. 0.99 keeps this
+        genuinely "fast" relative to the ~46min slow EWMA below while damping
+        single-tick noise."""
         prices = [p for _, p in self.prices[-300:]]
         if len(prices) < 3:
             return self.volatility(300)
@@ -60,9 +66,11 @@ class BTCFeed:
         return max(1e-6, math.sqrt(var))
 
     def ewma_volatility_slow(self, lam: float = 0.9990) -> float:
-        """Slow EWMA vol (~115-bar half-life ≈ 8 min at 4s ticks).
-        Proxy for Kalshi's lagged vol estimate — Kalshi reprices infrequently
-        so this mimics a price that still reflects the last vol spike."""
+        """Slow EWMA vol (~693-bar half-life ≈ 46 min at 4s ticks — half-life =
+        ln(0.5)/ln(lam); the previous "~115-bar / 8 min" comment used the wrong
+        figure). Proxy for Kalshi's lagged vol estimate — Kalshi reprices
+        infrequently so this mimics a price that still reflects the last vol
+        spike."""
         prices = [p for _, p in self.prices[-500:]]
         if len(prices) < 10:
             return self.ewma_volatility()

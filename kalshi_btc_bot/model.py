@@ -9,7 +9,14 @@ BARS_PER_HOUR = 900   # 4-second polling
 # Vol cone: calibrated to BTC historical realized vol range
 # Hourly vol floor/cap expressed in hourly-vol units
 _VOL_H_FLOOR = 0.003   # ~30% annualized — never let model assume no movement
-_VOL_H_CAP   = 0.080   # ~120%+ annualized — extreme regime ceiling
+_VOL_H_CAP   = 0.030   # ~280% annualized — extreme regime ceiling. 2026-07-06:
+                        # was 0.080 (~749% annualized using this file's own
+                        # √8760 annualization convention) — 6x too loose to ever
+                        # actually clamp a data-glitch/flash-crash vol_h spike
+                        # before it corrupts true_prob/gamma. 0.030 sits safely
+                        # above HIGH-regime-scaled vol (0.015*1.15≈0.0172,
+                        # ~161% annualized) so normal high-vol pricing is
+                        # unaffected, but genuinely bounds runaway readings.
 
 # ─────────────────────────────────────────────
 # DISTRIBUTION MODEL
