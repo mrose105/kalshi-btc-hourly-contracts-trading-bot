@@ -37,6 +37,7 @@ from kalshi_btc_bot.model       import DistModel
 from kalshi_btc_bot.regime      import RegimeEngine
 from kalshi_btc_bot.signals     import SignalEngine
 from kalshi_btc_bot.vol_surface import KalshiVolTerm
+from kalshi_btc_bot.contracts   import otm_distance
 from kalshi_btc_bot             import config as C
 
 
@@ -338,6 +339,9 @@ class BacktestPortfolio:
             "entry_hours":    contract["hours"],
             "bars_held":      0,
             "bid_now":        ask,
+            "true_prob_prev": true_prob,
+            "true_prob_curr": true_prob,
+            "gam":            0.0,
         }
         return True
 
@@ -358,6 +362,12 @@ class BacktestPortfolio:
             pos["bid_now"] = bid
             if bid > pos["peak"]:
                 pos["peak"] = bid
+
+            # 2-tick true_prob fade tracking + gamma — mirrors live PositionManager,
+            # feeds gamma_lock/peak_giveback/boundary_risk below.
+            pos["true_prob_prev"] = pos.get("true_prob_curr", true_p)
+            pos["true_prob_curr"] = true_p
+            pos["gam"] = dist.gamma(c, spot, vol, hours_left, regime)
 
             # Intrabar stop simulation: check if the worst intrabar spot would
             # have triggered the stop before end-of-bar. Mirrors live-bot behavior
@@ -396,11 +406,24 @@ class BacktestPortfolio:
             c          = pos["contract"]
             itm        = c["low"] <= spot < c["high"]
 
-            pnl_pct   = (bid - entry) / entry if entry > 0 else 0
-            drop_peak = (peak - bid)  / peak   if peak  > 0 else 0
+            pnl_pct      = (bid - entry) / entry if entry > 0 else 0
+            peak_pnl_pct = (peak - entry) / entry if entry > 0 else 0
+            drop_peak    = (peak - bid)  / peak   if peak  > 0 else 0
+            tp_prev  = pos.get("true_prob_prev", 0.0)
+            tp_curr  = pos.get("true_prob_curr", 0.0)
+            gam      = pos.get("gam", 0.0)
+            dist_val = otm_distance(c, spot)
 
             reason = None
-            if pnl_pct >= C.SCALP_LOCK_PCT and drop_peak > 0.10:
+            # TIER 0.5 — gamma-aware convexity lock (mirrors live positions.py)
+            if (bid >= C.GAMMA_LOCK_MIN_BID and pnl_pct >= C.GAMMA_LOCK_MIN_PROFIT
+                    and tp_curr < tp_prev and abs(gam) >= C.GAMMA_HIGH_THRESHOLD):
+                reason = "gamma_lock"
+            # TIER 0.75 — peak giveback
+            elif (peak_pnl_pct >= C.PEAK_GIVEBACK_MIN_PEAK and bid >= C.PEAK_GIVEBACK_MIN_BID
+                    and pnl_pct <= peak_pnl_pct * C.PEAK_GIVEBACK_FRACTION):
+                reason = "peak_giveback"
+            elif pnl_pct >= C.SCALP_LOCK_PCT and drop_peak > 0.10:
                 reason = "scalp_reversal"
             elif pnl_pct >= C.MOMENTUM_LOCK_PCT and hours_left < 0.15:
                 reason = "momentum_locked"
@@ -413,6 +436,12 @@ class BacktestPortfolio:
                 reason = "mega_profit"
             elif mins_left < C.TIME_EXIT_MINS and not itm:
                 reason = "time_exit_OTM"
+            # TIER 5.25 — boundary risk: ITM but marginal + underwater + near expiry
+            elif (itm and pnl_pct <= C.BOUNDARY_RISK_MIN_LOSS
+                    and mins_left < C.BOUNDARY_RISK_MINS
+                    and abs(dist_val) <= C.BOUNDARY_RISK_DIST
+                    and (tp_curr < tp_prev or pnl_pct <= C.BOUNDARY_RISK_HARD_STOP)):
+                reason = "boundary_risk"
             elif pnl_pct <= -C.STOP_LOSS_PCT and hours_left > C.STOP_MIN_HOURS:
                 reason = "stop_loss"
             elif hours_left <= 0:
