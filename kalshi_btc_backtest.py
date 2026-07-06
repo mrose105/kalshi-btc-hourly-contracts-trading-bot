@@ -286,7 +286,7 @@ class BacktestPortfolio:
         t = self.total()
         if len(self.positions) >= C.MAX_POSITIONS:
             return False
-        if self.capital > 0 and t < self.capital * (1 - C.SESSION_STOP_PCT):
+        if self.peak_total > 0 and t < self.peak_total * (1 - C.SESSION_STOP_PCT):
             return False
         if self.cash < C.MIN_CASH_FLOOR:
             return False

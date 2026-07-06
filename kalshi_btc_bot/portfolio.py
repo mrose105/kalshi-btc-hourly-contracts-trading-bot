@@ -28,6 +28,14 @@ class Portfolio:
         self.trades       = 0
         self.realized_pnl = 0.0
         self.start_total  = 0.0
+        self.peak_total   = 0.0   # running high-water mark — SESSION_STOP_PCT checks
+                                  # against this, not start_total, so the breaker stays
+                                  # a real drawdown guard after the account has grown
+                                  # (start_total alone goes stale the moment equity
+                                  # compounds past it — see 2026-07-06 60-day backtest
+                                  # audit: -14.1% real drawdown while the "3% breaker"
+                                  # never fired because it was still comparing against
+                                  # the day-one balance).
 
         self.real_cash    = 0.0
         self.real_port    = 0.0
@@ -66,7 +74,10 @@ class Portfolio:
                     self.real_cash   = PAPER_CAPITAL
                     self.real_port   = 0.0
                     self.start_total = PAPER_CAPITAL
+                    self.peak_total  = PAPER_CAPITAL
                     print(f"  📊 [PAPER] Session baseline: ${self.start_total:.2f}")
+                else:
+                    self.peak_total = max(self.peak_total, self.total_value())
             return
         try:
             b = self.client._request("GET", "/portfolio/balance")
@@ -75,7 +86,10 @@ class Portfolio:
                 self.real_port = b.get("portfolio_value", 0) / 100
                 if self.start_total == 0.0:
                     self.start_total = self.total_value()
+                    self.peak_total  = self.start_total
                     print(f"  📊 Session baseline: ${self.start_total:.2f}")
+                else:
+                    self.peak_total = max(self.peak_total, self.total_value())
         except Exception as e:
             print(f"  ⚠️  Sync failed: {e}")
 
@@ -90,10 +104,10 @@ class Portfolio:
 
     def can_trade(self) -> bool:
         total = self.total_value()
-        if self.start_total > 0:
-            loss_pct = 1 - total / self.start_total
+        if self.peak_total > 0:
+            loss_pct = 1 - total / self.peak_total
             if loss_pct > SESSION_STOP_PCT:
-                print(f"  🛑 Session stop ({loss_pct:.0%} down, ${total:.2f} vs start ${self.start_total:.2f})")
+                print(f"  🛑 Session stop ({loss_pct:.0%} down, ${total:.2f} vs peak ${self.peak_total:.2f})")
                 return False
         if len(self.positions) >= MAX_POSITIONS:
             print(f"  🛑 Max positions ({MAX_POSITIONS})")
