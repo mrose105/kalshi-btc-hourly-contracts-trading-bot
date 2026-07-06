@@ -525,7 +525,7 @@ class Portfolio:
         pnl      = total - self.start_total if self.start_total > 0 else 0
         mode_tag = "📝 PAPER MODE" if PAPER_TRADING else "🔴 LIVE TRADING"
         print(f"\n{'═'*62}")
-        print(f"  💰 BTC QUANT v4.3 | {datetime.datetime.now().strftime('%H:%M:%S')} | {mode_tag}")
+        print(f"  💰 BTC QUANT v5.0 | {datetime.datetime.now().strftime('%H:%M:%S')} | {mode_tag}")
         print(f"{'─'*62}")
         label = "Simulated" if PAPER_TRADING else "Real"
         print(f"  Cash ({label}): ${self.real_cash:>7.2f} | Positions:     ${self.exposure():>7.2f}")

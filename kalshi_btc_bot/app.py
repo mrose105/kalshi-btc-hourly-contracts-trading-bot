@@ -25,7 +25,7 @@ from .signals import SignalEngine
 # ─────────────────────────────────────────────
 def main():
     print("="*62)
-    print("  🧠 KALSHI BTC QUANT v4.3")
+    print("  🧠 KALSHI BTC QUANT v5.0")
     print(f"  Sizing: {MAX_TRADE_PCT:.0%} per trade | Max exposure: {MAX_EXPOSURE_PCT:.0%} | Reserve: {MIN_CASH_PCT:.0%}")
     print(f"  YES exits: scalp→momentum→strong→mega→time→stop")
     print(f"  NO scalp:  fade YES≥1.4x overpriced, 8-21min window, {NO_TRADE_PCT:.0%} sizing")
