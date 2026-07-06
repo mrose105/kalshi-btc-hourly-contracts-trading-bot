@@ -50,8 +50,8 @@ During compression windows, 2–4¢ ATM RANGE contracts can settle at $1.00 — 
 ```
 BTCFeed          RegimeEngine       SignalEngine        PositionManager
 ─────────        ────────────       ────────────        ───────────────
-EWMA vol    →   RANGING /     →   Scan Kalshi    →   6-tier exit ladder
-SMA vol         TRENDING /        ladder for           every 8 seconds
+EWMA vol    →   RANGING /     →   Scan Kalshi    →   Multi-tier exit ladder
+SMA vol         TRENDING /        ladder for           on its own thread
 vol_ratio       REVERTING /       mispriced            (exits never blocked)
 momentum        BREAKOUT          RANGE contracts
 zscore
@@ -71,7 +71,8 @@ kalshi_btc_bot/
 ├── positions.py    — PositionManager: 6-tier exit ladder
 ├── portfolio.py    — Kelly sizing, exposure limits, session stop
 ├── vol_surface.py  — Kalshi implied vol term structure (Brent's method)
-└── app.py          — main loop
+├── app.py          — main loop (independent threaded price/sync/position/scan loops)
+└── __main__.py     — entry point (`python3 -m kalshi_btc_bot`)
 kalshi_btc_backtest.py  — walk-forward backtest with intrabar stop simulation
 ```
 
@@ -93,17 +94,24 @@ Edge calculation uses a lognormal GBM pricer with regime-conditional drift. Vol 
 
 ---
 
-## Exit Ladder (6 tiers, checked every 8 seconds)
+## Exit Ladder (checked every position-check interval; exits are never blocked by other gates)
 
 | Tier | Trigger | Reason |
 |------|---------|--------|
-| 1 | Up 60% + true prob fading 2 consecutive ticks | Scalp reversal |
+| 0.5 | Up ≥15% + true\_prob fading 2 consecutive ticks + high dollar-gamma (≥40,000) + bid ≥ 35¢ | Gamma-aware convexity lock |
+| 0.75 | Peak unrealized gain ≥25% and current gain has faded to ≤50% of that peak + bid ≥ 20¢ | Peak giveback |
+| 1 | Up 40% + < 15 min left + bid ≥ 30¢ | Scalp lock |
 | 2 | Up 100% + < 9 min left | Momentum lock |
 | 3 | Up 150% + < 15 min left | Strong profit |
-| **3.5** | **Bid ≥ 75¢** | **Near settlement** — captures vol-compression plays entered at 2–4¢ without exiting early at Tier 4 |
-| 4 | Up 300% | Mega profit |
-| 5 | < 10 min left + OTM | Time exit |
-| 6 | Down 40% + > 12 min left | Stop loss (gated: doesn't fire in final 12 min where binary payoff is binary) |
+| 3.75 | Snipe-only: up ≥150% + true\_prob fading 2 ticks + bid ≥ 12¢ | Snipe reversal lock |
+| **3.5** | **Bid ≥ 75¢** | **Near settlement** — captures vol-compression plays entered at 2–4¢ without exiting early at Tier 4 (applies to snipes too) |
+| 4 | Up 300% (non-snipe only) | Mega profit |
+| 5 | < 3 min left + OTM | Time exit |
+| 5.25 | ITM but marginal (within 15 points of boundary), down ≥10%, < 10 min left, and true\_prob still fading (or down ≥65% unconditional hard stop) | Boundary risk |
+| 6 | Down 35%/time\_urgency + > 18 min left (gated off in the final `TIME_EXIT_MINS` if already ITM) | Stop loss |
+| — | Mid price ≤ 0.5¢ | Safety near-zero exit |
+
+Snipe positions (deep-OTM lottery entries) skip tiers 0.5–4 and 6 by design — see `config.py` `SNIPE_PROFIT_LOCK_PCT` for the rationale — and only exit via 3.5 (near-settlement), 3.75 (snipe reversal lock), or 5 (OTM time exit).
 
 ---
 
@@ -136,18 +144,19 @@ expiry    Kalshi IV   Our EWMA    Edge (IV−EWMA)
 
 | Control | Value |
 |---------|-------|
-| Max portfolio exposure | 40% of account |
-| Max position size | 5% of account (Kelly-sized, capped at 2× initial) |
+| Max portfolio exposure | 18% of account |
+| Max position size | 2.5% of account (quarter-Kelly sized, capped at 2.5%) |
 | Max concurrent positions | 4 |
 | Cash reserve | 5% minimum |
-| Session stop | New entries halt if account down 80% |
-| Stop loss | 40% per position (gated: won't fire in final 12 min) |
-| Entry type | Immediate-or-cancel only (no resting orders) |
+| Session stop | New entries halt if account is down 3% from its running peak (high-water mark, not just the session's starting balance) |
+| Stop loss | 35% per position, scaled tighter as expiry nears (gated: won't fire once inside the final OTM time-exit window if already ITM) |
+| Entry type | Immediate-or-cancel only (no resting orders); every entry re-fetches the live best bid/ask right before order placement and fills at that fresh ask (YES) / NO-implied price — never a cached ladder quote |
+| Entry spread filter | Skipped if bid/ask spread > 5¢ or > 25% of ask, re-validated against the fresh quote at order time |
 
-Position sizing uses **quarter-Kelly** with an 8% cap:
+Position sizing uses **quarter-Kelly** with a 2.5% cap:
 ```
 f* = edge / (1 − ask)
-size = min(f* × 0.25, 0.08) × account_value
+size = min(f* × 0.25, 0.025) × account_value
 ```
 
 ---
@@ -170,11 +179,12 @@ python3 kalshi_btc_backtest.py --days 7 --capital 50 --verbose       # print eve
 cp .env.example .env
 # fill in KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY_PATH
 
-# Paper mode (no real orders): set PAPER_TRADING = True in kalshi_btc_bot/config.py
-python3 -m kalshi_btc_bot.app
+# Paper mode (no real orders, simulated $10,000 capital): set PAPER_TRADING = True
+# in kalshi_btc_bot/config.py (this is the default)
+python3 -m kalshi_btc_bot
 
 # Live mode: set PAPER_TRADING = False
-caffeinate -dimsu python3 -m kalshi_btc_bot.app   # caffeinate keeps Mac awake
+caffeinate -dimsu python3 -m kalshi_btc_bot   # caffeinate keeps Mac awake
 ```
 
 ### API key setup

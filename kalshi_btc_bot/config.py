@@ -33,8 +33,13 @@ MIN_VOLUME          = 50
 MAX_ASK             = 0.45
 MAX_SPREAD          = 0.05       # max 5c bid/ask spread
 MAX_SPREAD_PCT      = 0.25       # max spread as 25% of ask
-STRONG_EDGE_PRICE_IMPROVE = 0.00 # always cross the ask to ensure IOC fills
-ENTRY_PRICE_IMPROVE_CENTS = 4    # cross by 4c on all IOC entries
+# 2026-07-06: was a flat ENTRY_PRICE_IMPROVE_CENTS=4 cross on every entry regardless
+# of price, sourced from the ladder's up-to-LADDER_CACHE_SECONDS-old snapshot. On a
+# cheap contract (e.g. ask=$0.13) that flat 4c cross alone produced an instant ~-35%
+# mark-to-bid loss on fill, tripping STOP_LOSS_PCT with zero real BTC movement.
+# Replaced with a fresh single-ticker quote fetch immediately before order
+# submission (Portfolio._fresh_quote) and a limit set to that live best ask
+# directly — no artificial cross needed since the quote is no longer stale.
 MIN_HOURS           = 0.10       # 6 min — keeps entries clear of the TIME_EXIT_MINS kill zone
 MAX_HOURS           = 4.0
 MAX_OTM_T           = 100

@@ -67,6 +67,9 @@ class PositionManager:
 
             if ask <= 0:
                 continue
+            if bid > 0 and bid >= ask:
+                print(f"  ⚠️  {ticker[-18:]} crossed quote bid=${bid:.4f} >= ask=${ask:.4f} — skipping this cycle")
+                continue
 
             entry    = pos["entry"]
             peak     = pos.get("peak", entry)

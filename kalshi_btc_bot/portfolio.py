@@ -13,9 +13,8 @@ from .config import (
     MAX_EXPOSURE_PCT, MAX_POSITIONS, MAX_TRADE_PCT, MIN_CASH_FLOOR,
     MIN_CASH_PCT, NO_TRADE_PCT, PAPER_CAPITAL, PAPER_TRADING,
     EXIT_RETRY_COOLDOWN, FORCE_EXIT_SLIPPAGE_CENTS, SESSION_STOP_PCT,
-    UNTRACKED_EXPOSURE_LIMIT, MAX_ASK, STRONG_EDGE_PRICE_IMPROVE,
-    ENTRY_PRICE_IMPROVE_CENTS, KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS,
-    SNIPE_TRADE_PCT,
+    UNTRACKED_EXPOSURE_LIMIT, MAX_ASK, MAX_SPREAD, MAX_SPREAD_PCT,
+    KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS, SNIPE_TRADE_PCT,
 )
 
 # ─────────────────────────────────────────────
@@ -243,20 +242,34 @@ class Portfolio:
             payload["reduce_only"] = True
         return payload
 
-    def entry_limit_price(self, ask: float, true_prob: float) -> float:
-        edge = true_prob - ask
-        if edge < STRONG_EDGE_PRICE_IMPROVE:
-            return ask
-        return min(MAX_ASK, ask + ENTRY_PRICE_IMPROVE_CENTS / 100)
+    def _fresh_quote(self, ticker: str) -> tuple:
+        """Fetch the live best bid/ask for `ticker` directly, bypassing the
+        ladder's up-to-LADDER_CACHE_SECONDS-old snapshot, so entries price off
+        the actual current market rather than a quote that may have moved.
+        Returns (0.0, 0.0) on any failure so the caller aborts the trade
+        rather than acting on stale/fallback data."""
+        try:
+            m   = self.client._request("GET", f"/markets/{ticker}", timeout=8)
+            mkt = m.get("market", m)
+            bid = float(mkt.get("yes_bid_dollars") or 0)
+            ask = float(mkt.get("yes_ask_dollars") or 0)
+            return bid, ask
+        except Exception:
+            return 0.0, 0.0
 
     def buy(self, contract: dict, true_prob: float, is_snipe: bool = False) -> bool:
         """Buy YES contracts. Position size is Kelly-derived (quarter-Kelly, capped)
         for normal entries, or fixed SNIPE_TRADE_PCT for is_snipe entries — Kelly
         sizing off a noisy deep-OTM tail probability isn't trustworthy enough to
         let it drive size on a lottery-ticket bet."""
-        ticker = contract["ticker"]
-        ask    = contract["ask"]
-        limit  = self.entry_limit_price(ask, true_prob)
+        ticker    = contract["ticker"]
+        bid, ask  = self._fresh_quote(ticker)
+        if ask <= 0 or bid <= 0 or ask <= bid or ask > MAX_ASK:
+            return False
+        spread = ask - bid
+        if spread > MAX_SPREAD or spread / ask > MAX_SPREAD_PCT:
+            return False
+        limit = ask
 
         with self.lock:
             if ticker in self.positions:
@@ -289,8 +302,7 @@ class Portfolio:
                 )
                 filled = float(result.get("fill_count", 0))
                 if filled <= 0:
-                    improve = f" limit=${limit:.4f}" if limit > ask else ""
-                    print(f"  ⚠️  BUY IOC not filled{improve}")
+                    print(f"  ⚠️  BUY IOC not filled (limit=${limit:.4f})")
                     return False
                 ask   = float(result.get("average_fill_price", ask))
                 count = int(filled)
@@ -323,18 +335,22 @@ class Portfolio:
         edge     = true_prob - ask
         itm_str  = "✅ITM" if contract["itm"] else ("❌OTM " + str(round(contract["otm_dist"])))
         mode     = "[PAPER] " if PAPER_TRADING else ""
-        improve  = f" limit=${limit:.4f}" if limit > contract["ask"] else ""
         tag      = "🎯SNIPE " if is_snipe else ""
         print(f"  📥 {mode}{tag}BUY [{contract['type']:5}] {ticker[-22:]} "
-              f"x{count} @ ${ask:.4f}{improve} true={true_prob:.0%} edge={edge:.0%} {itm_str}")
+              f"x{count} @ ${ask:.4f} true={true_prob:.0%} edge={edge:.0%} {itm_str}")
         self._log_trade("buy", ticker, "yes", count, ask, true_prob,
                          reason="snipe" if is_snipe else "")
         return True
 
     def buy_no(self, contract: dict, true_prob: float) -> bool:
         """Buy NO contracts (fade an overpriced YES)."""
-        ticker  = contract["ticker"]
-        yes_ask = contract["ask"]
+        ticker       = contract["ticker"]
+        bid, yes_ask = self._fresh_quote(ticker)
+        if yes_ask <= 0 or bid <= 0 or yes_ask <= bid:
+            return False
+        spread = yes_ask - bid
+        if spread > MAX_SPREAD or spread / yes_ask > MAX_SPREAD_PCT:
+            return False
         no_cost = 1.0 - yes_ask
 
         with self.lock:
