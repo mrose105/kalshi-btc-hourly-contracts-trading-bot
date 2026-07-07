@@ -257,6 +257,69 @@ class Portfolio:
         except Exception:
             return 0.0, 0.0
 
+    def _orderbook(self, ticker: str) -> dict:
+        """Fetch live order-book depth for `ticker`. Only resting bids exist on
+        Kalshi's book (both sides are buy orders — "selling" YES is a NO bid) —
+        yes_levels are resting buy-YES orders, no_levels are resting buy-NO
+        orders. Returns {} on failure so callers can treat it as no liquidity."""
+        try:
+            book = self.client.get_orderbook(ticker) or {}
+            return {"yes": book.get("yes") or [], "no": book.get("no") or []}
+        except Exception:
+            return {"yes": [], "no": []}
+
+    @staticmethod
+    def _walk_book(levels: list, target_qty: int, transform=None) -> tuple:
+        """Simulate an IOC fill against real resting depth instead of assuming
+        infinite size at the flat top-of-book quote — paper mode was sizing
+        positions (hundreds-to-thousands of contracts) purely off dollar budget
+        with no check against what's actually resting in the book (typically
+        only 1-4k contracts total, spread across many price levels). Walks
+        levels best-price-first, consuming worse levels only once better ones
+        are exhausted, so size beyond real depth gets a realistically worse
+        blended price instead of a fantasy fill. `transform` converts a
+        complementary-side price (cents) into the effective price for this
+        side (e.g. buying YES matches NO bids at effective price 100-p).
+        Returns (filled_qty, avg_price_dollars); (0, 0.0) if no depth at all."""
+        if not levels or target_qty <= 0:
+            return 0, 0.0
+        parsed = [Portfolio._parse_level(lv) for lv in levels]
+        parsed = [lv for lv in parsed if lv is not None]
+        ordered = sorted(parsed, key=lambda lv: lv[0], reverse=True)
+        filled  = 0
+        cost_c  = 0.0
+        for price_c, qty in ordered:
+            if filled >= target_qty:
+                break
+            take = min(int(qty), target_qty - filled)
+            if take <= 0:
+                continue
+            eff  = transform(price_c) if transform else price_c
+            cost_c += take * eff
+            filled += take
+        if filled == 0:
+            return 0, 0.0
+        return filled, (cost_c / filled) / 100.0
+
+    @staticmethod
+    def _parse_level(lv) -> tuple | None:
+        """Normalize one orderbook level to (price_cents, qty) regardless of
+        whether the API returns [price, qty] pairs or {"price":.., "quantity":..}
+        objects — response shape isn't pinned down against a live orderbook
+        response, so this fails soft (skips the level) rather than crashing a
+        live sell/buy on an unexpected format."""
+        try:
+            if isinstance(lv, (list, tuple)) and len(lv) >= 2:
+                return float(lv[0]), float(lv[1])
+            if isinstance(lv, dict):
+                price = lv.get("price", lv.get("yes_price", lv.get("no_price")))
+                qty   = lv.get("quantity", lv.get("qty", lv.get("count")))
+                if price is not None and qty is not None:
+                    return float(price), float(qty)
+        except (TypeError, ValueError):
+            pass
+        return None
+
     def buy(self, contract: dict, true_prob: float, is_snipe: bool = False) -> bool:
         """Buy YES contracts. Position size is Kelly-derived (quarter-Kelly, capped)
         for normal entries, or fixed SNIPE_TRADE_PCT for is_snipe entries — Kelly
@@ -270,6 +333,8 @@ class Portfolio:
         if spread > MAX_SPREAD or spread / ask > MAX_SPREAD_PCT:
             return False
         limit = ask
+
+        no_levels = self._orderbook(ticker)["no"] if PAPER_TRADING else []
 
         with self.lock:
             if ticker in self.positions:
@@ -289,8 +354,16 @@ class Portfolio:
                 return False
 
             if PAPER_TRADING:
-                ask = limit
-                cost = ask * count
+                # Cap the fill to real resting depth (buying YES matches NO bids,
+                # effective yes price = 1 - no_price) instead of assuming the
+                # full Kelly-sized count fills at the flat quoted ask.
+                filled, fill_price = self._walk_book(
+                    no_levels, count, transform=lambda p: 100 - p)
+                if filled <= 0:
+                    return False
+                count = filled
+                ask   = fill_price
+                cost  = ask * count
                 self.real_cash -= cost
 
         if not PAPER_TRADING:
@@ -353,6 +426,8 @@ class Portfolio:
             return False
         no_cost = 1.0 - yes_ask
 
+        yes_levels = self._orderbook(ticker)["yes"] if PAPER_TRADING else []
+
         with self.lock:
             if ticker in self.positions:
                 return False
@@ -367,6 +442,14 @@ class Portfolio:
                 return False
 
             if PAPER_TRADING:
+                # Buying NO matches resting YES bids (effective no price = 1 - yes_price).
+                filled, fill_price = self._walk_book(
+                    yes_levels, count, transform=lambda p: 100 - p)
+                if filled <= 0:
+                    return False
+                count   = filled
+                no_cost = fill_price
+                cost    = no_cost * count
                 self.real_cash -= cost
 
         if not PAPER_TRADING:
@@ -421,14 +504,27 @@ class Portfolio:
             requested = count
             is_no = pos.get("is_no", False)
 
-            if PAPER_TRADING:
-                self.real_cash += bid * count
-            else:
+            if not PAPER_TRADING:
                 now = time.time()
                 last_attempt = pos.get("last_exit_attempt", 0)
                 if now - last_attempt < EXIT_RETRY_COOLDOWN:
                     return False
                 self.positions[ticker]["last_exit_attempt"] = now
+
+        if PAPER_TRADING:
+            # Closing a YES long matches resting YES bids directly (no price
+            # transform); closing a NO long matches resting NO bids directly.
+            levels = self._orderbook(ticker)["no" if is_no else "yes"]
+            filled, fill_price = self._walk_book(levels, requested)
+            if filled <= 0:
+                print(f"  ⚠️  SELL no depth: {ticker[-22:]} reason={reason}")
+                return False
+            with self.lock:
+                if ticker not in self.positions:
+                    return False
+                count = min(filled, self.positions[ticker]["count"])
+                bid   = fill_price
+                self.real_cash += bid * count
 
         if not PAPER_TRADING:
             filled_count = 0

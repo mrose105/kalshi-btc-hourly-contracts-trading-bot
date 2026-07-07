@@ -153,6 +153,7 @@ expiry    Kalshi IV   Our EWMA    Edge (IV−EWMA)
 | Stop loss | 35% per position, scaled tighter as expiry nears (gated: won't fire once inside the final OTM time-exit window if already ITM) |
 | Entry type | Immediate-or-cancel only (no resting orders); every entry re-fetches the live best bid/ask right before order placement and fills at that fresh ask (YES) / NO-implied price — never a cached ladder quote |
 | Entry spread filter | Skipped if bid/ask spread > 5¢ or > 25% of ask, re-validated against the fresh quote at order time |
+| Paper-mode fills | Depth-capped against the live Kalshi order book (`/markets/{ticker}/orderbook`), not a flat quoted price — a paper order walks resting levels and fills at a realistic blended price, partial-filling or rejecting if size exceeds actual resting depth. Live mode was never affected (real Kalshi IOC orders already return actual `fill_count`/`average_fill_price`) |
 
 Position sizing uses **quarter-Kelly** with a 2.5% cap:
 ```
