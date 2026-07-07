@@ -13,10 +13,10 @@ from .config import (
     BOUNDARY_RISK_MIN_LOSS, BOUNDARY_RISK_MINS, GAMMA_HIGH_THRESHOLD,
     GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT,
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
-    MOMENTUM_LOCK_PCT, PEAK_GIVEBACK_FRACTION, PEAK_GIVEBACK_MIN_BID,
+    MOMENTUM_LOCK_PCT, PAPER_TRADING, PEAK_GIVEBACK_FRACTION, PEAK_GIVEBACK_MIN_BID,
     PEAK_GIVEBACK_MIN_PEAK, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT,
     SNIPE_PROFIT_LOCK_MIN_BID, SNIPE_PROFIT_LOCK_PCT, STOP_LOSS_PCT,
-    STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS,
+    STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS, TIME_EXIT_NEAR_DIST,
 )
 from .contracts import is_in_money, otm_distance
 
@@ -55,14 +55,23 @@ class PositionManager:
             bid, ask, close_time, status = self.get_price(ticker)
 
             # Detect settled/expired contracts and purge from local tracking.
-            # Kalshi auto-credits the settlement payout; next portfolio.sync() reflects it.
+            # Live mode: Kalshi auto-credits the settlement payout, next portfolio.sync()
+            # reflects it, so a plain delete is correct. Paper mode has no real exchange
+            # crediting cash — sync_step() never calls portfolio.sync() for paper — so we
+            # must credit/debit the settlement value ourselves via portfolio.sell() or
+            # paper P&L silently loses the cost basis on every settled position.
             _SETTLED = {"finalized", "settled", "closed", "determined"}
             _expired = _hours_from(close_time) < -0.05 and bid == 0 and ask == 0
             if status in _SETTLED or _expired:
                 itm_flag = is_in_money(pos["contract"], spot)
                 print(f"  🏁 SETTLED {ticker[-22:]} status={status or 'expired'} "
                       f"ITM={'✅' if itm_flag else '❌'} — removing from tracking")
-                del self.portfolio.positions[ticker]
+                if PAPER_TRADING:
+                    is_no = pos.get("is_no", False)
+                    won   = (not itm_flag) if is_no else itm_flag
+                    self.portfolio.sell(ticker, 1.0 if won else 0.0, reason="expired_settled")
+                else:
+                    del self.portfolio.positions[ticker]
                 continue
 
             if ask <= 0:
@@ -217,8 +226,11 @@ class PositionManager:
                     self.portfolio.sell(ticker, bid, reason="mega_profit 🚀")
                     continue
 
-            # TIER 5 — Time exit OTM
-            if mins_left < TIME_EXIT_MINS and not itm and bid > 0:
+            # TIER 5 — Time exit OTM. Skipped while still within TIME_EXIT_NEAR_DIST of the
+            # boundary — a near-boundary position can still flip ITM by the buzzer, so only
+            # force-exit once it's far enough OTM that a flip is no longer realistic.
+            if (mins_left < TIME_EXIT_MINS and not itm and bid > 0
+                    and abs(dist) > TIME_EXIT_NEAR_DIST):
                 self.portfolio.sell(ticker, bid, reason="time_exit_OTM")
                 continue
 

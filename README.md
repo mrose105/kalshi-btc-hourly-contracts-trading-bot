@@ -106,7 +106,7 @@ Edge calculation uses a lognormal GBM pricer with regime-conditional drift. Vol 
 | 3.75 | Snipe-only: up ≥150% + true\_prob fading 2 ticks + bid ≥ 12¢ | Snipe reversal lock |
 | **3.5** | **Bid ≥ 75¢** | **Near settlement** — captures vol-compression plays entered at 2–4¢ without exiting early at Tier 4 (applies to snipes too) |
 | 4 | Up 300% (non-snipe only) | Mega profit |
-| 5 | < 3 min left + OTM | Time exit |
+| 5 | < 3 min left + OTM + still > 15 points from the strike boundary | Time exit (near-boundary positions ride to settlement instead) |
 | 5.25 | ITM but marginal (within 15 points of boundary), down ≥10%, < 10 min left, and true\_prob still fading (or down ≥65% unconditional hard stop) | Boundary risk |
 | 6 | Down 35%/time\_urgency + > 18 min left (gated off in the final `TIME_EXIT_MINS` if already ITM) | Stop loss |
 | — | Mid price ≤ 0.5¢ | Safety near-zero exit |

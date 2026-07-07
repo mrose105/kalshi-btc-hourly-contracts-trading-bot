@@ -93,6 +93,11 @@ MOMENTUM_LOCK_PCT   = 1.00       # TIER 2: up 100% + < 9 min
 STRONG_PROFIT_PCT   = 1.50       # TIER 3: up 150% + < 15 min
 PROFIT_EXIT_MEGA    = 3.00       # TIER 4: up 300%, no conditions
 TIME_EXIT_MINS      = 3          # TIER 5: OTM with < 3 min left — let late-window mispricing play out
+TIME_EXIT_NEAR_DIST = 15         # TIER 5 override: skip the force-exit above if still within this
+                                  # many points of the strike boundary — a near-boundary OTM position
+                                  # can flip ITM by the buzzer, so only force-exit while still far OTM.
+                                  # 2026-07-07: added after a snipe was force-closed for a modest gain
+                                  # at TIME_EXIT_MINS while sitting close to the boundary.
 STOP_LOSS_PCT       = 0.35       # TIER 6: base stop. 2026-07-06: tightened from 0.60 (which had
                                   # itself been widened from 0.40 on 2026-07-01 "to allow late
                                   # recoveries") — cut losers quickly, let winners ride via the
