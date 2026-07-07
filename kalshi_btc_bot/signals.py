@@ -3,10 +3,24 @@ from .config import (
     MAX_HOURS, MAX_OTM_B, MAX_OTM_T, MIN_HOURS, MIN_RANGE_BOUNDARY_BUFFER,
     NO_CASH_MIN_PCT, NO_DIST_MAX, NO_DIST_MIN, NO_HOURS_MAX, NO_HOURS_MIN,
     NO_OVERPRICING_MIN, NO_TRUE_PROB_MAX, NO_YES_ASK_MAX, NO_YES_ASK_MIN, TIME_EXIT_MINS,
-    SNIPE_MAX_ENTRY_PRICE, SNIPE_MIN_EDGE_RATIO,
+    SNIPE_MAX_ENTRY_PRICE, SNIPE_MIN_EDGE_RATIO, STRIKE_CLUSTER_DIST,
 )
 # MIN_EDGE and MIN_EDGE_COMPRESSION intentionally NOT imported as local names —
 # read via _C.MIN_EDGE so that run_backtest()'s C.MIN_EDGE = override takes effect.
+
+def _clustered(ticker: str, strike: float, existing: dict) -> bool:
+    """True if `ticker` (in the same expiry window, i.e. same ticker prefix
+    minus the strike suffix) has a strike within STRIKE_CLUSTER_DIST of an
+    already-open position. Prevents filling every MAX_POSITIONS slot with
+    correlated same-direction bets that a single BTC move busts together."""
+    exp_key = ticker.rsplit("-", 1)[0]
+    for tk, pos in existing.items():
+        if tk.rsplit("-", 1)[0] != exp_key:
+            continue
+        other_strike = pos["contract"].get("strike", 0)
+        if abs(other_strike - strike) < STRIKE_CLUSTER_DIST:
+            return True
+    return False
 
 # ─────────────────────────────────────────────
 # SIGNAL ENGINE
@@ -38,6 +52,8 @@ class SignalEngine:
 
         for c in ladder:
             if c["ticker"] in existing:
+                continue
+            if _clustered(c["ticker"], c["strike"], existing):
                 continue
             if c["hours"] < MIN_HOURS or c["hours"] > MAX_HOURS:
                 continue
@@ -133,6 +149,8 @@ class SignalEngine:
         for c in ladder:
             if c["ticker"] in existing:
                 continue
+            if _clustered(c["ticker"], c["strike"], existing):
+                continue
             if c["hours"] < MIN_HOURS or c["hours"] > MAX_HOURS:
                 continue
             if c["ask"] <= 0 or c["ask"] > SNIPE_MAX_ENTRY_PRICE:
@@ -171,6 +189,8 @@ class SignalEngine:
 
         for c in ladder:
             if c["ticker"] in existing:
+                continue
+            if _clustered(c["ticker"], c["strike"], existing):
                 continue
             if c["hours"] < NO_HOURS_MIN or c["hours"] > NO_HOURS_MAX:
                 continue

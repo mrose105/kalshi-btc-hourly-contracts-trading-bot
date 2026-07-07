@@ -147,6 +147,7 @@ expiry    Kalshi IV   Our EWMA    Edge (IV−EWMA)
 | Max portfolio exposure | 18% of account |
 | Max position size | 2.5% of account (quarter-Kelly sized, capped at 2.5%) |
 | Max concurrent positions | 4 |
+| Strike clustering | New entries blocked within $150 of an existing open position's strike in the same expiry window — caps directional correlation across positions, not just capital |
 | Cash reserve | 5% minimum |
 | Session stop | New entries halt if account is down 3% from its running peak (high-water mark, not just the session's starting balance) |
 | Stop loss | 35% per position, scaled tighter as expiry nears (gated: won't fire once inside the final OTM time-exit window if already ITM) |

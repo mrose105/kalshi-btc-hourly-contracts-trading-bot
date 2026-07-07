@@ -20,6 +20,14 @@ MAX_TRADE_PCT       = 0.025      # max 2.5% of real portfolio per trade (was 0.0
 NO_TRADE_PCT        = 0.02       # max 2% of real portfolio per MISPRICE_NO trade (was 0.04)
 ENABLE_MISPRICE_NO = False      # disabled live until pending NO order reconciliation is fixed
 MAX_POSITIONS       = 4
+STRIKE_CLUSTER_DIST = 150        # skip a new entry if its strike is within this many
+                                  # dollars of an existing open position's strike in the
+                                  # same expiry window — MAX_POSITIONS caps capital
+                                  # concentration but not directional correlation. 2026-07-07:
+                                  # observed live — 4 RANGE positions opened within 2 min on
+                                  # adjacent strikes (62550-62850), then one BTC breakout
+                                  # busted all 4 simultaneously and filled every slot with
+                                  # dead positions, locking out a genuinely better ATM entry.
 SESSION_STOP_PCT    = 0.03       # stop NEW entries if down 3% (was 0.05)
 MIN_CASH_FLOOR      = 0.25       # never trade with less than $0.25
 UNTRACKED_EXPOSURE_LIMIT = 0.25  # block new trades if live exposure exceeds tracked exposure by this much
