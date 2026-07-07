@@ -3,7 +3,7 @@ from .config import (
     MAX_HOURS, MAX_OTM_B, MAX_OTM_T, MIN_HOURS, MIN_RANGE_BOUNDARY_BUFFER,
     NO_CASH_MIN_PCT, NO_DIST_MAX, NO_DIST_MIN, NO_HOURS_MAX, NO_HOURS_MIN,
     NO_OVERPRICING_MIN, NO_TRUE_PROB_MAX, NO_YES_ASK_MAX, NO_YES_ASK_MIN, TIME_EXIT_MINS,
-    SNIPE_MAX_ENTRY_PRICE, SNIPE_MIN_EDGE_RATIO, STRIKE_CLUSTER_DIST,
+    SNIPE_MAX_ENTRY_PRICE, SNIPE_MIN_EDGE_RATIO, SNIPE_MIN_ENTRY_PRICE, STRIKE_CLUSTER_DIST,
 )
 # MIN_EDGE and MIN_EDGE_COMPRESSION intentionally NOT imported as local names —
 # read via _C.MIN_EDGE so that run_backtest()'s C.MIN_EDGE = override takes effect.
@@ -153,7 +153,7 @@ class SignalEngine:
                 continue
             if c["hours"] < MIN_HOURS or c["hours"] > MAX_HOURS:
                 continue
-            if c["ask"] <= 0 or c["ask"] > SNIPE_MAX_ENTRY_PRICE:
+            if c["ask"] < SNIPE_MIN_ENTRY_PRICE or c["ask"] > SNIPE_MAX_ENTRY_PRICE:
                 continue
             ctype = c["type"]
             if use_t:

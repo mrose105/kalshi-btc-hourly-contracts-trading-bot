@@ -135,7 +135,13 @@ BOUNDARY_RISK_HARD_STOP = -0.65  # unconditional cap — fires even without mome
 # with true_prob=8% has only 5pts of raw edge and never wins that ranking even though its
 # ROI (true_prob/ask) is 167%. find_snipe() is a separate ROI-ranked scan so these aren't
 # starved out by the main signal.
-SNIPE_MAX_ENTRY_PRICE = 0.10     # only ask <= this counts as a snipe entry
+SNIPE_MIN_ENTRY_PRICE = 0.10     # 2026-07-07: floor added — trade log showed 1-9c snipes were
+                                  # a coin flip (2 of 3 resolved outcomes settled for a total
+                                  # loss of stake), and none had ever reached the 75c
+                                  # near_settlement tier. Raising the floor screens out the
+                                  # deepest-OTM tickets where the ask is cheap because Kalshi's
+                                  # own model already prices them near-zero, not because of lag.
+SNIPE_MAX_ENTRY_PRICE = 0.25     # widened from 0.10 now that 0.10 is the floor
 SNIPE_MIN_EDGE_RATIO  = 0.30     # true_prob must beat ask by >= 30% (true_prob/ask - 1)
 SNIPE_TRADE_PCT       = 0.02     # sized down vs MAX_TRADE_PCT — tail-probability estimates
                                   # are noisier, so size the bet down rather than Kelly-size
