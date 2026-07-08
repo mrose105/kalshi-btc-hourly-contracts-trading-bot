@@ -265,7 +265,8 @@ class Portfolio:
         try:
             book = self.client.get_orderbook(ticker) or {}
             return {"yes": book.get("yes") or [], "no": book.get("no") or []}
-        except Exception:
+        except Exception as e:
+            print(f"  ⚠️  orderbook fetch failed {ticker[-18:]}: {e}")
             return {"yes": [], "no": []}
 
     @staticmethod
@@ -360,6 +361,8 @@ class Portfolio:
                 filled, fill_price = self._walk_book(
                     no_levels, count, transform=lambda p: 100 - p)
                 if filled <= 0:
+                    print(f"  ⚠️  BUY no depth: {ticker[-22:]} "
+                          f"wanted={count} no_levels={no_levels[:3]}")
                     return False
                 count = filled
                 ask   = fill_price
@@ -446,6 +449,8 @@ class Portfolio:
                 filled, fill_price = self._walk_book(
                     yes_levels, count, transform=lambda p: 100 - p)
                 if filled <= 0:
+                    print(f"  ⚠️  BUY_NO no depth: {ticker[-22:]} "
+                          f"wanted={count} yes_levels={yes_levels[:3]}")
                     return False
                 count   = filled
                 no_cost = fill_price
