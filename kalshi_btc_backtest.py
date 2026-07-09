@@ -260,6 +260,19 @@ def _worst_spot(contract: dict, bar_close: float,
     return bar_close       # ITM — no intrabar stop exposure
 
 
+def _exit_spread(true_p: float, hours_left: float) -> float:
+    """Bid/ask spread used to mark open positions to market. true_prob's
+    vol_t = vol_h * sqrt(hours_left) mechanically collapses to 0/1 as
+    hours_left -> 0, regardless of whether the model's drift/vol assumptions
+    are correct — there's no independent market price to disagree with it.
+    Real Kalshi liquidity thins out near settlement rather than vanishing, so
+    widen the spread as expiry nears instead of letting the model's own
+    certainty stand in for a realistic exit fill."""
+    base  = 0.010 if true_p > 0.35 else 0.020 if true_p > 0.15 else 0.030
+    widen = 1.0 + max(0.0, (0.25 - hours_left) / 0.25) * 2.0  # up to 3x inside final 15 min
+    return base * widen
+
+
 # ─────────────────────────────────────────────
 # BACKTEST PORTFOLIO
 # ─────────────────────────────────────────────
@@ -357,7 +370,7 @@ class BacktestPortfolio:
 
             c      = pos["contract"]
             true_p = dist.true_prob(c, spot, vol, hours_left, regime)
-            spread = 0.010 if true_p > 0.35 else 0.020 if true_p > 0.15 else 0.030
+            spread = _exit_spread(true_p, hours_left)
             bid    = max(0.01, true_p - spread / 2)
             pos["bid_now"] = bid
             if bid > pos["peak"]:
@@ -375,7 +388,7 @@ class BacktestPortfolio:
             worst = _worst_spot(c, spot, bar_high, bar_low)
             if worst != spot:
                 w_tp  = dist.true_prob(c, worst, vol, hours_left, regime)
-                w_bid = max(0.01, w_tp - spread / 2)
+                w_bid = max(0.01, w_tp - _exit_spread(w_tp, hours_left) / 2)
                 w_pnl = (w_bid - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
                 if w_pnl <= -C.STOP_LOSS_PCT:
                     # Stop triggered during the bar — record at actual stop price
