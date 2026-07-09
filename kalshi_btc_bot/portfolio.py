@@ -270,17 +270,23 @@ class Portfolio:
             return {"yes": [], "no": []}
 
     @staticmethod
-    def _walk_book(levels: list, target_qty: int, transform=None) -> tuple:
-        """Simulate an IOC fill against real resting depth instead of assuming
-        infinite size at the flat top-of-book quote — paper mode was sizing
-        positions (hundreds-to-thousands of contracts) purely off dollar budget
-        with no check against what's actually resting in the book (typically
-        only 1-4k contracts total, spread across many price levels). Walks
-        levels best-price-first, consuming worse levels only once better ones
-        are exhausted, so size beyond real depth gets a realistically worse
-        blended price instead of a fantasy fill. `transform` converts a
-        complementary-side price (cents) into the effective price for this
-        side (e.g. buying YES matches NO bids at effective price 100-p).
+    def _walk_book(levels: list, target_qty: int, transform=None,
+                    limit_price_c: float = None) -> tuple:
+        """Simulate an IOC-limit fill against real resting depth instead of
+        assuming infinite size at the flat top-of-book quote — paper mode was
+        sizing positions (hundreds-to-thousands of contracts) purely off
+        dollar budget with no check against what's actually resting in the
+        book (typically only 1-4k contracts total, spread across many price
+        levels). Walks levels best-price-first, consuming worse levels only
+        once better ones are exhausted, so size beyond real depth gets a
+        realistically worse blended price instead of a fantasy fill.
+        `transform` converts a complementary-side price (cents) into the
+        effective price for this side (e.g. buying YES matches NO bids at
+        effective price 100-p). `limit_price_c` caps how far the walk can go
+        (cents) — a real IOC-limit order never fills worse than its limit, so
+        without this cap a thin book can blend the fill price far past what
+        the signal was validated against (e.g. a snipe quoted at 17c filling
+        at an average of 37c, blowing through SNIPE_MAX_ENTRY_PRICE).
         Returns (filled_qty, avg_price_dollars); (0, 0.0) if no depth at all."""
         if not levels or target_qty <= 0:
             return 0, 0.0
@@ -292,10 +298,12 @@ class Portfolio:
         for price_c, qty in ordered:
             if filled >= target_qty:
                 break
+            eff = transform(price_c) if transform else price_c
+            if limit_price_c is not None and eff > limit_price_c:
+                break
             take = min(int(qty), target_qty - filled)
             if take <= 0:
                 continue
-            eff  = transform(price_c) if transform else price_c
             cost_c += take * eff
             filled += take
         if filled == 0:
@@ -359,7 +367,8 @@ class Portfolio:
                 # effective yes price = 1 - no_price) instead of assuming the
                 # full Kelly-sized count fills at the flat quoted ask.
                 filled, fill_price = self._walk_book(
-                    no_levels, count, transform=lambda p: 100 - p)
+                    no_levels, count, transform=lambda p: 100 - p,
+                    limit_price_c=limit * 100)
                 if filled <= 0:
                     print(f"  ⚠️  BUY no depth: {ticker[-22:]} "
                           f"wanted={count} no_levels={no_levels[:3]}")
@@ -447,7 +456,8 @@ class Portfolio:
             if PAPER_TRADING:
                 # Buying NO matches resting YES bids (effective no price = 1 - yes_price).
                 filled, fill_price = self._walk_book(
-                    yes_levels, count, transform=lambda p: 100 - p)
+                    yes_levels, count, transform=lambda p: 100 - p,
+                    limit_price_c=no_cost * 100)
                 if filled <= 0:
                     print(f"  ⚠️  BUY_NO no depth: {ticker[-22:]} "
                           f"wanted={count} yes_levels={yes_levels[:3]}")
