@@ -52,7 +52,7 @@ MIN_HOURS           = 0.10       # 6 min — keeps entries clear of the TIME_EXI
 MAX_HOURS           = 4.0
 MAX_OTM_T           = 100
 MAX_OTM_B           = 150
-MIN_RANGE_BOUNDARY_BUFFER = 20   # skip RANGE entries within $20 of either boundary (ITM or
+MIN_RANGE_BOUNDARY_BUFFER = 40   # skip RANGE entries within $40 of either boundary (ITM or
                                   # OTM side), all regimes. Old logic only guarded the OTM side
                                   # (dist < -20) — near-money ITM entries like dist +1..+38 with
                                   # no directional confirmation were let through and flipped OTM
@@ -60,8 +60,13 @@ MIN_RANGE_BOUNDARY_BUFFER = 20   # skip RANGE entries within $20 of either bound
                                   # 2026-07-01/02 overnight session). Widened to 40 and applied
                                   # both-sides/all-regimes on 2026-07-06, which fixed the whipsaw
                                   # but cut entry frequency ~4x vs the Sharpe-5.66 baseline
-                                  # (601 trades/wk -> 143/wk). Narrowed back to 20 same day —
-                                  # matches the old gate's magnitude while keeping the
+                                  # (601 trades/wk -> 143/wk). Narrowed back to 20 same day,
+                                  # but 2026-07-09 head-to-head backtest (identical code,
+                                  # buffer-only diff) showed 20 nearly quintuples max drawdown
+                                  # (-3.5% -> -16.0%) and drags Sharpe/profit-factor/win-rate
+                                  # down vs 40 — reverted to 40, trading entry frequency for
+                                  # materially better risk-adjusted return. Matches the old gate's
+                                  # magnitude while keeping the
                                   # both-sides/all-regimes fix that closed the whipsaw hole.
 
 # Exit thresholds — unified tiered ladder
