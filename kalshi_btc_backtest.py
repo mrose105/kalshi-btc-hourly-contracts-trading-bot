@@ -286,6 +286,19 @@ class BacktestPortfolio:
         self.realized   = 0.0
         self.peak_total = capital
         self.trade_count = 0
+        self._session_day = None
+
+    # Live bot is restarted each session, so SESSION_STOP_PCT resets daily.
+    # Without this the backtest treats the full window as one session — a single
+    # -3% intraday drawdown halts trading for every remaining bar.
+    def reset_session_if_new_day(self, bar_ts: datetime):
+        day = bar_ts.date()
+        if self._session_day is None:
+            self._session_day = day
+            return
+        if day != self._session_day:
+            self._session_day = day
+            self.peak_total = self.total()
 
     def total(self) -> float:
         port = sum(p.get("bid_now", p["entry"]) * p["count"]
@@ -708,6 +721,7 @@ def run_backtest(days: int = 7, capital: float = 50.0,
         regime_bt  = {**regime, "vol": regime["vol"] / scale}
         kalshi_vol = feed.sma_volatility(SMA_VOL_WINDOW) / scale
 
+        portfolio.reset_session_if_new_day(ts)
         portfolio.update(spot, bar_high, bar_low, bar_i, dist, regime_bt, ts)
         portfolio.manage_exits(spot, ts)
 
