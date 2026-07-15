@@ -4,22 +4,24 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 
 ---
 
-## Backtest Results (7-day walk-forward, Jun 9–15 2026)
+## Backtest Results (60-day walk-forward, May 16 – Jul 14 2026)
 
 | Metric | Value |
 |--------|-------|
-| Starting capital | $50 |
-| Final capital | $926 |
-| Return | **+1,753%** |
-| Sharpe ratio | **5.66** |
-| Profit factor | 2.54 |
-| Max drawdown | -6.1% |
-| Trades | 601 |
-| Win rate | 48.8% |
-| Avg hold | 8 min |
-| Vol compression WR | **52.8%** vs 46.8% normal |
+| Starting capital | $5,000 |
+| Final capital | $120,971 |
+| Return | **+2,319%** |
+| Sharpe ratio | **6.52** |
+| Profit factor | 2.95 |
+| Max drawdown | -11.6% |
+| Trades | 1,215 |
+| Win rate | 47.5% |
+| Avg hold | 9 min |
+| Vol compression WR | **53.0%** vs 41.0% normal (70% of P&L from compression trades) |
 
-Backtest uses real BTC-USD 5-minute OHLCV from yfinance. Fills modeled at Kalshi's spread. Intrabar stop simulation uses bar High/Low to replicate live 8-second polling.
+Backtest uses real BTC-USD 5-minute OHLCV from yfinance. Fills modeled at Kalshi's spread (widened dynamically near settlement to reflect thin end-of-hour liquidity). Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session).
+
+Dominant exit by P&L: `momentum_locked` (448 trades, 100% WR, +$161,603). Biggest drag: `stop_loss` (504 trades, -$39,282).
 
 ---
 
@@ -80,17 +82,34 @@ kalshi_btc_backtest.py  — walk-forward backtest with intrabar stop simulation
 
 ## Signal Engine — Entry Logic
 
-Only enters on **RANGE contracts** (BTC stays between two strikes). Filters applied before every entry:
+Two parallel scans on each tick:
+
+- **`find_best`** — probability-edge scan for the highest-edge contract. **RANGE-only in the RANGING regime**; TRENDING / REVERTING / BREAKOUT regimes also consider ABOVE / BELOW contracts, gated by the regime's direction (an ABOVE won't be bought during a confirmed downtrend, and vice-versa).
+- **`find_snipe`** — separate ROI-ranked scan for cheap deep-OTM lottery tickets that `find_best` would never surface (small raw-edge points but 30%+ ROI on a 10–25¢ ask).
+
+Filters applied before every entry:
 
 | Filter | Description |
 |--------|-------------|
-| Expiry gate | 5 min – 4 hours to expiry |
-| OTM gate | ≤ $50 OTM (normal vol), ≤ $150 OTM (vol compressed) |
-| Regime gate | OTM entries blocked in RANGING regime with conf < 60% |
-| Spread filter | Skip if bid/ask spread > 5¢ or 25% of ask |
-| Min edge | raw_edge = true\_prob − kalshi\_ask ≥ 1.5% |
+| Expiry gate | 6 min – 4 hours to expiry (`MIN_HOURS` = 0.10, `MAX_HOURS` = 4.0) |
+| Max ask | Skip anything priced above 45¢ (`MAX_ASK`) — the strategy targets the cheap side of the ladder |
+| Min volume | Ladder rows below 50 contracts of volume are skipped |
+| OTM gate | RANGE: ≤ $50 OTM (normal vol), ≤ $150 OTM (vol compressed). ABOVE/BELOW: ≤ $100 OTM (`MAX_OTM_T`). All tighten dynamically as expiry approaches (≤ $60 OTM inside 30 min; ≤ $30 OTM inside 20 min) |
+| RANGE boundary buffer | Skip RANGE entries within $40 of *either* boundary (`MIN_RANGE_BOUNDARY_BUFFER`), all regimes, unless vol-compressed (structural mispricing exception) |
+| Spread filter | Skip if bid/ask spread > 5¢ or > 25% of ask, re-validated against a fresh single-ticker quote at order time |
+| Min edge | `raw_edge = true_prob − kalshi_ask ≥ 1.5%` (drops to **1.0%** during vol compression) |
+| Strike clustering | Skip if the strike is within $150 of an existing open position's strike in the same expiry window |
+| Time-exit collision | Skip if the entry would immediately land inside the `TIME_EXIT_MINS` OTM force-close window |
 
-Edge calculation uses a lognormal GBM pricer with regime-conditional drift. Vol regime (HIGH/NORMAL/LOW) scales the vol input. During vol compression, the effective edge bar drops to 1.0% and OTM allowance widens.
+**Snipe entry filters** (separate ROI scan):
+
+| Filter | Value |
+|--------|-------|
+| Ask band | 10¢ ≤ ask ≤ 25¢ (`SNIPE_MIN_ENTRY_PRICE` / `SNIPE_MAX_ENTRY_PRICE`) |
+| Min ROI | `true_prob / ask − 1 ≥ 30%` (`SNIPE_MIN_EDGE_RATIO`) |
+| Trade size | 2% of account (`SNIPE_TRADE_PCT`) — sized down vs. `MAX_TRADE_PCT` since tail-probability estimates are noisier |
+
+Edge calculation uses a lognormal GBM pricer with regime-conditional drift. Vol regime (HIGH/NORMAL/LOW) scales the vol input. During vol compression, the effective edge bar drops to 1.0%, the OTM allowance widens to $150, and near-money RANGE contracts get a +1.5¢ structural-underpricing bonus in the ranking.
 
 ---
 
@@ -149,11 +168,14 @@ expiry    Kalshi IV   Our EWMA    Edge (IV−EWMA)
 | Max concurrent positions | 4 |
 | Strike clustering | New entries blocked within $150 of an existing open position's strike in the same expiry window — caps directional correlation across positions, not just capital |
 | Cash reserve | 5% minimum |
-| Session stop | New entries halt if account is down 3% from its running peak (high-water mark, not just the session's starting balance) |
-| Stop loss | 35% per position, scaled tighter as expiry nears (gated: won't fire once inside the final OTM time-exit window if already ITM) |
+| Session stop | New entries halt if account is down 3% from its running peak (high-water mark, not just the session's starting balance). Resets on bot restart |
+| Post-stop cooldown | 5-minute re-entry lockout on any ticker that just stopped out (`STOP_COOLDOWN_SECS`) |
+| Untracked-exposure guard | Blocks new entries if live Kalshi-reported exposure diverges from the bot's tracked exposure by > 25% (`UNTRACKED_EXPOSURE_LIMIT`) — catches orphaned positions from prior crashed sessions before they compound |
+| Stop loss | 35% per position, scaled tighter as expiry nears (gated: won't fire once inside the final OTM time-exit window if already ITM, and only fires with > 18 min left so short-duration binaries resolve via `TIME_EXIT_MINS` / `expiry_settle` instead) |
+| Force-exit slippage | On urgent exits the limit crosses the stale bid by 2¢ (`FORCE_EXIT_SLIPPAGE_CENTS`) to guarantee the fill |
 | Entry type | Immediate-or-cancel only (no resting orders); every entry re-fetches the live best bid/ask right before order placement and fills at that fresh ask (YES) / NO-implied price — never a cached ladder quote |
 | Entry spread filter | Skipped if bid/ask spread > 5¢ or > 25% of ask, re-validated against the fresh quote at order time |
-| Paper-mode fills | Depth-capped against the live Kalshi order book (`/markets/{ticker}/orderbook`), not a flat quoted price — a paper order walks resting levels and fills at a realistic blended price, partial-filling or rejecting if size exceeds actual resting depth. Live mode was never affected (real Kalshi IOC orders already return actual `fill_count`/`average_fill_price`) |
+| Paper-mode fills | Depth-capped against the live Kalshi order book (`/markets/{ticker}/orderbook`), not a flat quoted price — a paper order walks resting levels up to its own IOC limit price, partial-filling or rejecting if size exceeds actual resting depth at that price. Live mode was never affected (real Kalshi IOC orders already return actual `fill_count`/`average_fill_price`) |
 
 Position sizing uses **quarter-Kelly** with a 2.5% cap:
 ```
@@ -169,10 +191,10 @@ size = min(f* × 0.25, 0.025) × account_value
 
 ```bash
 pip install -r requirements.txt
-python3 kalshi_btc_backtest.py --days 7 --capital 50
-python3 kalshi_btc_backtest.py --days 7 --capital 50 --vol-surface   # with implied vol term structure
-python3 kalshi_btc_backtest.py --days 7 --capital 50 --no-stop       # compare without stop loss
-python3 kalshi_btc_backtest.py --days 7 --capital 50 --verbose       # print every trade entry
+python3 kalshi_btc_backtest.py --days 60 --capital 5000               # matches the results table above
+python3 kalshi_btc_backtest.py --days 7  --capital 5000 --vol-surface # with implied vol term structure
+python3 kalshi_btc_backtest.py --days 7  --capital 5000 --no-stop     # compare without stop loss
+python3 kalshi_btc_backtest.py --days 7  --capital 5000 --verbose     # print every trade entry
 ```
 
 ### Live / Paper trading
