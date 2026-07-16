@@ -19,6 +19,7 @@ from .portfolio import Portfolio
 from .positions import PositionManager
 from .regime import RegimeEngine
 from .signals import SignalEngine
+from . import live_view
 
 # ─────────────────────────────────────────────
 # MAIN
@@ -47,6 +48,10 @@ def main():
     portfolio = Portfolio(client)
     signal_e  = SignalEngine(dist)
     pos_mgr   = PositionManager(client, portfolio, dist, feed)
+
+    print("  Bootstrapping 24h of 5-min bars for vol_ratio parity...")
+    n_bars = feed.bootstrap_history(hours=24)
+    print(f"  ✓ {n_bars} 5-min bars loaded")
 
     print("  Warming up (60s)...")
     for _ in range(15):
@@ -100,17 +105,23 @@ def main():
         regime = regime_e.detect(feed)
         ladder = ladder_e.get(spot)
 
-        print(f"[{t}] BTC=${spot:,.0f} | "
-              f"{regime['regime']} {regime['direction']} "
-              f"conf={regime['conf']:.0%} | "
-              f"mom={regime['mom']:+.3%} z={regime['zscore']:+.2f} | "
-              f"cash=${portfolio.real_cash:.2f} pos=${portfolio.exposure():.2f} "
-              f"n={len(portfolio.positions)}")
-
+        header = (f"[{t}] BTC=${spot:,.0f} | "
+                  f"{regime['regime']} {regime['direction']} "
+                  f"conf={regime['conf']:.0%} | "
+                  f"mom={regime['mom']:+.3%} z={regime['zscore']:+.2f} | "
+                  f"cash=${portfolio.real_cash:.2f} pos=${portfolio.exposure():.2f} "
+                  f"n={len(portfolio.positions)}")
+        ladder_rows: list[str] = []
         if ladder:
             for c in sorted(ladder, key=lambda x: abs(x["otm_dist"]))[:8]:
-                print(f"  📋 {c['ticker'][-18:]} ask=${c['ask']:.2f} bid=${c['bid']:.2f} "
-                      f"dist={c['otm_dist']:+.0f} vol={c['vol']:.0f} hrs={c['hours']:.2f}")
+                ladder_rows.append(
+                    f"  📋 {c['ticker'][-18:]} ask=${c['ask']:.2f} bid=${c['bid']:.2f} "
+                    f"dist={c['otm_dist']:+.0f} vol={c['vol']:.0f} hrs={c['hours']:.2f}"
+                )
+        if not live_view.ENABLED:
+            print(header)
+            for row in ladder_rows:
+                print(row)
 
         if portfolio.can_trade() and ladder:
             # Filter out recently-stopped tickers. Reassignment happens under
@@ -128,15 +139,23 @@ def main():
             sig = signal_e.find_best(
                 spot, vol, regime, _ladder, portfolio.positions)
             if sig:
-                print(f"\n  🎯 [{sig['type']}] {sig['ticker'][-22:]}")
-                print(f"     Window: {sig['label']} | "
-                      f"Ask: ${sig['ask']:.4f} | "
-                      f"True: {sig['true_prob']:.0%} | "
-                      f"Edge: {sig['edge']:.0%}")
-                print(f"     ITM: {'✅' if sig['itm'] else '❌'} "
-                      f"dist={sig['otm_dist']:+.0f} | "
-                      f"Hours: {sig['hours']:.2f}h | "
-                      f"Vol: {sig['vol']:.0f}\n")
+                if live_view.ENABLED:
+                    itm = "✅" if sig["itm"] else f"OTM{sig['otm_dist']:+.0f}"
+                    live_view.log_event(
+                        f"🎯 SIGNAL {sig['type']} {sig['ticker'][-18:]} "
+                        f"ask=${sig['ask']:.3f} true={sig['true_prob']:.0%} "
+                        f"edge={sig['edge']:.0%} {itm}"
+                    )
+                else:
+                    print(f"\n  🎯 [{sig['type']}] {sig['ticker'][-22:]}")
+                    print(f"     Window: {sig['label']} | "
+                          f"Ask: ${sig['ask']:.4f} | "
+                          f"True: {sig['true_prob']:.0%} | "
+                          f"Edge: {sig['edge']:.0%}")
+                    print(f"     ITM: {'✅' if sig['itm'] else '❌'} "
+                          f"dist={sig['otm_dist']:+.0f} | "
+                          f"Hours: {sig['hours']:.2f}h | "
+                          f"Vol: {sig['vol']:.0f}\n")
                 portfolio.buy(sig, sig["true_prob"])
 
             # NO scalp signal
@@ -146,12 +165,19 @@ def main():
                     spot, vol, regime, _ladder, portfolio.positions,
                     portfolio.real_cash, portfolio.start_total)
             if no_sig:
-                print(f"\n  🎯 [MISPRICE_NO] {no_sig['ticker'][-22:]}")
-                print(f"     YES ask=${no_sig['ask']:.2f} true={no_sig['true_prob']:.0%} "
-                      f"overpriced_by={no_sig['edge_pct']:.0f}% "
-                      f"NO_cost=${no_sig['no_cost']:.2f} "
-                      f"dist={no_sig['otm_dist']:+.0f} "
-                      f"{no_sig['hours']*60:.0f}m left")
+                if live_view.ENABLED:
+                    live_view.log_event(
+                        f"🎯 SIGNAL MISPRICE_NO {no_sig['ticker'][-18:]} "
+                        f"YES_ask=${no_sig['ask']:.2f} overpriced={no_sig['edge_pct']:.0f}% "
+                        f"NO_cost=${no_sig['no_cost']:.2f} {no_sig['hours']*60:.0f}m"
+                    )
+                else:
+                    print(f"\n  🎯 [MISPRICE_NO] {no_sig['ticker'][-22:]}")
+                    print(f"     YES ask=${no_sig['ask']:.2f} true={no_sig['true_prob']:.0%} "
+                          f"overpriced_by={no_sig['edge_pct']:.0f}% "
+                          f"NO_cost=${no_sig['no_cost']:.2f} "
+                          f"dist={no_sig['otm_dist']:+.0f} "
+                          f"{no_sig['hours']*60:.0f}m left")
                 portfolio.buy_no(no_sig, no_sig["true_prob"])
 
             # SNIPE signal — deep-OTM lottery tickets, ROI-ranked, separate scan from
@@ -159,18 +185,28 @@ def main():
             # starved out by the main edge ranking)
             snipe_sig = signal_e.find_snipe(spot, vol, regime, _ladder, portfolio.positions)
             if snipe_sig:
-                print(f"\n  🎯 [SNIPE] {snipe_sig['ticker'][-22:]}")
-                print(f"     Window: {snipe_sig['label']} | "
-                      f"Ask: ${snipe_sig['ask']:.4f} | "
-                      f"True: {snipe_sig['true_prob']:.0%} | "
-                      f"ROI edge: {snipe_sig['edge_ratio']:.0%} | "
-                      f"dist={snipe_sig['otm_dist']:+.0f} | "
-                      f"Hours: {snipe_sig['hours']:.2f}h\n")
+                if live_view.ENABLED:
+                    live_view.log_event(
+                        f"🎯 SIGNAL SNIPE {snipe_sig['ticker'][-18:]} "
+                        f"ask=${snipe_sig['ask']:.3f} true={snipe_sig['true_prob']:.0%} "
+                        f"ROI={snipe_sig['edge_ratio']:.0%} dist={snipe_sig['otm_dist']:+.0f}"
+                    )
+                else:
+                    print(f"\n  🎯 [SNIPE] {snipe_sig['ticker'][-22:]}")
+                    print(f"     Window: {snipe_sig['label']} | "
+                          f"Ask: ${snipe_sig['ask']:.4f} | "
+                          f"True: {snipe_sig['true_prob']:.0%} | "
+                          f"ROI edge: {snipe_sig['edge_ratio']:.0%} | "
+                          f"dist={snipe_sig['otm_dist']:+.0f} | "
+                          f"Hours: {snipe_sig['hours']:.2f}h\n")
                 portfolio.buy(snipe_sig, snipe_sig["true_prob"], is_snipe=True)
 
-            if not sig and not no_sig and not snipe_sig:
+            if not sig and not no_sig and not snipe_sig and not live_view.ENABLED:
                 cd_str = f" [{len(_cd)} cooling]" if _cd else ""
                 print(f"  — No edge (ladder: {len(_ladder)} contracts{cd_str})")
+
+        if live_view.ENABLED:
+            live_view.render(header, ladder_rows, portfolio)
 
     def summary_step():
         portfolio.summary()

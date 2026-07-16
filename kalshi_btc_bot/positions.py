@@ -19,6 +19,7 @@ from .config import (
     STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS, TIME_EXIT_NEAR_DIST,
 )
 from .contracts import is_in_money, otm_distance
+from . import live_view
 
 # ─────────────────────────────────────────────
 # POSITION MANAGER — exits NEVER blocked
@@ -123,10 +124,17 @@ class PositionManager:
                 repriced   = no_pnl_pct > 0.15
                 rep_str    = "repriced:YES ⬆" if repriced else "repriced:NO  "
 
-                print(f"  👁  {ticker[-22:]:<22} bid=${bid:.4f} "
-                      f"pnl={no_pnl_pct:+.0%} true={true_prob:.0%} "
-                      f"{'✅' if itm else '❌'} dist={dist:+.0f} "
-                      f"{rep_str} {mins_left:.0f}m left")
+                if live_view.ENABLED:
+                    live_view.update_position(ticker, {
+                        "bid": bid, "pnl_pct": no_pnl_pct, "true_prob": true_prob,
+                        "itm": itm, "dist": dist, "mins_left": mins_left,
+                        "is_snipe": False,
+                    })
+                else:
+                    print(f"  👁  {ticker[-22:]:<22} bid=${bid:.4f} "
+                          f"pnl={no_pnl_pct:+.0%} true={true_prob:.0%} "
+                          f"{'✅' if itm else '❌'} dist={dist:+.0f} "
+                          f"{rep_str} {mins_left:.0f}m left")
 
                 if no_pnl_pct >= NO_PROFIT_CAPTURE:
                     self.portfolio.sell(ticker, no_bid_px, reason="misprice_captured ✅")
@@ -155,10 +163,17 @@ class PositionManager:
             rep_str  = "repriced:YES ⬆" if repriced else "repriced:NO  "
             snipe_tag = " 🎯SNIPE" if is_snipe else ""
 
-            print(f"  👁  {ticker[-22:]:<22} bid=${bid:.4f} "
-                  f"pnl={pnl_pct:+.0%} true={true_prob:.0%} gam={gam:+.1f} "
-                  f"{'✅' if itm else '❌'} dist={dist:+.0f} "
-                  f"{rep_str} {mins_left:.0f}m left{snipe_tag}")
+            if live_view.ENABLED:
+                live_view.update_position(ticker, {
+                    "bid": bid, "pnl_pct": pnl_pct, "true_prob": true_prob,
+                    "itm": itm, "dist": dist, "mins_left": mins_left,
+                    "is_snipe": is_snipe,
+                })
+            else:
+                print(f"  👁  {ticker[-22:]:<22} bid=${bid:.4f} "
+                      f"pnl={pnl_pct:+.0%} true={true_prob:.0%} gam={gam:+.1f} "
+                      f"{'✅' if itm else '❌'} dist={dist:+.0f} "
+                      f"{rep_str} {mins_left:.0f}m left{snipe_tag}")
 
             # SNIPE positions skip every early profit-lock/stop tier below (0.5-4, 6) —
             # those tiers exist to protect ordinary trades, but a snipe's whole thesis

@@ -16,6 +16,7 @@ from .config import (
     UNTRACKED_EXPOSURE_LIMIT, MAX_ASK, MAX_SPREAD, MAX_SPREAD_PCT,
     KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS, SNIPE_TRADE_PCT,
 )
+from . import live_view
 
 # ─────────────────────────────────────────────
 # PORTFOLIO — syncs from real Kalshi API
@@ -421,8 +422,14 @@ class Portfolio:
         itm_str  = "✅ITM" if contract["itm"] else ("❌OTM " + str(round(contract["otm_dist"])))
         mode     = "[PAPER] " if PAPER_TRADING else ""
         tag      = "🎯SNIPE " if is_snipe else ""
-        print(f"  📥 {mode}{tag}BUY [{contract['type']:5}] {ticker[-22:]} "
-              f"x{count} @ ${ask:.4f} true={true_prob:.0%} edge={edge:.0%} {itm_str}")
+        if live_view.ENABLED:
+            live_view.log_event(
+                f"📥 {tag}BUY {ticker[-18:]} x{count} @ ${ask:.3f} "
+                f"true={true_prob:.0%} edge={edge:.0%} {itm_str}"
+            )
+        else:
+            print(f"  📥 {mode}{tag}BUY [{contract['type']:5}] {ticker[-22:]} "
+                  f"x{count} @ ${ask:.4f} true={true_prob:.0%} edge={edge:.0%} {itm_str}")
         self._log_trade("buy", ticker, "yes", count, ask, true_prob,
                          reason="snipe" if is_snipe else "")
         return True
@@ -625,8 +632,14 @@ class Portfolio:
 
         emoji = "✅" if pnl > 0 else "❌"
         mode  = "[PAPER] " if PAPER_TRADING else ""
-        print(f"  📤 {mode}SELL {emoji} [{reason:22}] {ticker[-22:]} "
-              f"x{count} @ ${bid:.4f} pnl=${pnl:+.4f}")
+        if live_view.ENABLED:
+            live_view.log_event(
+                f"📤 SELL {emoji} [{reason.strip():18}] {ticker[-18:]} "
+                f"x{count} @ ${bid:.3f} pnl=${pnl:+.2f}"
+            )
+        else:
+            print(f"  📤 {mode}SELL {emoji} [{reason:22}] {ticker[-22:]} "
+                  f"x{count} @ ${bid:.4f} pnl=${pnl:+.4f}")
         self._log_trade("sell", ticker, "no" if is_no else "yes", count, bid,
                         pnl=pnl, reason=reason)
 
@@ -643,11 +656,18 @@ class Portfolio:
                 del self.positions[ticker]
                 if is_loss_cut:
                     self.stop_cooldowns[ticker] = time.time() + STOP_COOLDOWN_SECS
+        if done:
+            live_view.drop_position(ticker)
         if done and is_loss_cut:
-            print(f"  🚫 Stop cooldown: {ticker[-22:]} blocked for {STOP_COOLDOWN_SECS//60}m")
+            if live_view.ENABLED:
+                live_view.log_event(f"🚫 Stop cooldown {ticker[-18:]} ({STOP_COOLDOWN_SECS//60}m)")
+            else:
+                print(f"  🚫 Stop cooldown: {ticker[-22:]} blocked for {STOP_COOLDOWN_SECS//60}m")
         return True
 
     def summary(self):
+        if live_view.ENABLED:
+            return
         total    = self.total_value()
         pnl      = total - self.start_total if self.start_total > 0 else 0
         mode_tag = "📝 PAPER MODE" if PAPER_TRADING else "🔴 LIVE TRADING"
