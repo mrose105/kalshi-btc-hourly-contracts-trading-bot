@@ -9,19 +9,19 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 | Metric | Value |
 |--------|-------|
 | Starting capital | $5,000 |
-| Final capital | $120,971 |
-| Return | **+2,319%** |
-| Sharpe ratio | **6.52** |
-| Profit factor | 2.95 |
-| Max drawdown | -11.6% |
-| Trades | 1,215 |
-| Win rate | 47.5% |
+| Final capital | $136,043 |
+| Return | **+2,621%** |
+| Sharpe ratio | **6.47** |
+| Profit factor | 2.91 |
+| Max drawdown | -9.2% |
+| Trades | 1,366 |
+| Win rate | 47.3% |
 | Avg hold | 9 min |
-| Vol compression WR | **53.0%** vs 41.0% normal (70% of P&L from compression trades) |
+| Vol compression WR | **51.8%** vs 42.0% normal (69% of P&L from compression trades) |
 
-Backtest uses real BTC-USD 5-minute OHLCV from yfinance. Fills modeled at Kalshi's spread (widened dynamically near settlement to reflect thin end-of-hour liquidity). Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session).
+Backtest uses real BTC-USD 5-minute OHLCV from yfinance. Fills modeled at Kalshi's spread (widened dynamically near settlement to reflect thin end-of-hour liquidity). Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session). See [`docs/STRATEGY.md`](docs/STRATEGY.md) for the full math and audit.
 
-Dominant exit by P&L: `momentum_locked` (448 trades, 100% WR, +$161,603). Biggest drag: `stop_loss` (504 trades, -$39,282).
+Dominant exit by P&L: `momentum_locked` (499 trades, 100% WR, +$183,282). Biggest drag: `stop_loss` (570 trades, -$45,664).
 
 ---
 
