@@ -61,7 +61,11 @@ class DistModel:
         elif r == "BREAKOUT":
             drift = regime["mom"] * 0.5
 
-        mu = math.log(spot) + drift
+        # Real-measure GBM mean of log(S_T): E[log(S_T)] = log(S_0) + (μ − σ²/2)·T.
+        # drift already carries the μ·T term; subtract the Itô convexity correction
+        # so the forecast distribution mean is unbiased. Impact is negligible at BTC
+        # vols and T ≤ 4h (~0.005% log-space shift) but principled to include.
+        mu = math.log(spot) + drift - 0.5 * vol_t * vol_t
         t  = contract["type"]
 
         try:
