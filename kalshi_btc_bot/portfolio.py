@@ -515,6 +515,39 @@ class Portfolio:
               f"x{count} @ NO=${no_cost:.4f} (YES_ask=${yes_ask:.4f}) true={true_prob:.0%}")
         return True
 
+    def settle_paper_position(self, ticker: str, payout: float) -> bool:
+        """Credit final settlement payout directly and remove position — bypasses
+        the orderbook walk that regular sell() uses. A settled contract has no
+        resting depth (there's nothing left to fill against), so routing through
+        sell() would fail with "no depth" and leave the position stuck in state
+        forever, corrupting cash accounting and the dashboard's OPEN POSITIONS
+        panel. This path treats Kalshi's own settlement as the fill: $1 × count
+        if won (payout=1.0), $0 if lost (payout=0.0)."""
+        with self.lock:
+            if ticker not in self.positions:
+                return False
+            pos     = self.positions[ticker]
+            count   = pos["count"]
+            proceeds = payout * count
+            pnl     = (payout - pos["entry"]) * count
+            self.real_cash += proceeds
+            self.real_port = max(0, self.real_port - pos["cost"])
+            self.realized_pnl += pnl
+            is_no = pos.get("is_no", False)
+            del self.positions[ticker]
+        emoji = "✅" if pnl > 0 else "❌"
+        if live_view.ENABLED:
+            live_view.log_event(
+                f"🏁 SETTLED {emoji} {ticker[-18:]} x{count} @ ${payout:.2f} pnl=${pnl:+.2f}"
+            )
+        else:
+            print(f"  🏁 [PAPER] SETTLED {emoji} {ticker[-22:]} "
+                  f"x{count} @ ${payout:.2f} pnl=${pnl:+.4f}")
+        live_view.drop_position(ticker)
+        self._log_trade("sell", ticker, "no" if is_no else "yes", count, payout,
+                        pnl=pnl, reason="expired_settled")
+        return True
+
     def sell(self, ticker: str, bid: float,
              count: int = None, reason: str = "") -> bool:
         with self.lock:

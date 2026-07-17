@@ -65,14 +65,20 @@ class PositionManager:
             _expired = _hours_from(close_time) < -0.05 and bid == 0 and ask == 0
             if status in _SETTLED or _expired:
                 itm_flag = is_in_money(pos["contract"], spot)
-                print(f"  🏁 SETTLED {ticker[-22:]} status={status or 'expired'} "
-                      f"ITM={'✅' if itm_flag else '❌'} — removing from tracking")
                 if PAPER_TRADING:
                     is_no = pos.get("is_no", False)
                     won   = (not itm_flag) if is_no else itm_flag
-                    self.portfolio.sell(ticker, 1.0 if won else 0.0, reason="expired_settled")
+                    # settle_paper_position() logs the outcome AND removes the
+                    # position — no separate print() needed here.
+                    self.portfolio.settle_paper_position(
+                        ticker, 1.0 if won else 0.0,
+                    )
                 else:
-                    del self.portfolio.positions[ticker]
+                    print(f"  🏁 SETTLED {ticker[-22:]} status={status or 'expired'} "
+                          f"ITM={'✅' if itm_flag else '❌'} — removing from tracking")
+                    with self.portfolio.lock:
+                        self.portfolio.positions.pop(ticker, None)
+                    live_view.drop_position(ticker)
                 continue
 
             if ask <= 0:
