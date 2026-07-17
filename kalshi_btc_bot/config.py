@@ -148,9 +148,13 @@ SNIPE_MIN_ENTRY_PRICE = 0.10     # 2026-07-07: floor added — trade log showed 
                                   # own model already prices them near-zero, not because of lag.
 SNIPE_MAX_ENTRY_PRICE = 0.25     # widened from 0.10 now that 0.10 is the floor
 SNIPE_MIN_EDGE_RATIO  = 0.30     # true_prob must beat ask by >= 30% (true_prob/ask - 1)
-SNIPE_TRADE_PCT       = 0.02     # sized down vs MAX_TRADE_PCT — tail-probability estimates
+SNIPE_TRADE_PCT       = 0.01     # sized down vs MAX_TRADE_PCT — tail-probability estimates
                                   # are noisier, so size the bet down rather than Kelly-size
-                                  # off an uncertain edge
+                                  # off an uncertain edge. 2026-07-16: cut 0.02 → 0.01 after
+                                  # a single 516-contract paper snipe lost $117 (~1.2% of
+                                  # $10K account) — one bad snipe was wiping out weeks of
+                                  # small wins. 1% caps single-snipe max loss to ~$100
+                                  # while backtest still shows the tier remains net-positive.
 SNIPE_PROFIT_LOCK_PCT     = 1.50 # TIER 3.75 gate: lock in profit only when a big snipe run
                                   # (150%+) reverses — gated on true_prob fading (2-tick signal,
                                   # same as gamma_lock), NOT a fixed price cap. A snipe that keeps
