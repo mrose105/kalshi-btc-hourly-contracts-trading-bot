@@ -7,7 +7,7 @@ import uuid
 from pathlib import Path
 
 _LOG_PATH = Path(__file__).parent.parent / "trades.csv"
-_LOG_FIELDS = ["timestamp", "action", "ticker", "side", "count", "price", "true_prob", "pnl", "reason", "mode"]
+_LOG_FIELDS = ["timestamp", "action", "ticker", "side", "count", "price", "true_prob", "pnl", "peak_pnl_pct", "reason", "mode"]
 
 from .config import (
     MAX_EXPOSURE_PCT, MAX_POSITIONS, MAX_TRADE_PCT, MIN_CASH_FLOOR,
@@ -51,18 +51,20 @@ class Portfolio:
             with open(_LOG_PATH, "w", newline="") as f:
                 csv.DictWriter(f, fieldnames=_LOG_FIELDS).writeheader()
 
-    def _log_trade(self, action, ticker, side, count, price, true_prob=None, pnl=None, reason=""):
+    def _log_trade(self, action, ticker, side, count, price, true_prob=None,
+                   pnl=None, peak_pnl_pct=None, reason=""):
         row = {
-            "timestamp": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-            "action":    action,
-            "ticker":    ticker,
-            "side":      side,
-            "count":     count,
-            "price":     round(price, 4),
-            "true_prob": round(true_prob, 4) if true_prob is not None else "",
-            "pnl":       round(pnl, 4) if pnl is not None else "",
-            "reason":    reason,
-            "mode":      "paper" if PAPER_TRADING else "live",
+            "timestamp":    datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+            "action":       action,
+            "ticker":       ticker,
+            "side":         side,
+            "count":        count,
+            "price":        round(price, 4),
+            "true_prob":    round(true_prob, 4) if true_prob is not None else "",
+            "pnl":          round(pnl, 4) if pnl is not None else "",
+            "peak_pnl_pct": round(peak_pnl_pct, 4) if peak_pnl_pct is not None else "",
+            "reason":       reason,
+            "mode":         "paper" if PAPER_TRADING else "live",
         }
         with open(_LOG_PATH, "a", newline="") as f:
             csv.DictWriter(f, fieldnames=_LOG_FIELDS).writerow(row)
@@ -544,8 +546,9 @@ class Portfolio:
             print(f"  🏁 [PAPER] SETTLED {emoji} {ticker[-22:]} "
                   f"x{count} @ ${payout:.2f} pnl=${pnl:+.4f}")
         live_view.drop_position(ticker)
+        peak_pct = (pos["peak"] - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
         self._log_trade("sell", ticker, "no" if is_no else "yes", count, payout,
-                        pnl=pnl, reason="expired_settled")
+                        pnl=pnl, peak_pnl_pct=peak_pct, reason="expired_settled")
         return True
 
     def sell(self, ticker: str, bid: float,
@@ -673,8 +676,9 @@ class Portfolio:
         else:
             print(f"  📤 {mode}SELL {emoji} [{reason:22}] {ticker[-22:]} "
                   f"x{count} @ ${bid:.4f} pnl=${pnl:+.4f}")
+        peak_pct = (pos["peak"] - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
         self._log_trade("sell", ticker, "no" if is_no else "yes", count, bid,
-                        pnl=pnl, reason=reason)
+                        pnl=pnl, peak_pnl_pct=peak_pct, reason=reason)
 
         # Any loss-cutting exit (not just literal stop_*) means the signal that
         # justified re-entry is still there — without a cooldown here, the same
