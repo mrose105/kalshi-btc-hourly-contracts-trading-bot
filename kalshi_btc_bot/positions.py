@@ -195,13 +195,15 @@ class PositionManager:
                       f"{'✅' if itm else '❌'} dist={dist:+.0f} "
                       f"{rep_str} {mins_left:.0f}m left{snipe_tag}")
 
-            # SNIPE positions skip every early profit-lock/stop tier below (0.5-4, 6) —
-            # those tiers exist to protect ordinary trades, but a snipe's whole thesis
-            # is riding a cheap entry to a 1000%+ payout. Locking at pnl>=40% or stopping
-            # at -60% defeats that on purpose-built lottery tickets. Max loss is already
-            # sunk at entry either way, so there's no capital-protection case for bailing
-            # early. Only near-certain settlement (3.5) and the OTM time exit (5) still
-            # apply, plus the unconditional SETTLED/expiry purge above.
+            # SNIPE positions skip most early profit-lock/stop tiers by design —
+            # those exist to protect ordinary trades, but a snipe's whole thesis
+            # is riding a cheap entry to a 1000%+ payout. Fixed % stops defeat
+            # that purpose. Peak_giveback IS applied though: it's peak-relative,
+            # so it doesn't cap upside, only floors giveback. Without it a snipe
+            # can round-trip peak +100% to -100% at expiry (observed live
+            # 2026-07-23 B64875). The ITM guard on peak_giveback below keeps
+            # settlement plays intact (B65450 same day: peak +125% mid-hold →
+            # rode back ITM → settled +733%).
             if not is_snipe:
                 # TIER 0.5 — Gamma-aware convexity lock: profitable + true_prob reversing
                 # (2-tick fade) + high convexity risk (near strike/expiry) → lock in now
@@ -213,14 +215,18 @@ class PositionManager:
                     self.portfolio.sell(ticker, bid, reason="gamma_lock 📐")
                     continue
 
-                # TIER 0.75 — Peak giveback: once a real gain has formed, exit once
-                # price has faded back to a fraction of its own peak — independent of
-                # gamma/convexity, so it catches reversals TIER 0.5 above would miss.
-                if (peak_pnl_pct >= PEAK_GIVEBACK_MIN_PEAK and bid >= PEAK_GIVEBACK_MIN_BID
-                        and pnl_pct <= peak_pnl_pct * PEAK_GIVEBACK_FRACTION):
-                    self.portfolio.sell(ticker, bid, reason="peak_giveback 📉")
-                    continue
+            # TIER 0.75 — Peak giveback: once a real gain has formed, exit once
+            # price has faded back to PEAK_GIVEBACK_FRACTION of its own peak.
+            # Now applies to snipes too, but only while OTM — an ITM snipe is
+            # on the settlement path and mid-hold fades are expected.
+            if ((not is_snipe or not itm)
+                    and peak_pnl_pct >= PEAK_GIVEBACK_MIN_PEAK
+                    and bid >= PEAK_GIVEBACK_MIN_BID
+                    and pnl_pct <= peak_pnl_pct * PEAK_GIVEBACK_FRACTION):
+                self.portfolio.sell(ticker, bid, reason="peak_giveback 📉")
+                continue
 
+            if not is_snipe:
                 # TIER 1 — Scalp lock: up 40% + < 15 min left, bid at a meaningful absolute price
                 if bid >= SCALP_LOCK_MIN_BID and pnl_pct >= SCALP_LOCK_PCT and hours < 0.25:
                     self.portfolio.sell(ticker, bid, reason="scalp_lock 🔄")
@@ -237,11 +243,13 @@ class PositionManager:
                     continue
 
             if is_snipe:
-                # TIER 3.75 — Snipe reversal lock: doesn't cap upside — only fires once a big
-                # run (150%+) shows true_prob fading (2-tick reversal, same signal gamma_lock
-                # uses). A snipe that keeps climbing without reversing is untouched and can
-                # still ride to 1000%+. See config.py SNIPE_PROFIT_LOCK_PCT comment.
-                if (bid >= SNIPE_PROFIT_LOCK_MIN_BID and pnl_pct >= SNIPE_PROFIT_LOCK_PCT
+                # TIER 3.75 — Snipe reversal lock. Fires on true_prob reversal
+                # once a real run (>=+50%) has formed. Doesn't cap upside — a
+                # snipe that keeps climbing without a tp reversal is untouched.
+                # Lowered from +150% (which let +100% peaks like B64875 slip
+                # through without any protection when peak_giveback was disabled).
+                if (bid >= SNIPE_PROFIT_LOCK_MIN_BID
+                        and peak_pnl_pct >= 0.50 and pnl_pct >= 0.15
                         and tp_curr < tp_prev):
                     self.portfolio.sell(ticker, bid, reason="snipe_lock 🔒")
                     continue
