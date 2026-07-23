@@ -237,3 +237,9 @@ POSITION_CHECK       = 2
 PRICE_FETCH          = 2
 SYNC_INTERVAL        = 20
 LADDER_CACHE_SECONDS = 2
+
+# Ticks per hour, derived from the actual polling interval. model.py and
+# regime.py annualize per-tick vol with sqrt(BARS_PER_HOUR); this was
+# hardcoded 900 (4s ticks) after PRICE_FETCH dropped to 2s, silently
+# understating hourly vol by sqrt(2) (~29%) and inflating every RANGE edge.
+BARS_PER_HOUR = 3600 // PRICE_FETCH

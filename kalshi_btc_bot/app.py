@@ -92,18 +92,20 @@ def main():
 
     def position_step():
         spot = feed.last
-        vol  = feed.volatility(300)
         if spot > 0:
             regime = regime_e.detect(feed)
-            pos_mgr.manage(spot, vol, regime)
+            # Price with the same EWMA vol the regime engine uses (and the
+            # backtest prices with) — previously passed volatility(300), a plain
+            # 5-min tick stdev, so regime and pricer saw different vols.
+            pos_mgr.manage(spot, regime["vol"], regime)
 
     def scan_step():
         spot = feed.last
-        vol  = feed.volatility(300)
         if spot <= 0:
             return
         t      = datetime.datetime.now().strftime("%H:%M:%S")
         regime = regime_e.detect(feed)
+        vol    = regime["vol"]
         ladder = ladder_e.get(spot)
 
         header = (f"[{t}] BTC=${spot:,.0f} | "

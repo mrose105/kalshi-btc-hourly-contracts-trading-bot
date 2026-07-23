@@ -3,8 +3,7 @@ import math
 from scipy.stats import norm
 
 from .contracts import is_in_money
-
-BARS_PER_HOUR = 900   # 4-second polling
+from .config import BARS_PER_HOUR
 
 # Vol cone: calibrated to BTC historical realized vol range
 # Hourly vol floor/cap expressed in hourly-vol units

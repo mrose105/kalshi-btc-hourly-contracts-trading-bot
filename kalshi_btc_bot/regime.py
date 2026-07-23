@@ -1,12 +1,10 @@
 import math
 
 from .config import (
-    BREAKOUT_ACCEL, REVERT_ZSCORE, TREND_BARS, TREND_THRESHOLD,
+    BARS_PER_HOUR, BREAKOUT_ACCEL, REVERT_ZSCORE, TREND_BARS, TREND_THRESHOLD,
     VOL_REGIME_LOW_H, VOL_REGIME_HIGH_H, VOL_RATIO_COMPRESSION,
 )
 from .feed import BTCFeed
-
-BARS_PER_HOUR = 900   # 4-second polling → 900 bars/hour
 
 # ─────────────────────────────────────────────
 # REGIME ENGINE
@@ -61,7 +59,7 @@ class RegimeEngine:
             "use_t":           use_t,
             "mom":             round(mom, 5),
             "accel":           round(accel, 5),
-            "vol":             round(vol, 6),
+            "vol":             round(vol, 9),  # per-tick vol ~1e-4; 6dp lost up to 1%
             "vol_h":           round(vol_h, 5),
             "vol_regime":      vol_regime,
             "zscore":          round(z, 3),

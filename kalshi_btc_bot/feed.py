@@ -41,7 +41,12 @@ class BTCFeed:
             self.bars_5min.clear()
             for ts, c in zip(times, closes):
                 if c > 0:
-                    ts_naive = ts.replace(tzinfo=None) if ts.tzinfo else ts
+                    # yfinance timestamps are tz-aware UTC; live ticks use naive
+                    # local time. Convert to local before stripping tzinfo, else
+                    # the next 5-min bar boundary sits hours in the "future" and
+                    # no bars close (vol_ratio frozen) until local clock catches
+                    # up to the UTC clock value.
+                    ts_naive = ts.astimezone().replace(tzinfo=None) if ts.tzinfo else ts
                     self.bars_5min.append((ts_naive, float(c)))
             # Align the currently-forming bar to the last historical bar's boundary
             if self.bars_5min:

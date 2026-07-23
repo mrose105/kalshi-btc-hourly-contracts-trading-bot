@@ -39,7 +39,9 @@ def _range_price(vol_h: float, spot: float, lo: float, hi: float, hours: float) 
     if hours <= 0 or spot <= 0 or vol_h <= 0:
         return 0.0
     vol_t = vol_h * math.sqrt(hours)
-    mu    = math.log(spot)
+    # Itô convexity correction — matches model.py's true_prob measure so
+    # implied vols solved here are consistent with the pricer.
+    mu    = math.log(spot) - 0.5 * vol_t * vol_t
     try:
         z_lo = (math.log(max(1.0, lo)) - mu) / vol_t
         z_hi = (math.log(max(1.0, hi)) - mu) / vol_t

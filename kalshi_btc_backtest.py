@@ -47,9 +47,12 @@ from kalshi_btc_bot             import config as C
 BAR_MINUTES   = 5
 BARS_PER_HOUR = 60 // BAR_MINUTES
 
-# Live bot polls every 4 seconds — scale windows so regime engine sees
-# equivalent sample coverage to live trading.
-TIME_SCALE = (BAR_MINUTES * 60) // 4   # = 75
+# Scale windows so the regime engine sees sample coverage equivalent to live
+# trading. Derived from the live polling interval (config.PRICE_FETCH) — was
+# hardcoded // 4 after live polling moved to 2s, leaving both the regime
+# windows and the vol down-scaling (sqrt(TIME_SCALE) below) at half the
+# correct ratio vs model.py's BARS_PER_HOUR annualization.
+TIME_SCALE = (BAR_MINUTES * 60) // C.PRICE_FETCH   # = 150 at 2s polling
 
 # Kalshi's lagged vol window (24h of 5-min bars).
 # They price with historical average vol, not moment-to-moment EWMA.
@@ -600,9 +603,22 @@ def compute_metrics(trades: list, portfolio: BacktestPortfolio) -> dict:
     dd     = (equity - peak_e) / peak_e
     max_dd = float(dd.min()) * 100
 
-    pnl_arr = np.array(pnls)
-    sharpe  = (float(pnl_arr.mean() / pnl_arr.std() * math.sqrt(252))
-               if len(pnls) > 1 and pnl_arr.std() > 0 else 0.0)
+    # Sharpe on DAILY equity returns, annualized sqrt(365) (crypto trades every
+    # day). Previous calc was mean/std of per-trade dollar P&L x sqrt(252) —
+    # wrong on two counts: dollar P&L scales with compounding capital (std
+    # inflated by growth, not risk), and sqrt(252) assumes 252 trades/year when
+    # the bot does ~25/day.
+    daily_pnl: dict = {}
+    for t in trades:
+        ts = t["exited_at"]
+        day = ts[:10] if isinstance(ts, str) else ts.date().isoformat()
+        daily_pnl[day] = daily_pnl.get(day, 0.0) + t["pnl"]
+    day_keys  = sorted(daily_pnl)
+    day_ends  = np.array([daily_pnl[d] for d in day_keys]).cumsum() + portfolio.capital
+    day_start = np.concatenate(([portfolio.capital], day_ends[:-1]))
+    daily_ret = (day_ends - day_start) / day_start
+    sharpe    = (float(daily_ret.mean() / daily_ret.std() * math.sqrt(365))
+                 if len(daily_ret) > 1 and daily_ret.std() > 0 else 0.0)
 
     by_reason: dict = {}
     for t in trades:
@@ -808,8 +824,10 @@ def run_backtest(days: int = 7, capital: float = 50.0,
 
         regime = regime_e.detect(feed)
 
-        # DistModel expects per-4s-bar vol (BARS_PER_HOUR=900).
-        # Backtest bars are 5-min = 75× wider → scale vol down by √75.
+        # DistModel expects per-tick vol (config.BARS_PER_HOUR ticks/hour).
+        # Backtest bars are 5-min = TIME_SCALE× wider → scale vol down by
+        # sqrt(TIME_SCALE); model re-annualizes with sqrt(BARS_PER_HOUR),
+        # netting the correct sqrt(12) for 5-min bars.
         regime_bt  = {**regime, "vol": regime["vol"] / scale}
         kalshi_vol = feed.sma_volatility(SMA_VOL_WINDOW) / scale
 

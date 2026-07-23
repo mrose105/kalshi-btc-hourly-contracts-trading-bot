@@ -72,8 +72,10 @@ class Ladder:
                     ct    = datetime.datetime.fromisoformat(close.replace("Z","+00:00"))
                     hours = max(0.01, (ct - datetime.datetime.now(
                         datetime.timezone.utc)).total_seconds() / 3600)
-                except:
-                    hours = 1.0
+                except Exception:
+                    # Unparseable close time — skip rather than fabricate 1.0h,
+                    # which let expired/odd contracts pass the expiry gates.
+                    continue
                 dist = otm_distance(contract, spot)
                 ladder.append({
                     **contract,

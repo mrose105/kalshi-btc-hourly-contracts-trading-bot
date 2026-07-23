@@ -143,7 +143,10 @@ class Portfolio:
         Quarter-Kelly multiplier keeps us well inside the Kelly curve.
         Falls back to MAX_TRADE_PCT when edge is zero or negative."""
         if ask <= 0 or ask >= 1 or true_prob <= ask:
-            return MAX_TRADE_PCT
+            # No edge → no size. Was MAX_TRADE_PCT — i.e. maximum size on a
+            # zero/negative-edge input — only saved by the caller's MIN_EDGE
+            # recheck upstream.
+            return 0.0
         edge   = true_prob - ask
         f_star = edge / (1.0 - ask)
         return min(KELLY_CAP, max(0.005, f_star * KELLY_FRACTION))
@@ -245,6 +248,30 @@ class Portfolio:
         if reduce_only:
             payload["reduce_only"] = True
         return payload
+
+    @staticmethod
+    def _parse_fill(result: dict, fallback_price: float) -> tuple:
+        """Extract (filled_count, avg_fill_price_dollars) from an order
+        response. Kalshi wraps the order as {"order": {...}}; fill-count field
+        naming varies (fill_count / fill_count_fp / taker_fill_count) and avg
+        price may come as average_fill_price (dollars) or taker_fill_cost
+        (total cents), so parse defensively rather than pinning one shape."""
+        order  = result.get("order", result)
+        filled = 0
+        for key in ("fill_count", "fill_count_fp", "taker_fill_count"):
+            v = order.get(key)
+            if v is not None:
+                filled = int(float(v))
+                break
+        if filled <= 0:
+            return 0, 0.0
+        avg = order.get("average_fill_price")
+        if avg is not None:
+            return filled, float(avg)
+        cost_c = order.get("taker_fill_cost")
+        if cost_c is not None:
+            return filled, float(cost_c) / filled / 100.0
+        return filled, fallback_price
 
     def _fresh_quote(self, ticker: str) -> tuple:
         """Fetch the live best bid/ask for `ticker` directly, bypassing the
@@ -354,6 +381,11 @@ class Portfolio:
         with self.lock:
             if ticker in self.positions:
                 return False
+            # Re-check under lock: can_trade() runs once per scan tick, but up
+            # to 4 signals (YES/NO/BOUNDARY_NO/SNIPE) can each call buy in that
+            # tick — without this, MAX_POSITIONS could be exceeded by 3.
+            if len(self.positions) >= MAX_POSITIONS:
+                return False
             kelly_pct = SNIPE_TRADE_PCT if is_snipe else Portfolio.kelly_fraction(true_prob, ask)
             budget    = self.budget(trade_pct=kelly_pct)
             count     = int(budget / limit) if limit > 0 else 0
@@ -388,15 +420,16 @@ class Portfolio:
             try:
                 result = self.client._request(
                     "POST",
-                    "/portfolio/events/orders",
+                    "/portfolio/orders",
                     json_body=self.order_payload(ticker, "buy", "yes", count, limit),
                 )
-                filled = float(result.get("fill_count", 0))
+                filled, avg_px = Portfolio._parse_fill(result, ask)
                 if filled <= 0:
                     print(f"  ⚠️  BUY IOC not filled (limit=${limit:.4f})")
+                    self.cancel_order(result.get("order", result), "BUY")
                     return False
-                ask   = float(result.get("average_fill_price", ask))
-                count = int(filled)
+                ask   = avg_px
+                count = filled
                 cost  = ask * count
                 with self.lock:
                     self.real_cash -= cost
@@ -455,6 +488,8 @@ class Portfolio:
         with self.lock:
             if ticker in self.positions:
                 return False
+            if len(self.positions) >= MAX_POSITIONS:
+                return False
             if no_cost <= 0 or no_cost >= 1.0:
                 return False
 
@@ -486,14 +521,15 @@ class Portfolio:
                     "/portfolio/orders",
                     json_body=self.order_payload(ticker, "buy", "no", count, no_cost),
                 )
-                order  = result.get("order", {})
-                filled = float(order.get("fill_count_fp", 0))
+                filled, avg_px = Portfolio._parse_fill(result, no_cost)
                 if filled <= 0:
+                    order = result.get("order", result)
                     print(f"  ⚠️  BUY_NO IOC not filled: {order.get('status')}")
                     self.cancel_order(order, "BUY_NO")
                     return False
-                count = int(filled)
-                cost  = no_cost * count
+                count   = filled
+                no_cost = avg_px
+                cost    = no_cost * count
                 with self.lock:
                     self.real_cash -= cost
                     self.real_port += cost
@@ -600,7 +636,7 @@ class Portfolio:
             try:
                 result = self.client._request(
                     "POST",
-                    "/portfolio/events/orders",
+                    "/portfolio/orders",
                     json_body=self.order_payload(
                         ticker,
                         "sell",
@@ -610,10 +646,9 @@ class Portfolio:
                         reduce_only=True,
                     ),
                 )
-                filled = float(result.get("fill_count", 0))
+                filled, fill_price = Portfolio._parse_fill(result, bid)
                 if filled > 0:
-                    fill_price   = float(result.get("average_fill_price", bid))
-                    filled_count = int(filled)
+                    filled_count = filled
                     proceeds    += fill_price * filled_count
             except Exception as e:
                 body = ""
@@ -633,7 +668,7 @@ class Portfolio:
                         try:
                             r2 = self.client._request(
                                 "POST",
-                                "/portfolio/events/orders",
+                                "/portfolio/orders",
                                 json_body=self.order_payload(
                                     ticker,
                                     "sell",
@@ -643,12 +678,11 @@ class Portfolio:
                                     reduce_only=True,
                                 ),
                             )
-                            r2_filled = float(r2.get("fill_count", 0))
+                            r2_filled, r2_price = Portfolio._parse_fill(r2, retry_price / 100)
                             if r2_filled > 0:
-                                r2_price      = float(r2.get("average_fill_price", retry_price / 100))
-                                filled_count += int(r2_filled)
+                                filled_count += r2_filled
                                 proceeds     += r2_price * r2_filled
-                                print(f"  🔄 Retry filled {r2_filled:.0f} more @ ${r2_price:.4f}")
+                                print(f"  🔄 Retry filled {r2_filled} more @ ${r2_price:.4f}")
                         except:
                             pass
 
