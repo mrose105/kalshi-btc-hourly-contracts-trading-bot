@@ -11,7 +11,7 @@ _LOG_FIELDS = ["timestamp", "action", "ticker", "side", "count", "price", "true_
 
 from .config import (
     MAX_EXPOSURE_PCT, MAX_POSITIONS, MAX_TRADE_PCT, MIN_CASH_FLOOR,
-    MIN_CASH_PCT, NO_TRADE_PCT, PAPER_CAPITAL, PAPER_TRADING,
+    NO_TRADE_PCT, PAPER_CAPITAL, PAPER_TRADING,
     EXIT_RETRY_COOLDOWN, FORCE_EXIT_SLIPPAGE_CENTS, SESSION_STOP_PCT,
     UNTRACKED_EXPOSURE_LIMIT, MAX_ASK, MAX_SPREAD, MAX_SPREAD_PCT,
     KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS, SNIPE_TRADE_PCT,
@@ -129,9 +129,9 @@ class Portfolio:
         if exposure >= total * MAX_EXPOSURE_PCT:
             print(f"  🛑 Max exposure (${exposure:.2f} / ${total * MAX_EXPOSURE_PCT:.2f})")
             return False
-        if self.real_cash < total * MIN_CASH_PCT:
-            print(f"  🛑 Cash reserve (${self.real_cash:.2f} < ${total * MIN_CASH_PCT:.2f})")
-            return False
+        # MIN_CASH_PCT reserve check was here — redundant. MAX_EXPOSURE_PCT
+        # already caps positions at 18% of total → cash floor is implicitly
+        # 82%. MIN_CASH_FLOOR still guards the absolute-dollar minimum above.
         return True
 
     @staticmethod
@@ -154,10 +154,10 @@ class Portfolio:
     def budget(self, trade_pct: float = MAX_TRADE_PCT) -> float:
         total         = self.total_value()
         max_trade     = total * trade_pct
-        reserve       = total * MIN_CASH_PCT
-        available     = self.real_cash - reserve
         exposure_room = total * MAX_EXPOSURE_PCT - self.current_exposure()
-        return max(0, min(max_trade, available, exposure_room))
+        # MIN_CASH_PCT reserve removed — MAX_EXPOSURE_PCT already caps cash
+        # deployment at 82% of total (18% max in positions).
+        return max(0, min(max_trade, self.real_cash, exposure_room))
 
     def live_positions(self) -> list[dict]:
         if PAPER_TRADING:

@@ -9,7 +9,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from kalshi_es_analysis import KalshiClient
 
 from .config import (
-    MAX_EXPOSURE_PCT, MAX_TRADE_PCT, MIN_CASH_PCT, NO_TRADE_PCT,
+    MAX_EXPOSURE_PCT, MAX_TRADE_PCT, NO_TRADE_PCT,
     ENABLE_BOUNDARY_NO, ENABLE_MISPRICE_NO, PAPER_TRADING,
     POSITION_CHECK, PRICE_FETCH, SCAN_INTERVAL, SYNC_INTERVAL,
 )
@@ -26,12 +26,18 @@ from . import live_view
 # MAIN
 # ─────────────────────────────────────────────
 def main():
+    signals_on = [name for name, on in (
+        ("YES", True), ("SNIPE", True),
+        ("BOUNDARY_NO", ENABLE_BOUNDARY_NO), ("MISPRICE_NO", ENABLE_MISPRICE_NO),
+    ) if on]
     print("="*62)
     print("  🧠 KALSHI BTC QUANT v5.0")
-    print(f"  Sizing: {MAX_TRADE_PCT:.0%} per trade | Max exposure: {MAX_EXPOSURE_PCT:.0%} | Reserve: {MIN_CASH_PCT:.0%}")
-    print(f"  YES exits: scalp→momentum→strong→mega→time→stop")
-    print(f"  NO scalp:  fade YES≥1.4x overpriced, 8-21min window, {NO_TRADE_PCT:.0%} sizing")
-    print(f"  Portfolio syncs from real Kalshi every {SYNC_INTERVAL}s")
+    print(f"  Sizing: {MAX_TRADE_PCT:.1%}/trade | Max exposure: {MAX_EXPOSURE_PCT:.0%} | "
+          f"NO sizing: {NO_TRADE_PCT:.1%}")
+    print(f"  Signals: {' + '.join(signals_on)}")
+    print(f"  YES exits: gamma_lock · peak_giveback · scalp · momentum · "
+          f"strong · mega · time · stop · near_settlement")
+    print(f"  Sync every {SYNC_INTERVAL}s | scan every {SCAN_INTERVAL}s")
     print("="*62 + "\n")
 
     client    = KalshiClient(
