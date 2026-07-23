@@ -58,7 +58,7 @@ vol_ratio       REVERTING /       find_boundary_no (NO)      (exits never blocke
 momentum        BREAKOUT          find_no_scalp (disabled)
 zscore
 
-4 independent daemon threads: price · sync · position · signal-scan
+4 independent background threads: price · sync · position · signal-scan
 ```
 
 ### Package structure
