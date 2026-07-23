@@ -82,10 +82,11 @@ kalshi_btc_backtest.py  — walk-forward backtest with intrabar stop simulation
 
 ## Signal Engine — Entry Logic
 
-Two parallel scans on each tick:
+Three parallel scans on each tick:
 
 - **`find_best`** — probability-edge scan for the highest-edge contract. **RANGE-only in the RANGING regime**; TRENDING / REVERTING / BREAKOUT regimes also consider ABOVE / BELOW contracts, gated by the regime's direction (an ABOVE won't be bought during a confirmed downtrend, and vice-versa).
 - **`find_snipe`** — separate ROI-ranked scan for cheap deep-OTM lottery tickets that `find_best` would never surface (small raw-edge points but 30%+ ROI on a 10–25¢ ask).
+- **`find_boundary_no`** — premium-collection scan that sells OTM NO contracts when BTC is extended far from the center of the RANGING regime (|z-score| ≥ 2.5, RANGING or REVERTING regime). Targets overpriced YES contracts where the market is pricing in too much probability of BTC staying near the extreme — the bot fades that by buying the NO side (i.e., selling the overpriced YES-equivalent). Position exits via stop-loss at 40% loss or expiry settlement.
 
 Filters applied before every entry:
 
@@ -107,7 +108,7 @@ Filters applied before every entry:
 |--------|-------|
 | Ask band | 10¢ ≤ ask ≤ 25¢ (`SNIPE_MIN_ENTRY_PRICE` / `SNIPE_MAX_ENTRY_PRICE`) |
 | Min ROI | `true_prob / ask − 1 ≥ 30%` (`SNIPE_MIN_EDGE_RATIO`) |
-| Trade size | 2% of account (`SNIPE_TRADE_PCT`) — sized down vs. `MAX_TRADE_PCT` since tail-probability estimates are noisier |
+| Trade size | 1% of account (`SNIPE_TRADE_PCT`) — sized down vs. `MAX_TRADE_PCT` since tail-probability estimates are noisier |
 
 Edge calculation uses a lognormal GBM pricer with regime-conditional drift. Vol regime (HIGH/NORMAL/LOW) scales the vol input. During vol compression, the effective edge bar drops to 1.0%, the OTM allowance widens to $150, and near-money RANGE contracts get a +1.5¢ structural-underpricing bonus in the ranking.
 
@@ -118,7 +119,7 @@ Edge calculation uses a lognormal GBM pricer with regime-conditional drift. Vol 
 | Tier | Trigger | Reason |
 |------|---------|--------|
 | 0.5 | Up ≥15% + true\_prob fading 2 consecutive ticks + high dollar-gamma (≥40,000) + bid ≥ 35¢ | Gamma-aware convexity lock |
-| 0.75 | Peak unrealized gain ≥25% and current gain has faded to ≤50% of that peak + bid ≥ 20¢ | Peak giveback |
+| 0.75 | Peak unrealized gain ≥25% and current gain has faded to ≤75% of that peak + bid ≥ 20¢ | Peak giveback |
 | 1 | Up 40% + < 15 min left + bid ≥ 30¢ | Scalp lock |
 | 2 | Up 100% + < 9 min left | Momentum lock |
 | 3 | Up 150% + < 15 min left | Strong profit |
