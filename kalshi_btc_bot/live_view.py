@@ -16,6 +16,7 @@ ENABLED = os.getenv("KALSHI_LIVE_VIEW") == "1"
 
 _lock = threading.Lock()
 _events: deque[str] = deque(maxlen=6)
+_trades: deque[str] = deque(maxlen=12)
 _snapshots: dict[str, dict] = {}
 
 
@@ -25,6 +26,16 @@ def log_event(msg: str) -> None:
     ts = datetime.now().strftime("%H:%M:%S")
     with _lock:
         _events.append(f"{ts}  {msg}")
+
+
+def log_trade(msg: str) -> None:
+    """Executed trades only (buys/sells/settlements). Signals and cooldown
+    notices go to log_event() so this panel stays a clean trade history."""
+    if not ENABLED:
+        return
+    ts = datetime.now().strftime("%H:%M:%S")
+    with _lock:
+        _trades.append(f"{ts}  {msg}")
 
 
 def update_position(ticker: str, snapshot: dict) -> None:
@@ -74,11 +85,19 @@ def render(header: str, ladder_rows: list[str], portfolio) -> None:
     with _lock:
         snaps = dict(_snapshots)
         evs = list(_events)
+        trs = list(_trades)
     if snaps:
         lines.append(f" OPEN POSITIONS ({len(snaps)})")
         for tk in sorted(snaps):
             lines.append(_fmt_position(tk, snaps[tk]))
         lines.append("")
+    lines.append(f" TRADE LOG (last {len(trs)})")
+    if trs:
+        for t in trs:
+            lines.append(f"  {t}")
+    else:
+        lines.append("  (no trades yet)")
+    lines.append("")
     lines.append(" RECENT EVENTS")
     if evs:
         for e in evs:

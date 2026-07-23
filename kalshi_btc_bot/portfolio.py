@@ -461,7 +461,7 @@ class Portfolio:
         mode     = "[PAPER] " if PAPER_TRADING else ""
         tag      = "🎯SNIPE " if is_snipe else ""
         if live_view.ENABLED:
-            live_view.log_event(
+            live_view.log_trade(
                 f"📥 {tag}BUY {ticker[-18:]} x{count} @ ${ask:.3f} "
                 f"true={true_prob:.0%} edge={edge:.0%} {itm_str}"
             )
@@ -578,7 +578,7 @@ class Portfolio:
             del self.positions[ticker]
         emoji = "✅" if pnl > 0 else "❌"
         if live_view.ENABLED:
-            live_view.log_event(
+            live_view.log_trade(
                 f"🏁 SETTLED {emoji} {ticker[-18:]} x{count} @ ${payout:.2f} pnl=${pnl:+.2f}"
             )
         else:
@@ -706,7 +706,7 @@ class Portfolio:
         emoji = "✅" if pnl > 0 else "❌"
         mode  = "[PAPER] " if PAPER_TRADING else ""
         if live_view.ENABLED:
-            live_view.log_event(
+            live_view.log_trade(
                 f"📤 SELL {emoji} [{reason.strip():18}] {ticker[-18:]} "
                 f"x{count} @ ${bid:.3f} pnl=${pnl:+.2f}"
             )
