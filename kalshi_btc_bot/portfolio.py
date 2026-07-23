@@ -15,6 +15,7 @@ from .config import (
     EXIT_RETRY_COOLDOWN, FORCE_EXIT_SLIPPAGE_CENTS, SESSION_STOP_PCT,
     UNTRACKED_EXPOSURE_LIMIT, MAX_ASK, MAX_SPREAD, MAX_SPREAD_PCT,
     KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS, SNIPE_TRADE_PCT,
+    MIN_EDGE,
 )
 from . import live_view
 
@@ -343,6 +344,8 @@ class Portfolio:
             return False
         spread = ask - bid
         if spread > MAX_SPREAD or spread / ask > MAX_SPREAD_PCT:
+            return False
+        if true_prob - ask < MIN_EDGE:
             return False
         limit = ask
 
