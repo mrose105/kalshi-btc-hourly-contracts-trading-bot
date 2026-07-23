@@ -176,6 +176,13 @@ class PositionManager:
             # ── YES POSITION (unified tiered ladder) ─────────────────────
             pnl_pct      = (bid - entry) / entry if entry > 0 else 0
             peak_pnl_pct = (peak - entry) / entry if entry > 0 else 0
+            # Mid-based pnl for stop-loss only. Marking a fresh position to bid
+            # assumes we'd exit into the bid immediately — but on a 25% spread
+            # that's an instant -25% "loss" that's really just paid-once entry
+            # cost, not price movement. STOP_LOSS_PCT is meant to catch actual
+            # adverse BTC moves, so measure against mid (fair value) — was live
+            # 2026-07-23 four stops in 15 min, all peak_pnl=0, one at 12s hold.
+            mid_pnl_pct  = ((bid + ask) / 2 - entry) / entry if entry > 0 else 0
             gam      = self.dist.gamma(contract, spot, vol, hours, regime)
             is_snipe = pos.get("is_snipe", False)
 
@@ -296,8 +303,10 @@ class PositionManager:
                 # Short-duration contracts are binary — TIME_EXIT_MINS handles OTM exits
                 # and expiry_settle captures ITM wins. Stopping in the final bars kills
                 # positions that would resolve naturally.
+                # Uses mid_pnl_pct not pnl_pct so the spread cost paid at entry
+                # doesn't count as a "loss" against the stop threshold.
                 stop_thr = -(STOP_LOSS_PCT / time_urgency)
-                if (bid > 0 and pnl_pct <= stop_thr and hours > STOP_MIN_HOURS
+                if (bid > 0 and mid_pnl_pct <= stop_thr and hours > STOP_MIN_HOURS
                         and not (itm and mins_left < TIME_EXIT_MINS)):
                     self.portfolio.sell(ticker, bid, reason=f"stop_{abs(stop_thr):.0%}")
                     continue
