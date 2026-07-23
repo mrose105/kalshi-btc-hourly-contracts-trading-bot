@@ -82,6 +82,20 @@ class PositionManager:
                 continue
 
             if ask <= 0:
+                # No sellers — still refresh snapshot so dashboard shows live dist/mins_left
+                if live_view.ENABLED:
+                    _e = pos.get("entry", 0)
+                    _c = pos.get("contract", "")
+                    _h = max(0.0, _hours_from(close_time))
+                    live_view.update_position(ticker, {
+                        "bid": bid,
+                        "pnl_pct": (bid - _e) / _e if _e > 0 else 0,
+                        "true_prob": self.dist.true_prob(_c, spot, vol, _h, regime),
+                        "itm": is_in_money(_c, spot),
+                        "dist": otm_distance(_c, spot),
+                        "mins_left": _h * 60,
+                        "is_snipe": pos.get("is_snipe", False),
+                    })
                 continue
             if bid > 0 and bid >= ask:
                 print(f"  ⚠️  {ticker[-18:]} crossed quote bid=${bid:.4f} >= ask=${ask:.4f} — skipping this cycle")

@@ -371,8 +371,48 @@ class BacktestPortfolio:
         }
         return True
 
+    def buy_no(self, contract: dict, true_prob: float, bar_ts: datetime) -> bool:
+        ticker  = contract["ticker"]
+        # BUY NO matches against YES bid — pay NO_ask = 1 - YES_bid (not 1 - YES_ask)
+        yes_bid = contract.get("bid", contract["ask"] - KALSHI_SPREAD * 2)
+        no_cost = max(0.01, 1.0 - yes_bid)
+        if ticker in self.positions:
+            return False
+        if no_cost <= 0 or no_cost >= 1.0:
+            return False
+        budget = min(self.total() * C.NO_TRADE_PCT,
+                     self.cash - self.total() * C.MIN_CASH_PCT)
+        count  = int(budget / no_cost) if no_cost > 0 else 0
+        cost   = no_cost * count
+        if count <= 0 or cost > self.cash:
+            return False
+        self.cash -= cost
+        self.trade_count += 1
+        self.positions[ticker] = {
+            "count":          count,
+            "entry":          no_cost,
+            "cost":           cost,
+            "peak":           no_cost,
+            "true_prob":      true_prob,
+            "edge":           contract["ask"] - true_prob,
+            "contract":       contract,
+            "entered_at":     bar_ts.isoformat(),
+            "entry_hours":    contract["hours"],
+            "bars_held":      0,
+            "bid_now":        no_cost,
+            "is_no":          True,
+            "no_yes_ask":     contract["ask"],
+            "true_prob_prev": true_prob,
+            "true_prob_curr": true_prob,
+            "gam":            0.0,
+            "vol_compression": False,
+            "vol_term_edge":   0.0,
+        }
+        return True
+
     def update(self, spot: float, bar_high: float, bar_low: float,
-               bar_i: int, dist: DistModel, regime: dict, bar_ts: datetime):
+               bar_i: int, dist: DistModel, regime: dict, bar_ts: datetime,
+               kalshi_vol: float = None):
         """Reprice all open positions, tick down time, simulate intrabar stops."""
         vol = regime.get("vol", 0.001)
         for ticker, pos in list(self.positions.items()):
@@ -381,7 +421,24 @@ class BacktestPortfolio:
             hours_left = max(0.0, pos["entry_hours"] - hours_held)
             pos["hours_left"] = hours_left
 
-            c      = pos["contract"]
+            c = pos["contract"]
+
+            if pos.get("is_no"):
+                kv = kalshi_vol or vol
+                flat_r = {**_FLAT_REGIME, "vol": kv}
+                yes_tp = dist.true_prob(c, spot, kv, hours_left, flat_r)
+                spread = KALSHI_SPREAD if yes_tp > 0.20 else KALSHI_SPREAD * 2
+                yes_ask_now = min(0.95, yes_tp + spread)
+                no_bid = max(0.01, 1.0 - yes_ask_now)
+                pos["bid_now"]    = no_bid
+                pos["no_yes_ask"] = yes_ask_now
+                if no_bid > pos["peak"]:
+                    pos["peak"] = no_bid
+                true_p = dist.true_prob(c, spot, vol, hours_left, regime)
+                pos["true_prob_prev"] = pos.get("true_prob_curr", true_p)
+                pos["true_prob_curr"] = true_p
+                continue
+
             true_p = dist.true_prob(c, spot, vol, hours_left, regime)
             spread = _exit_spread(true_p, hours_left)
             bid    = max(0.01, true_p - spread / 2)
@@ -431,6 +488,23 @@ class BacktestPortfolio:
             mins_left  = hours_left * 60
             c          = pos["contract"]
             itm        = c["low"] <= spot < c["high"]
+
+            if pos.get("is_no"):
+                no_pnl       = (bid - entry) / entry if entry > 0 else 0
+                yes_ask_now  = pos.get("no_yes_ask", 1.0 - entry)
+                true_p       = pos.get("true_prob_curr", 0.0)
+                overpricing  = yes_ask_now / true_p if true_p > 0 else 0.0
+                if hours_left <= 0:
+                    self._close(ticker, 0.0 if itm else 1.0, "no_expiry_settle", bar_ts)
+                elif no_pnl >= C.NO_PROFIT_CAPTURE:
+                    self._close(ticker, bid, "no_misprice_captured", bar_ts)
+                elif no_pnl >= C.NO_TIME_PROFIT and hours_left < 0.08:
+                    self._close(ticker, bid, "no_misprice_time", bar_ts)
+                elif overpricing < C.NO_EDGE_GONE_RATIO and no_pnl > 0:
+                    self._close(ticker, bid, "no_edge_gone", bar_ts)
+                elif no_pnl <= -C.NO_STOP:
+                    self._close(ticker, bid, "no_stop", bar_ts)
+                continue
 
             pnl_pct      = (bid - entry) / entry if entry > 0 else 0
             peak_pnl_pct = (peak - entry) / entry if entry > 0 else 0
@@ -506,6 +580,7 @@ class BacktestPortfolio:
             "bars_held":       pos["bars_held"],
             "vol_compression": pos.get("vol_compression", False),
             "vol_term_edge":   round(pos.get("vol_term_edge", 0.0), 5),
+            "is_no":           pos.get("is_no", False),
         })
 
 
@@ -588,6 +663,14 @@ def compute_metrics(trades: list, portfolio: BacktestPortfolio) -> dict:
         "normal_pnl":       round(norm_pnl, 4),
         "by_exit_reason":   {k: {**v, "win_rate": round(v["wins"]/v["count"]*100, 1)}
                              for k, v in by_reason.items()},
+        "no_trades":        sum(1 for t in trades if t.get("is_no")),
+        "no_pnl":           round(sum(t["pnl"] for t in trades if t.get("is_no")), 4),
+        "no_wr":            round(sum(1 for t in trades if t.get("is_no") and t["pnl"] > 0)
+                                  / max(1, sum(1 for t in trades if t.get("is_no"))) * 100, 1),
+        "yes_trades":       sum(1 for t in trades if not t.get("is_no")),
+        "yes_pnl":          round(sum(t["pnl"] for t in trades if not t.get("is_no")), 4),
+        "yes_wr":           round(sum(1 for t in trades if not t.get("is_no") and t["pnl"] > 0)
+                                  / max(1, sum(1 for t in trades if not t.get("is_no"))) * 100, 1),
     }
 
 
@@ -630,6 +713,12 @@ def print_summary(metrics: dict, capital: float):
         print(f"  Normal vol trades:      {n_norm}  "
               f"WR={metrics.get('normal_wr',0):.1f}%  "
               f"P&L=${metrics.get('normal_pnl',0):+.4f}")
+    n_no  = metrics.get("no_trades", 0)
+    n_yes = metrics.get("yes_trades", 0)
+    if n_no > 0:
+        print(f"{'─'*62}")
+        print(f"  YES trades: {n_yes}  WR={metrics.get('yes_wr',0):.1f}%  P&L=${metrics.get('yes_pnl',0):+.4f}")
+        print(f"  NO  trades: {n_no}  WR={metrics.get('no_wr',0):.1f}%  P&L=${metrics.get('no_pnl',0):+.4f}")
     if metrics.get("by_exit_reason"):
         print(f"{'─'*62}")
         print(f"  Exit breakdown:")
@@ -646,7 +735,8 @@ def print_summary(metrics: dict, capital: float):
 def run_backtest(days: int = 7, capital: float = 50.0,
                  min_edge: float = None, use_kelly: bool = True,
                  no_stop: bool = False, verbose: bool = False,
-                 use_vol_surface: bool = False):
+                 use_vol_surface: bool = False,
+                 no_threshold: float = None):
     try:
         import yfinance as yf
     except ImportError:
@@ -655,6 +745,8 @@ def run_backtest(days: int = 7, capital: float = 50.0,
 
     if min_edge is not None:
         C.MIN_EDGE = min_edge
+    if no_threshold is not None:
+        C.NO_OVERPRICING_MIN = no_threshold
     if no_stop:
         C.STOP_LOSS_PCT  = 999.0   # effectively infinite — stop never fires
         C.STOP_MIN_HOURS = 0.0
@@ -722,7 +814,8 @@ def run_backtest(days: int = 7, capital: float = 50.0,
         kalshi_vol = feed.sma_volatility(SMA_VOL_WINDOW) / scale
 
         portfolio.reset_session_if_new_day(ts)
-        portfolio.update(spot, bar_high, bar_low, bar_i, dist, regime_bt, ts)
+        portfolio.update(spot, bar_high, bar_low, bar_i, dist, regime_bt, ts,
+                         kalshi_vol=kalshi_vol)
         portfolio.manage_exits(spot, ts)
 
         if portfolio.can_trade():
@@ -753,6 +846,30 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                           f"edge={sig['edge']:.1%} vr={regime_bt.get('vol_ratio',1):.2f} "
                           f"{itm_tag}{comp_tag}{vte_tag}")
 
+            if no_threshold is not None:
+                no_sig = signal_e.find_no_scalp(
+                    spot, regime_bt["vol"], regime_bt, ladder, portfolio.positions,
+                    portfolio.cash, portfolio.capital,
+                )
+                if no_sig:
+                    entered = portfolio.buy_no(no_sig, no_sig["true_prob"], ts)
+                    if entered and verbose:
+                        print(f"  [{ts:%H:%M}] BUY_NO {no_sig['ticker'][-20:]} "
+                              f"yes_ask={no_sig['ask']:.3f} no_cost={1-no_sig['ask']:.3f} "
+                              f"true={no_sig['true_prob']:.0%} "
+                              f"overpriced={no_sig.get('overpricing_ratio',0):.2f}x")
+
+                bno_sig = signal_e.find_boundary_no(
+                    spot, regime_bt["vol"], regime_bt, ladder, portfolio.positions,
+                    portfolio.cash, portfolio.capital,
+                )
+                if bno_sig:
+                    entered = portfolio.buy_no(bno_sig, bno_sig["true_prob"], ts)
+                    if entered and verbose:
+                        print(f"  [{ts:%H:%M}] BOUNDARY_NO {bno_sig['ticker'][-20:]} "
+                              f"yes_ask={bno_sig['ask']:.3f} z={bno_sig.get('zscore',0):+.2f} "
+                              f"overpriced={bno_sig.get('overpricing_ratio',0):.2f}x")
+
         if bar_i % SUMMARY_INTERVAL == 0:
             t       = portfolio.total()
             pnl_pct = (t - capital) / capital * 100
@@ -772,8 +889,11 @@ def run_backtest(days: int = 7, capital: float = 50.0,
         pos = portfolio.positions[ticker]
         c   = pos["contract"]
         itm = c["low"] <= final_spot < c["high"]
-        portfolio._close(ticker, 1.0 if itm else pos["bid_now"],
-                         "force_settle_eob", final_ts)
+        if pos.get("is_no"):
+            portfolio._close(ticker, 0.0 if itm else 1.0, "no_force_settle_eob", final_ts)
+        else:
+            portfolio._close(ticker, 1.0 if itm else pos["bid_now"],
+                             "force_settle_eob", final_ts)
 
     metrics = compute_metrics(portfolio.trades, portfolio)
     print_summary(metrics, capital)
@@ -794,23 +914,72 @@ def run_backtest(days: int = 7, capital: float = 50.0,
     return metrics
 
 
+def sweep_no_thresholds(days: int = 60, capital: float = 5000.0,
+                        thresholds: list = None):
+    if thresholds is None:
+        thresholds = [1.10, 1.15, 1.18, 1.20, 1.25, 1.30, 1.40]
+
+    print(f"\n{'═'*74}")
+    print(f"  MISPRICE_NO THRESHOLD SWEEP — {len(thresholds)} runs × {days} days  "
+          f"capital=${capital:.0f}")
+    print(f"{'═'*74}\n")
+
+    results = []
+    for thr in thresholds:
+        print(f"\n── Threshold {thr:.2f} ──────────────────────────────────────────")
+        m = run_backtest(days=days, capital=capital, no_threshold=thr, verbose=False)
+        results.append((thr, m))
+
+    print(f"\n{'═'*74}")
+    print(f"  SWEEP SUMMARY")
+    print(f"{'─'*74}")
+    print(f"  {'Thresh':>7}  {'Trades':>6}  {'YES':>4}  {'NO':>4}  "
+          f"{'WR%':>5}  {'NO WR%':>7}  {'Return%':>8}  {'Sharpe':>6}  "
+          f"{'MaxDD%':>7}  {'NO P&L':>8}")
+    print(f"{'─'*74}")
+    for thr, m in results:
+        print(f"  {thr:>7.2f}  {m.get('total_trades',0):>6}  "
+              f"{m.get('yes_trades',0):>4}  {m.get('no_trades',0):>4}  "
+              f"{m.get('win_rate',0):>5.1f}  {m.get('no_wr',0):>7.1f}  "
+              f"{m.get('return_pct',0):>8.1f}  {m.get('sharpe',0):>6.2f}  "
+              f"{m.get('max_drawdown_pct',0):>7.1f}  "
+              f"${m.get('no_pnl',0):>+8.2f}")
+    print(f"{'═'*74}")
+
+    best_thr, best_m = max(results, key=lambda x: x[1].get("sharpe", 0))
+    print(f"\n  Best by Sharpe: threshold={best_thr:.2f}  "
+          f"Sharpe={best_m.get('sharpe',0):.2f}  "
+          f"Return={best_m.get('return_pct',0):+.1f}%  "
+          f"NO trades={best_m.get('no_trades',0)}  "
+          f"NO WR={best_m.get('no_wr',0):.1f}%\n")
+    return results
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kalshi BTC strategy backtest")
-    parser.add_argument("--days",     type=int,   default=7,    help="History window (max 60 for 5m)")
-    parser.add_argument("--capital",  type=float, default=50.0, help="Starting capital ($)")
-    parser.add_argument("--min-edge", type=float, default=None, help="Override MIN_EDGE (e.g. 0.025)")
-    parser.add_argument("--no-kelly", action="store_true",      help="Fixed MAX_TRADE_PCT sizing")
-    parser.add_argument("--no-stop",     action="store_true", help="Disable stop loss — all positions settle naturally")
-    parser.add_argument("--vol-surface", action="store_true", help="Fit Kalshi implied vol term structure per bar")
-    parser.add_argument("--verbose",     action="store_true", help="Print every trade entry")
+    parser.add_argument("--days",         type=int,   default=7,    help="History window (max 60 for 5m)")
+    parser.add_argument("--capital",      type=float, default=50.0, help="Starting capital ($)")
+    parser.add_argument("--min-edge",     type=float, default=None, help="Override MIN_EDGE (e.g. 0.025)")
+    parser.add_argument("--no-kelly",     action="store_true",      help="Fixed MAX_TRADE_PCT sizing")
+    parser.add_argument("--no-stop",      action="store_true",      help="Disable stop loss")
+    parser.add_argument("--vol-surface",  action="store_true",      help="Fit Kalshi implied vol term structure per bar")
+    parser.add_argument("--verbose",      action="store_true",      help="Print every trade entry")
+    parser.add_argument("--no-threshold", type=float, default=None,
+                        help="Enable MISPRICE_NO with this overpricing threshold (e.g. 1.18)")
+    parser.add_argument("--no-sweep",     action="store_true",
+                        help="Sweep MISPRICE_NO thresholds [1.10,1.15,1.18,1.20,1.25,1.30,1.40]")
     args = parser.parse_args()
 
-    run_backtest(
-        days=args.days,
-        capital=args.capital,
-        min_edge=args.min_edge,
-        use_kelly=not args.no_kelly,
-        no_stop=args.no_stop,
-        verbose=args.verbose,
-        use_vol_surface=args.vol_surface,
-    )
+    if args.no_sweep:
+        sweep_no_thresholds(days=args.days, capital=args.capital)
+    else:
+        run_backtest(
+            days=args.days,
+            capital=args.capital,
+            min_edge=args.min_edge,
+            use_kelly=not args.no_kelly,
+            no_stop=args.no_stop,
+            verbose=args.verbose,
+            use_vol_surface=args.vol_surface,
+            no_threshold=args.no_threshold,
+        )

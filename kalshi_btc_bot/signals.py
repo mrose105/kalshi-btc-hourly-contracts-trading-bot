@@ -4,6 +4,9 @@ from .config import (
     NO_CASH_MIN_PCT, NO_DIST_MAX, NO_DIST_MIN, NO_HOURS_MAX, NO_HOURS_MIN,
     NO_OVERPRICING_MIN, NO_TRUE_PROB_MAX, NO_YES_ASK_MAX, NO_YES_ASK_MIN, TIME_EXIT_MINS,
     SNIPE_MAX_ENTRY_PRICE, SNIPE_MIN_EDGE_RATIO, SNIPE_MIN_ENTRY_PRICE, STRIKE_CLUSTER_DIST,
+    BOUNDARY_NO_ZSCORE_MIN, BOUNDARY_NO_OTM_MIN, BOUNDARY_NO_OTM_MAX,
+    BOUNDARY_NO_OVERPRICING_MIN, BOUNDARY_NO_HOURS_MIN, BOUNDARY_NO_HOURS_MAX,
+    BOUNDARY_NO_YES_ASK_MIN, BOUNDARY_NO_YES_ASK_MAX,
 )
 # MIN_EDGE and MIN_EDGE_COMPRESSION intentionally NOT imported as local names —
 # read via _C.MIN_EDGE so that run_backtest()'s C.MIN_EDGE = override takes effect.
@@ -217,6 +220,81 @@ class SignalEngine:
                     "overpricing_ratio": ratio,
                     "edge_pct":          edge_pct,
                     "no_cost":           1.0 - yes_ask,
+                }
+
+        return best
+
+    def find_boundary_no(self, spot: float, vol: float, regime: dict,
+                         ladder: list, existing: dict,
+                         real_cash: float, start_total: float) -> dict | None:
+        """Sell OTM premium at range extremes.
+
+        When z-score shows BTC at the top or bottom of its recent range, the
+        OTM contracts in the continuation direction are overpriced — the market
+        assigns too much probability to a breakout that mean reversion says
+        won't happen. We collect that premium by buying NO.
+
+        Top of range (z > +threshold): target OTM contracts ABOVE current BTC
+          (range [low, high) where low > spot — needs BTC to rally to settle ITM)
+        Bottom of range (z < -threshold): target OTM contracts BELOW current BTC
+          (range where high <= spot — needs BTC to drop to settle ITM)
+        """
+        r      = regime.get("regime", "")
+        zscore = regime.get("zscore", 0.0)
+
+        if r not in ("RANGING", "REVERTING"):
+            return None
+        if abs(zscore) < BOUNDARY_NO_ZSCORE_MIN:
+            return None
+        if start_total > 0 and real_cash < start_total * NO_CASH_MIN_PCT:
+            return None
+
+        best_ratio = BOUNDARY_NO_OVERPRICING_MIN
+        best       = None
+
+        for c in ladder:
+            if c["ticker"] in existing:
+                continue
+            if _clustered(c["ticker"], c["strike"], existing):
+                continue
+            if c["hours"] < BOUNDARY_NO_HOURS_MIN or c["hours"] > BOUNDARY_NO_HOURS_MAX:
+                continue
+
+            yes_ask = c["ask"]
+            if yes_ask < BOUNDARY_NO_YES_ASK_MIN or yes_ask > BOUNDARY_NO_YES_ASK_MAX:
+                continue
+
+            otm_d = c["otm_dist"]
+            if otm_d >= 0:
+                continue  # skip ITM — want OTM continuation contracts
+
+            # Directional gate: z > 0 (BTC elevated) → fade OTM contracts above BTC
+            #                   z < 0 (BTC depressed) → fade OTM contracts below BTC
+            low  = c.get("low",  c["strike"] - 50)
+            high = c.get("high", c["strike"] + 50)
+            if zscore > 0 and not (spot < low):
+                continue   # not the above-BTC OTM we want
+            if zscore < 0 and not (spot >= high):
+                continue   # not the below-BTC OTM we want
+
+            if otm_d < BOUNDARY_NO_OTM_MIN or otm_d > BOUNDARY_NO_OTM_MAX:
+                continue
+
+            true_p = self.dist.true_prob(c, spot, vol, c["hours"], regime)
+            if true_p <= 0 or true_p >= NO_TRUE_PROB_MAX:
+                continue
+
+            ratio = yes_ask / true_p
+            if ratio > best_ratio:
+                best_ratio = ratio
+                best = {
+                    **c,
+                    "signal":            "BOUNDARY_NO",
+                    "true_prob":         true_p,
+                    "overpricing_ratio": ratio,
+                    "edge_pct":          (yes_ask - true_p) / true_p * 100,
+                    "no_cost":           1.0 - yes_ask,
+                    "zscore":            zscore,
                 }
 
         return best

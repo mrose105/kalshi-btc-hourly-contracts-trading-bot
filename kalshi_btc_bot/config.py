@@ -18,7 +18,7 @@ MAX_EXPOSURE_PCT    = 0.18       # max 18% of real portfolio value in positions 
 MIN_CASH_PCT        = 0.05       # keep 5% as cash reserve
 MAX_TRADE_PCT       = 0.025      # max 2.5% of real portfolio per trade (was 0.05)
 NO_TRADE_PCT        = 0.02       # max 2% of real portfolio per MISPRICE_NO trade (was 0.04)
-ENABLE_MISPRICE_NO = False      # disabled live until pending NO order reconciliation is fixed
+ENABLE_MISPRICE_NO = False      # disabled — BOUNDARY_NO is the active NO strategy
 MAX_POSITIONS       = 4
 STRIKE_CLUSTER_DIST = 150        # skip a new entry if its strike is within this many
                                   # dollars of an existing open position's strike in the
@@ -174,7 +174,10 @@ SNIPE_PROFIT_LOCK_PCT     = 1.50 # TIER 3.75 gate: lock in profit only when a bi
 SNIPE_PROFIT_LOCK_MIN_BID = 0.12 # absolute price floor — same rationale as GAMMA_LOCK_MIN_BID
 
 # MISPRICE_NO entry filters
-NO_OVERPRICING_MIN  = 1.40       # YES_ask / true_prob must exceed this
+# Threshold sweep (Jul 22): synthetic backtest can't discriminate thresholds — SMA/EWMA spread
+# always exceeds 1.40, so all values fire identical trades. Starting at 1.18 for paper to let
+# real Kalshi pricing tell us where the edge actually lives.
+NO_OVERPRICING_MIN  = 1.18       # YES_ask / true_prob must exceed this (was 1.40)
 NO_YES_ASK_MIN      = 0.30
 NO_YES_ASK_MAX      = 0.72
 NO_TRUE_PROB_MAX    = 0.55
@@ -185,10 +188,27 @@ NO_DIST_MAX         = 100
 NO_CASH_MIN_PCT     = 0.20       # available cash > start_total * 0.20
 
 # MISPRICE_NO exit thresholds
+# Backtest (Jul 22): no_stop at -30% was the dominant drag (-$90k on 188 stops vs +$60k wins).
+# Tightened to -20% to cut reversals sooner — BTC spiking into the range rarely recovers.
 NO_PROFIT_CAPTURE   = 0.80       # 80% gain → misprice_captured
 NO_TIME_PROFIT      = 0.40       # 40% gain + near expiry → misprice_time
-NO_STOP             = 0.30       # 30% loss → misprice_failed
+NO_STOP             = 0.40       # 40% loss → misprice_failed (sweep Jul 22: z2.5/stop0.40 best overall return 1407% + best NO P&L)
 NO_EDGE_GONE_RATIO  = 1.05       # overpricing ratio drops here → edge_gone
+
+# BOUNDARY_NO — sell OTM premium at range extremes
+# When z-score shows BTC at the top or bottom of its recent range, fade the
+# OTM contracts in the continuation direction. Market overprices a breakout
+# that mean reversion says won't happen. Same `is_no` position + exit logic
+# as MISPRICE_NO, different entry gate (z-score extremes instead of raw overpricing).
+ENABLE_BOUNDARY_NO          = True
+BOUNDARY_NO_ZSCORE_MIN      = 2.5    # |z| must exceed this to count as a range extreme (was 1.5 — sweep Jul 22 showed 2.5 best)
+BOUNDARY_NO_OTM_MIN         = -250   # don't go deeper than 250 OTM (premium too thin)
+BOUNDARY_NO_OTM_MAX         = -10    # small buffer — not right at the current boundary
+BOUNDARY_NO_OVERPRICING_MIN = 1.15   # lower than MISPRICE_NO — z-score adds independent conviction
+BOUNDARY_NO_HOURS_MIN       = 0.08
+BOUNDARY_NO_HOURS_MAX       = 0.50   # wider window than plain NO — more time decay to harvest
+BOUNDARY_NO_YES_ASK_MIN     = 0.10
+BOUNDARY_NO_YES_ASK_MAX     = 0.65
 
 # Regime
 TREND_BARS          = 3

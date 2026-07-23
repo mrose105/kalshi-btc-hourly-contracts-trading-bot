@@ -10,7 +10,8 @@ from kalshi_es_analysis import KalshiClient
 
 from .config import (
     MAX_EXPOSURE_PCT, MAX_TRADE_PCT, MIN_CASH_PCT, NO_TRADE_PCT,
-    ENABLE_MISPRICE_NO, PAPER_TRADING, POSITION_CHECK, PRICE_FETCH, SCAN_INTERVAL, SYNC_INTERVAL,
+    ENABLE_BOUNDARY_NO, ENABLE_MISPRICE_NO, PAPER_TRADING,
+    POSITION_CHECK, PRICE_FETCH, SCAN_INTERVAL, SYNC_INTERVAL,
 )
 from .feed import BTCFeed
 from .ladder import Ladder
@@ -109,7 +110,8 @@ def main():
                   f"{regime['regime']} {regime['direction']} "
                   f"conf={regime['conf']:.0%} | "
                   f"mom={regime['mom']:+.3%} z={regime['zscore']:+.2f} | "
-                  f"cash=${portfolio.real_cash:.2f} pos=${portfolio.exposure():.2f} "
+                  f"cash=${portfolio.real_cash:.2f} "
+                  f"pos=${live_view.mark_to_market(portfolio.positions) if live_view.ENABLED else portfolio.exposure():.2f} "
                   f"n={len(portfolio.positions)}")
         ladder_rows: list[str] = []
         if ladder:
@@ -180,6 +182,30 @@ def main():
                           f"{no_sig['hours']*60:.0f}m left")
                 portfolio.buy_no(no_sig, no_sig["true_prob"])
 
+            # BOUNDARY_NO — sell OTM premium at z-score extremes in ranging market
+            bno_sig = None
+            if ENABLE_BOUNDARY_NO:
+                bno_sig = signal_e.find_boundary_no(
+                    spot, vol, regime, _ladder, portfolio.positions,
+                    portfolio.real_cash, portfolio.start_total)
+            if bno_sig:
+                if live_view.ENABLED:
+                    live_view.log_event(
+                        f"📐 SIGNAL BOUNDARY_NO {bno_sig['ticker'][-18:]} "
+                        f"YES_ask=${bno_sig['ask']:.3f} no_cost=${bno_sig['no_cost']:.3f} "
+                        f"z={bno_sig['zscore']:+.2f} overprice={bno_sig['overpricing_ratio']:.2f}x "
+                        f"dist={bno_sig['otm_dist']:+.0f}"
+                    )
+                else:
+                    print(f"\n  📐 [BOUNDARY_NO] {bno_sig['ticker'][-22:]}")
+                    print(f"     YES_ask=${bno_sig['ask']:.3f} | "
+                          f"no_cost=${bno_sig['no_cost']:.3f} | "
+                          f"z={bno_sig['zscore']:+.2f} | "
+                          f"overpriced={bno_sig['overpricing_ratio']:.2f}x | "
+                          f"dist={bno_sig['otm_dist']:+.0f} | "
+                          f"{bno_sig['hours']*60:.0f}m left\n")
+                portfolio.buy_no(bno_sig, bno_sig["true_prob"])
+
             # SNIPE signal — deep-OTM lottery tickets, ROI-ranked, separate scan from
             # find_best() (see config.py SNIPE_* comment for why they'd otherwise be
             # starved out by the main edge ranking)
@@ -201,7 +227,7 @@ def main():
                           f"Hours: {snipe_sig['hours']:.2f}h\n")
                 portfolio.buy(snipe_sig, snipe_sig["true_prob"], is_snipe=True)
 
-            if not sig and not no_sig and not snipe_sig and not live_view.ENABLED:
+            if not sig and not no_sig and not bno_sig and not snipe_sig and not live_view.ENABLED:
                 cd_str = f" [{len(_cd)} cooling]" if _cd else ""
                 print(f"  — No edge (ladder: {len(_ladder)} contracts{cd_str})")
 

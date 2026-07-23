@@ -37,6 +37,15 @@ def drop_position(ticker: str) -> None:
         _snapshots.pop(ticker, None)
 
 
+def mark_to_market(positions: dict) -> float:
+    """Live market value of all open positions using latest bid snapshots."""
+    with _lock:
+        return sum(
+            pos["count"] * _snapshots.get(tk, {}).get("bid", pos["entry"])
+            for tk, pos in positions.items()
+        )
+
+
 def _fmt_position(ticker: str, snap: dict) -> str:
     itm = "✅" if snap.get("itm") else "❌"
     snipe = " 🎯" if snap.get("is_snipe") else "  "
