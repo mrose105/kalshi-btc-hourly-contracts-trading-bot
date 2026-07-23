@@ -50,13 +50,15 @@ During compression windows, 2–4¢ ATM RANGE contracts can settle at $1.00 — 
 ## Architecture
 
 ```
-BTCFeed          RegimeEngine       SignalEngine        PositionManager
-─────────        ────────────       ────────────        ───────────────
-EWMA vol    →   RANGING /     →   Scan Kalshi    →   Multi-tier exit ladder
-SMA vol         TRENDING /        ladder for           on its own thread
-vol_ratio       REVERTING /       mispriced            (exits never blocked)
-momentum        BREAKOUT          RANGE contracts
+BTCFeed          RegimeEngine       SignalEngine              PositionManager
+─────────        ────────────       ────────────              ───────────────
+EWMA vol    →   RANGING /     →   find_best (YES RANGE)  →  Multi-tier exit ladder
+SMA vol         TRENDING /        find_snipe (OTM snipe)     on its own thread
+vol_ratio       REVERTING /       find_boundary_no (NO)      (exits never blocked)
+momentum        BREAKOUT          find_no_scalp (disabled)
 zscore
+
+4 independent daemon threads: price · sync · position · signal-scan
 ```
 
 ### Package structure
