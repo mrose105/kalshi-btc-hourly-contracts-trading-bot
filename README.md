@@ -88,7 +88,7 @@ Three parallel scans on each tick:
 
 - **`find_best`** — probability-edge scan for the highest-edge contract. **RANGE-only in the RANGING regime**; TRENDING / REVERTING / BREAKOUT regimes also consider ABOVE / BELOW contracts, gated by the regime's direction (an ABOVE won't be bought during a confirmed downtrend, and vice-versa).
 - **`find_snipe`** — separate ROI-ranked scan for cheap deep-OTM lottery tickets that `find_best` would never surface (small raw-edge points but 30%+ ROI on a 10–25¢ ask).
-- **`find_boundary_no`** — premium-collection scan that sells OTM NO contracts when BTC is extended far from the center of the RANGING regime (|z-score| ≥ 2.5, RANGING or REVERTING regime). Targets overpriced YES contracts where the market is pricing in too much probability of BTC staying near the extreme — the bot fades that by buying the NO side (i.e., selling the overpriced YES-equivalent). Position exits via stop-loss at 40% loss or expiry settlement.
+- **`find_boundary_no`** — mean-reversion premium-collection scan. When BTC is at a range extreme (|z-score| ≥ 2.5, RANGING or REVERTING regime), the market overprices the probability of continuation — OTM contracts in the breakout direction are too expensive relative to true probability. The bot buys NO on those contracts (betting BTC mean-reverts rather than breaks out), analogous to selling an OTM option at the extreme to collect overpriced premium. NO pays $1 if BTC fails to reach the OTM range by expiry. Exits via 40% stop-loss or expiry settlement.
 
 Filters applied before every entry:
 
