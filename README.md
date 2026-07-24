@@ -4,20 +4,22 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 
 ---
 
-## Backtest Results (60-day walk-forward, May 25 – Jul 23 2026)
+## Backtest Results (60-day walk-forward, run 2026-07-24)
 
 | Metric | Value |
 |--------|-------|
 | Starting capital | $10,000 |
-| Final capital | $29,382 |
-| Return | **+194%** |
-| Sharpe ratio | **5.31** (daily returns, annualized √365) |
-| Profit factor | 1.46 |
+| Final capital | $28,471 |
+| Return | **+185%** |
+| Sharpe ratio | **5.15** (daily returns, annualized √365) |
+| Profit factor | 1.41 |
 | Max drawdown | -16.0% |
-| Trades | 492 |
-| Win rate | 37.4% |
+| Trades | 516 |
+| Win rate | 36.6% |
 | Avg hold | 11 min |
-| Vol compression WR | 38.5% vs 35.4% normal (61% of P&L from compression trades) |
+| Vol compression WR | 39.1% vs 35.4% normal (61% of P&L from compression trades) |
+
+> **The window rolls, so these numbers move.** `--days 60` is anchored to *now*, not to fixed dates, so every run uses a different 60-day slice. Two runs the same day, four hours apart, gave +193.8% / Sharpe 5.31 / 492 trades and +184.7% / Sharpe 5.15 / 516 trades — identical config, identical -16.01% max drawdown, purely a different data window. **Treat the headline as ≈ +185–195% with Sharpe ≈ 5.2, not a precise figure.**
 
 Backtest uses real BTC-USD 5-minute OHLCV from yfinance and applies five bias-elimination fixes to prevent inflated returns:
 
@@ -29,7 +31,50 @@ Backtest uses real BTC-USD 5-minute OHLCV from yfinance and applies five bias-el
 
 Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session).
 
-**Known remaining limitations:** Model still prices ASK from `true_prob + spread` (no real Kalshi bid/ask time-series available for validation). `momentum_locked` retains 100% WR (117 trades, +$50,428) — the trigger requires actual +100% pnl on the model-haircut bid; may still be over-optimistic vs a real market that could refuse to bid at that level. Biggest drag: `stop_loss` (265 trades, -$33,321). Real live performance is the ultimate validation — paper trade first before deploying real capital.
+**Known remaining limitations:** Model still prices ASK from `true_prob + spread` (no real Kalshi bid/ask time-series available for validation). `momentum_locked` retains 100% WR (122 trades, +$51,601) — the trigger requires actual +100% pnl on the model-haircut bid; may still be over-optimistic vs a real market that could refuse to bid at that level. Biggest drag: `stop_loss` (274 trades, -$34,549). Real live performance is the ultimate validation — paper trade first before deploying real capital.
+
+---
+
+## Risk Profile — 10,000-path Monte Carlo
+
+Return alone says nothing about what running this actually feels like. Bootstrapping the 516 backtest trades into 10,000 resampled equity paths (`python3 montecarlo.py --n 10000 --capital 10000`):
+
+| Percentile | Final equity | Return |
+|------------|--------------|--------|
+| worst path | $6,084 | -39.2% |
+| p1 | $13,819 | +38.2% |
+| p5 | $18,160 | +81.6% |
+| p25 | $23,967 | +139.7% |
+| **p50 (median)** | **$28,283** | **+182.8%** |
+| p75 | $32,639 | +226.4% |
+| p95 | $38,885 | +288.9% |
+| p99 | $43,438 | +334.4% |
+| best path | $53,930 | +439.3% |
+
+The actual backtest ($28,471) lands almost exactly on the median, so the historical trade *ordering* wasn't unusually lucky.
+
+### Drawdown is the binding constraint, not return
+
+```
+P(equity ever dips below start)    87.8%
+P(max DD > 20%)                    39.9%
+P(max DD > 30%)                    11.1%
+P(max DD > 40%)                     3.1%
+
+Max DD:  median -18%   p95 -36%   p99 -49%   worst -81%
+```
+
+The backtest's own -16.0% max drawdown is **better than the median path**. Half of all paths reaching a similar endpoint get there through a deeper hole. The worst path troughed at $1,990 — down 80% — before recovering to $6,084.
+
+Losing money outright is rare (0.1% of paths end below start), but that is the least useful number here. ~88% of paths spend time underwater and 1-in-9 takes a 30%+ drawdown. **The real question is not whether the edge is positive, it's whether you would still be running the bot after a -36% stretch — a p95 event, not a tail.**
+
+### The Monte Carlo understates risk in three ways
+
+1. **Fixed dollar P&L, no compounding.** The bootstrap resamples raw dollar amounts, but the live bot Kelly-sizes off *current* equity. Real paths compound, widening both tails.
+2. **IID resampling destroys loss clustering.** Losses correlate in reality — same regime, adjacent strikes, one BTC move busting several positions at once. Shuffling breaks that, so real drawdowns run worse than the -18% median suggests.
+3. **It inherits the concentration.** Every path resamples the same `momentum_locked` tier (122 trades, 100% WR, +$51,601) against `stop_loss` (274 trades, -$34,549). The bootstrap treats that edge as given and cannot model the tier degrading live.
+
+`SESSION_STOP_PCT` (3%) gates *new entries* only — it never closes open positions, so it does not floor these drawdowns.
 
 ---
 
