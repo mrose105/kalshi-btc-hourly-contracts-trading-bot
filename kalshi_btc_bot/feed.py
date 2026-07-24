@@ -66,25 +66,46 @@ class BTCFeed:
             print(f"  ⚠️  5-min bar bootstrap failed: {e}")
             return 0
 
+    @staticmethod
+    def _slot_start(ts: datetime.datetime) -> datetime.datetime:
+        """Floor a timestamp to the 5-min bar boundary containing it."""
+        ts = ts.replace(second=0, microsecond=0)
+        return ts - datetime.timedelta(minutes=ts.minute % 5)
+
     def _maybe_close_5min_bar(self, ts: datetime.datetime, price: float) -> None:
-        """Push a 5-min bar close whenever tick time crosses a 5-min boundary."""
+        """Push a 5-min bar close whenever tick time crosses a 5-min boundary.
+
+        Advancing exactly one bar per call replayed a feed gap (restart,
+        outage, laptop sleep) as one synthetic bar per tick: a four-hour hole
+        produced 48 bars stamped five minutes apart, each holding the ~2
+        seconds of price movement between consecutive ticks. Their near-zero
+        returns collapsed the fast vol window — measured vol_ratio 0.079
+        against a 0.55 compression threshold — so the vol-compression regime
+        fired continuously for roughly an hour after every restart, lowering
+        MIN_EDGE and widening the OTM gate on fabricated data.
+
+        Skip missing bars rather than inventing them, and resume on the live
+        boundary.
+        """
         if self._current_bar_start is None:
-            # Anchor first bar to the current 5-min slot boundary
-            self._current_bar_start = ts.replace(second=0, microsecond=0)
-            self._current_bar_start -= datetime.timedelta(
-                minutes=self._current_bar_start.minute % 5
-            )
+            self._current_bar_start = self._slot_start(ts)
             return
         bar_end = self._current_bar_start + datetime.timedelta(seconds=BAR_SECONDS)
-        if ts >= bar_end:
-            # The tick just before bar_end is our best available "close" — use
-            # the previous tick if we have one, else fall back to current price.
+        if ts < bar_end:
+            return
+        if ts < bar_end + datetime.timedelta(seconds=BAR_SECONDS):
+            # Normal roll: the forming bar just completed. The tick before the
+            # boundary is our best available close.
             close_px = price
             if len(self.prices) >= 2:
-                # Prev-tick was the last observation before the boundary
                 close_px = self.prices[-2][1]
             self.bars_5min.append((self._current_bar_start, close_px))
             self._current_bar_start = bar_end
+            return
+        # Gap. The forming bar is not a five-minute bar — its start is far
+        # older than the tick that would close it — so recording it injects a
+        # single enormous return. Drop it and re-anchor to the current slot.
+        self._current_bar_start = self._slot_start(ts)
 
     def fetch(self) -> float:
         try:
@@ -142,10 +163,23 @@ class BTCFeed:
         return max(1e-6, math.sqrt(var))
 
     def _bar_log_returns(self, window: int) -> list[float]:
-        """Log-returns from the last (window+1) 5-min bar closes."""
-        prices = [p for _, p in list(self.bars_5min)[-(window + 1):]]
-        return [math.log(prices[i] / prices[i-1])
-                for i in range(1, len(prices)) if prices[i-1] > 0]
+        """Log-returns from the last (window+1) 5-min bar closes.
+
+        Only bars exactly BAR_SECONDS apart contribute. A pair spanning a gap
+        measures hours of price movement as though it were five minutes — one
+        outlier large enough to distort both vol windows — so those pairs are
+        dropped rather than annualized as if they were ordinary bars.
+        """
+        bars = list(self.bars_5min)[-(window + 1):]
+        rets = []
+        for i in range(1, len(bars)):
+            (t_prev, p_prev), (t_now, p_now) = bars[i-1], bars[i]
+            if p_prev <= 0 or p_now <= 0:
+                continue
+            if abs((t_now - t_prev).total_seconds() - BAR_SECONDS) > 1:
+                continue
+            rets.append(math.log(p_now / p_prev))
+        return rets
 
     def sma_volatility_5min(self, window: int = SLOW_BARS) -> float:
         """Rolling-window realized vol on 5-min bars — matches the backtest's
@@ -168,8 +202,15 @@ class BTCFeed:
         suggested. Rewritten 2026-07-16 to match backtest exactly. Requires
         `bootstrap_history()` at startup so the 24h SMA is meaningful from tick 1.
         """
-        if len(self.bars_5min) < FAST_BARS + 2:
-            return 1.0    # not enough history yet — treat as "no signal"
+        # Gate on contiguous returns actually available, not raw bar count. A
+        # partially filled fast window understates realized vol, and
+        # understated fast vol is precisely what reads as compression — the
+        # regime that lowers MIN_EDGE and widens the OTM gate. Stay neutral
+        # until there is enough clean data to support a real reading.
+        fast_rets = self._bar_log_returns(FAST_BARS)
+        slow_rets = self._bar_log_returns(SLOW_BARS)
+        if len(fast_rets) < FAST_BARS - 1 or len(slow_rets) < FAST_BARS:
+            return 1.0    # not enough contiguous history — treat as "no signal"
         slow = self.sma_volatility_5min(SLOW_BARS)
         fast = self.sma_volatility_5min(FAST_BARS)
         return fast / slow if slow > 0 else 1.0
