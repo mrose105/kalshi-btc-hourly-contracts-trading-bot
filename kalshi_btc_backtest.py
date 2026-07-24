@@ -272,6 +272,23 @@ def _exit_spread(true_p: float, hours_left: float) -> float:
     return base * widen
 
 
+def _ask_at_open(sig: dict, open_spot: float, dist, regime: dict,
+                  kalshi_vol: float) -> float | None:
+    """Recompute a signal's ASK at next bar's OPEN price. The signal was
+    generated at prev bar's CLOSE, but a real order placed at that moment
+    would fill on the next tick (approximated by next-bar open). Returns
+    None if the recomputed ask is invalid."""
+    hours = sig.get("hours", 0)
+    if hours <= 0:
+        return None
+    flat_regime = {**_FLAT_REGIME, "vol": kalshi_vol}
+    kalshi_p    = dist.true_prob(sig, open_spot, kalshi_vol, hours, flat_regime)
+    if kalshi_p <= 0:
+        return None
+    spread = KALSHI_SPREAD if kalshi_p > 0.20 else KALSHI_SPREAD * 2
+    return min(0.90, kalshi_p + spread)
+
+
 def _exit_bid(true_p: float, hours_left: float) -> float:
     """Realistic exit bid with adverse-selection haircut.
 
@@ -451,9 +468,21 @@ class BacktestPortfolio:
                 kv = kalshi_vol or vol
                 flat_r = {**_FLAT_REGIME, "vol": kv}
                 yes_tp = dist.true_prob(c, spot, kv, hours_left, flat_r)
-                spread = KALSHI_SPREAD if yes_tp > 0.20 else KALSHI_SPREAD * 2
-                yes_ask_now = min(0.95, yes_tp + spread)
-                no_bid = max(0.01, 1.0 - yes_ask_now)
+                # NO exit bid comes from YES ASK. Apply the same haircut logic
+                # in reverse — when YES's true_p mechanically collapses toward
+                # 0 near expiry, the NO position looks like a guaranteed $1
+                # payout, which is a fabricated exit price. Extremeness applies
+                # symmetrically: a true_p near 0 means NO is "certain" to pay.
+                yes_ask_naive = min(0.95, yes_tp + KALSHI_SPREAD)
+                yes_ask_now   = yes_ask_naive
+                # Adverse-selection markup on the counterparty side: as YES
+                # approaches 0 near expiry, real makers keep the ask elevated
+                # rather than collapse it — they don't sell "free money".
+                tau_penalty = max(0.0, min(1.0, (0.5 - hours_left) / 0.5))
+                extremeness = abs(yes_tp - 0.5) * 2.0
+                markup      = 0.15 * tau_penalty * extremeness * (1.0 - yes_tp)
+                yes_ask_now = min(0.95, yes_ask_naive + markup)
+                no_bid      = max(0.01, 1.0 - yes_ask_now)
                 pos["bid_now"]    = no_bid
                 pos["no_yes_ask"] = yes_ask_now
                 if no_bid > pos["peak"]:
@@ -484,15 +513,23 @@ class BacktestPortfolio:
                 w_bid = _exit_bid(w_tp, hours_left)
                 w_pnl = (w_bid - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
                 if w_pnl <= -C.STOP_LOSS_PCT:
-                    # Stop triggered during the bar — record at actual stop price
-                    pos["intrabar_stop_bid"] = max(0.01,
-                        pos["entry"] * (1.0 - C.STOP_LOSS_PCT))
+                    # Stop triggered during the bar. Real stops slip past the
+                    # threshold — fill 2c worse than the theoretical stop price
+                    # (matches FORCE_EXIT_SLIPPAGE_CENTS used live).
+                    stop_bid = pos["entry"] * (1.0 - C.STOP_LOSS_PCT) \
+                                - C.FORCE_EXIT_SLIPPAGE_CENTS / 100.0
+                    pos["intrabar_stop_bid"] = max(0.01, stop_bid)
                 else:
                     pos.pop("intrabar_stop_bid", None)
             else:
                 pos.pop("intrabar_stop_bid", None)
 
-    def manage_exits(self, spot: float, bar_ts: datetime):
+    def manage_exits(self, spot: float, bar_ts: datetime, settle_spot: float = None):
+        # settle_spot: the spot to use for ITM/OTM check at expiry. If not
+        # provided, uses `spot` (current bar close) — but that's a lookahead
+        # since expiry happens DURING the bar, not at its end. Callers should
+        # pass bar_open (spot at start of bar, closest to expiry timestamp).
+        settle_spot = spot if settle_spot is None else settle_spot
         for ticker in list(self.positions.keys()):
             pos = self.positions.get(ticker)
             if not pos:
@@ -511,6 +548,7 @@ class BacktestPortfolio:
             mins_left  = hours_left * 60
             c          = pos["contract"]
             itm        = c["low"] <= spot < c["high"]
+            settle_itm = c["low"] <= settle_spot < c["high"]
 
             if pos.get("is_no"):
                 no_pnl       = (bid - entry) / entry if entry > 0 else 0
@@ -518,7 +556,7 @@ class BacktestPortfolio:
                 true_p       = pos.get("true_prob_curr", 0.0)
                 overpricing  = yes_ask_now / true_p if true_p > 0 else 0.0
                 if hours_left <= 0:
-                    self._close(ticker, 0.0 if itm else 1.0, "no_expiry_settle", bar_ts)
+                    self._close(ticker, 0.0 if settle_itm else 1.0, "no_expiry_settle", bar_ts)
                 elif no_pnl >= C.NO_PROFIT_CAPTURE:
                     self._close(ticker, bid, "no_misprice_captured", bar_ts)
                 elif no_pnl >= C.NO_TIME_PROFIT and hours_left < 0.08:
@@ -569,7 +607,11 @@ class BacktestPortfolio:
                 reason = "stop_loss"
             elif hours_left <= 0:
                 reason = "expiry_settle"
-                bid    = 1.0 if itm else 0.0
+                # Use bar_open-based ITM check (settle_spot), not bar_close —
+                # expiry happens during the bar so end-of-bar spot is a
+                # lookahead. bar_open is a defensible proxy for spot at the
+                # actual expiry moment.
+                bid    = 1.0 if settle_itm else 0.0
             elif bid <= 0.005:
                 reason = "near_zero"
 
@@ -810,6 +852,7 @@ def run_backtest(days: int = 7, capital: float = 50.0,
     closes = btc["Close"].dropna()
     highs  = btc["High"].reindex(closes.index).fillna(closes)
     lows   = btc["Low"].reindex(closes.index).fillna(closes)
+    opens  = btc["Open"].reindex(closes.index).fillna(closes)
     print(f"  ✓ {len(closes)} bars  ({closes.index[0]} → {closes.index[-1]})")
 
     feed      = SyntheticFeed()
@@ -822,11 +865,11 @@ def run_backtest(days: int = 7, capital: float = 50.0,
     # Warm up enough bars for SMA_VOL_WINDOW to stabilize (cap at 1/3 of data)
     WARMUP_BARS = min(SMA_VOL_WINDOW, len(closes) // 3)
     bars_list   = list(zip(closes.index, closes.values,
-                           highs.values, lows.values))
+                           highs.values, lows.values, opens.values))
     warmup      = bars_list[:WARMUP_BARS]
     simulation  = bars_list[WARMUP_BARS:]
 
-    for ts, close, high, low in warmup:
+    for ts, close, high, low, _open in warmup:
         ts = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
         feed.push(ts, float(close), float(high), float(low))
 
@@ -835,12 +878,36 @@ def run_backtest(days: int = 7, capital: float = 50.0,
 
     scale = math.sqrt(TIME_SCALE)
 
-    for bar_i, (ts, close, bar_high, bar_low) in enumerate(simulation):
+    # Pending signals from the PREVIOUS bar's decision, filled at THIS bar's
+    # open — removes the lookahead where a signal generated at bar close was
+    # also filled at that same bar's close (which requires knowing the close
+    # before deciding).
+    pending: list = []
+
+    for bar_i, (ts, close, bar_high, bar_low, bar_open) in enumerate(simulation):
         ts       = ts.to_pydatetime() if hasattr(ts, "to_pydatetime") else ts
         spot     = float(close)
         bar_high = float(bar_high)
         bar_low  = float(bar_low)
+        bar_open = float(bar_open)
         feed.push(ts, spot, bar_high, bar_low)
+
+        # Fill any pending signals from the previous bar at this bar's OPEN,
+        # using the actual open as the fill price (not the ladder ask that
+        # was computed at prev close). Slippage from open vs prev-close is
+        # already price movement between decision and fill — realistic.
+        for sig_type, sig in pending:
+            open_ask = _ask_at_open(sig, bar_open, dist, regime_bt if bar_i > 0 else regime,
+                                     kalshi_vol if bar_i > 0 else regime.get("vol", 0.001))
+            if open_ask is None or open_ask > C.MAX_ASK:
+                continue
+            sig_at_open = {**sig, "ask": open_ask,
+                           "bid": max(0.01, open_ask - (sig["ask"] - sig["bid"]))}
+            if sig_type == "yes":
+                portfolio.buy(sig_at_open, sig["true_prob"], ts)
+            elif sig_type == "no":
+                portfolio.buy_no(sig_at_open, sig["true_prob"], ts)
+        pending = []
 
         regime = regime_e.detect(feed)
 
@@ -854,7 +921,9 @@ def run_backtest(days: int = 7, capital: float = 50.0,
         portfolio.reset_session_if_new_day(ts)
         portfolio.update(spot, bar_high, bar_low, bar_i, dist, regime_bt, ts,
                          kalshi_vol=kalshi_vol)
-        portfolio.manage_exits(spot, ts)
+        # bar_open is closer to the actual expiry moment than bar_close (which
+        # would peek at data from AFTER expiry). Used only for settle_itm.
+        portfolio.manage_exits(spot, ts, settle_spot=bar_open)
 
         if portfolio.can_trade():
             ladder = build_ladder(spot, ts, dist, regime_bt, kalshi_vol)
@@ -873,13 +942,14 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                 vol_term=vol_term,
             )
             if sig:
-                entered = portfolio.buy(sig, sig["true_prob"], ts)
-                if entered and verbose:
+                # Queue for fill at NEXT bar's open (not this bar's close).
+                pending.append(("yes", sig))
+                if verbose:
                     itm_tag  = "ITM" if sig["itm"] else f"OTM {sig['otm_dist']:+.0f}"
                     comp_tag = " [COMP]" if sig.get("vol_compression") else ""
                     vte_tag  = (f" [VT+{sig.get('vol_term_edge', 0):.4f}]"
                                 if sig.get("vol_term_edge", 0) > 0.0001 else "")
-                    print(f"  [{ts:%H:%M}] BUY {sig['ticker'][-20:]} "
+                    print(f"  [{ts:%H:%M}] SIG {sig['ticker'][-20:]} "
                           f"ask={sig['ask']:.3f} true={sig['true_prob']:.0%} "
                           f"edge={sig['edge']:.1%} vr={regime_bt.get('vol_ratio',1):.2f} "
                           f"{itm_tag}{comp_tag}{vte_tag}")
@@ -890,23 +960,14 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                     portfolio.cash, portfolio.capital,
                 )
                 if no_sig:
-                    entered = portfolio.buy_no(no_sig, no_sig["true_prob"], ts)
-                    if entered and verbose:
-                        print(f"  [{ts:%H:%M}] BUY_NO {no_sig['ticker'][-20:]} "
-                              f"yes_ask={no_sig['ask']:.3f} no_cost={1-no_sig['ask']:.3f} "
-                              f"true={no_sig['true_prob']:.0%} "
-                              f"overpriced={no_sig.get('overpricing_ratio',0):.2f}x")
+                    pending.append(("no", no_sig))
 
                 bno_sig = signal_e.find_boundary_no(
                     spot, regime_bt["vol"], regime_bt, ladder, portfolio.positions,
                     portfolio.cash, portfolio.capital,
                 )
                 if bno_sig:
-                    entered = portfolio.buy_no(bno_sig, bno_sig["true_prob"], ts)
-                    if entered and verbose:
-                        print(f"  [{ts:%H:%M}] BOUNDARY_NO {bno_sig['ticker'][-20:]} "
-                              f"yes_ask={bno_sig['ask']:.3f} z={bno_sig.get('zscore',0):+.2f} "
-                              f"overpriced={bno_sig.get('overpricing_ratio',0):.2f}x")
+                    pending.append(("no", bno_sig))
 
         if bar_i % SUMMARY_INTERVAL == 0:
             t       = portfolio.total()

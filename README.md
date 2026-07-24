@@ -9,19 +9,27 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 | Metric | Value |
 |--------|-------|
 | Starting capital | $10,000 |
-| Final capital | $80,104 |
-| Return | **+701%** |
-| Sharpe ratio | **4.64** (daily returns, annualized √365) |
-| Profit factor | 2.54 |
-| Max drawdown | -12.3% |
-| Trades | 662 |
-| Win rate | 42.7% |
-| Avg hold | 12 min |
-| Vol compression WR | **60.6%** vs 38.0% normal (83% of P&L from compression trades) |
+| Final capital | $29,382 |
+| Return | **+194%** |
+| Sharpe ratio | **5.31** (daily returns, annualized √365) |
+| Profit factor | 1.46 |
+| Max drawdown | -16.0% |
+| Trades | 492 |
+| Win rate | 37.4% |
+| Avg hold | 11 min |
+| Vol compression WR | 38.5% vs 35.4% normal (61% of P&L from compression trades) |
 
-Backtest uses real BTC-USD 5-minute OHLCV from yfinance. Fills are model-priced from `DistModel.true_prob` with an **adverse-selection haircut** applied to exit bids: near expiry, when `true_prob` mechanically collapses toward 0/1, the exit bid is discounted (up to ~15%) to reflect the reality that Kalshi market-makers won't quote at the model's fair value on a "certain" contract that could still whipsaw. Without this haircut the backtest inflates ~4× (`momentum_locked` exits would price at ~$0.99 instead of ~$0.85). Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session). See [`docs/STRATEGY.md`](docs/STRATEGY.md) for the full math and audit.
+Backtest uses real BTC-USD 5-minute OHLCV from yfinance and applies five bias-elimination fixes to prevent inflated returns:
 
-Dominant exit by P&L: `momentum_locked` (182 trades, 100% WR, +$81,324). Biggest drag: `stop_loss` (272 trades, -$30,833).
+1. **Fills execute at NEXT bar's open, not current bar's close** — removes the lookahead where a signal generated at bar close was also filled at that same close.
+2. **Expiry settlement uses bar OPEN (not close)** — expiry happens during the bar, so end-of-bar spot is a lookahead. Bar open is a defensible proxy for spot at the actual expiry moment.
+3. **Adverse-selection haircut on all model-derived exit bids** — near expiry, when `DistModel.true_prob` mechanically collapses toward 0/1, the exit bid is discounted (up to ~15%) to reflect the reality that Kalshi market-makers won't quote at fair value on "certain" contracts that could still whipsaw. Without this the backtest inflated ~4×.
+4. **Intrabar stop slippage** — stops fill 2¢ worse than the theoretical threshold (matches live `FORCE_EXIT_SLIPPAGE_CENTS`), not at exactly the stop price.
+5. **NO position exit markup** — mirror haircut on the counterparty side so NO exits don't fabricate settlement-certainty gains either.
+
+Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session).
+
+**Known remaining limitations:** Model still prices ASK from `true_prob + spread` (no real Kalshi bid/ask time-series available for validation). `momentum_locked` retains 100% WR (117 trades, +$50,428) — the trigger requires actual +100% pnl on the model-haircut bid; may still be over-optimistic vs a real market that could refuse to bid at that level. Biggest drag: `stop_loss` (265 trades, -$33,321). Real live performance is the ultimate validation — paper trade first before deploying real capital.
 
 ---
 
