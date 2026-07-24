@@ -34,6 +34,7 @@ tmp/
 results/
 report_*.txt
 *.zip
+graphify-out/
 
 # Unrelated third-party libraries dropped in project root
 markitdown/
@@ -44,6 +45,8 @@ orders.json
 fills.json
 *.sqlite
 *.db
+# Live trade log plus the schema-migration backups _ensure_log_schema() writes
+trades*.csv
 
 # Legacy monolithic versions (superseded by kalshi_btc_bot/ package)
 kalshi_btc_v2.py
@@ -71,6 +74,10 @@ strategy_engine.py
 dashboard.html
 kalshi_bot.py
 main.py
+
+# Local dev scripts (credentials probe / parameter sweeps)
+test_auth.py
+peak_giveback_sweep.py
 
 # Root-level files superseded by kalshi_btc_bot/ package (anchored to root)
 /config.py
