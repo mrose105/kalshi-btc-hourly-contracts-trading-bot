@@ -15,7 +15,7 @@ from .config import (
     EXIT_RETRY_COOLDOWN, FORCE_EXIT_SLIPPAGE_CENTS, SESSION_STOP_PCT,
     UNTRACKED_EXPOSURE_LIMIT, MAX_ASK, MAX_SPREAD, MAX_SPREAD_PCT,
     KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS, SNIPE_TRADE_PCT,
-    MIN_EDGE,
+    MIN_EDGE, NO_OVERPRICING_MIN, BOUNDARY_NO_OVERPRICING_MIN,
 )
 from . import live_view
 
@@ -500,6 +500,22 @@ class Portfolio:
         spread = yes_ask - bid
         if spread > MAX_SPREAD or spread / yes_ask > MAX_SPREAD_PCT:
             return False
+
+        # Re-validate the mispricing against the fresh quote before committing.
+        # buy() rechecks MIN_EDGE against the live ask for exactly this reason:
+        # the signal was ranked off a ladder snapshot up to
+        # LADDER_CACHE_SECONDS old, and _fresh_quote() exists precisely so we
+        # don't trade a market that has since moved. This side had no such
+        # recheck — if YES cheapened between the scan and order submission the
+        # overpricing that justified the fade could be entirely gone and the NO
+        # was bought anyway. BOUNDARY_NO carries its own (lower) bar because
+        # the z-score extreme supplies independent conviction.
+        min_ratio = (BOUNDARY_NO_OVERPRICING_MIN
+                     if contract.get("signal") == "BOUNDARY_NO"
+                     else NO_OVERPRICING_MIN)
+        if true_prob <= 0 or yes_ask / true_prob < min_ratio:
+            return False
+
         no_cost = 1.0 - yes_ask
 
         yes_levels = self._orderbook(ticker)["yes"] if PAPER_TRADING else []
