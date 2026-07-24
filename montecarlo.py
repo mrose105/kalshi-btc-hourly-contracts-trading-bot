@@ -2,9 +2,9 @@
 Monte Carlo simulation of backtest equity curves.
 
 Usage:
-    python3 montecarlo.py                                     # uses latest result
-    python3 montecarlo.py results/backtest_20260722_1946.json # specific file
-    python3 montecarlo.py --n 2000 --capital 5000             # options
+    python3 montecarlo.py                                       # uses latest result
+    python3 montecarlo.py results/backtest_20260724_1439.json   # specific file
+    python3 montecarlo.py --n 10000 --capital 10000             # options
 """
 
 import json

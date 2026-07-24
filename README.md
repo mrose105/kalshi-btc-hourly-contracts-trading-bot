@@ -202,10 +202,11 @@ size = min(f* × 0.25, 0.025) × account_value
 
 ```bash
 pip install -r requirements.txt
-python3 kalshi_btc_backtest.py --days 60 --capital 5000               # matches the results table above
-python3 kalshi_btc_backtest.py --days 7  --capital 5000 --vol-surface # with implied vol term structure
-python3 kalshi_btc_backtest.py --days 7  --capital 5000 --no-stop     # compare without stop loss
-python3 kalshi_btc_backtest.py --days 7  --capital 5000 --verbose     # print every trade entry
+python3 kalshi_btc_backtest.py --days 60 --capital 10000               # matches the results table above
+python3 kalshi_btc_backtest.py --days 7  --capital 10000 --vol-surface # with implied vol term structure
+python3 kalshi_btc_backtest.py --days 7  --capital 10000 --no-stop     # compare without stop loss
+python3 kalshi_btc_backtest.py --days 7  --capital 10000 --verbose     # print every trade entry
+python3 montecarlo.py --n 10000 --capital 10000                        # bootstrap equity fan + drawdown distribution
 ```
 
 ### Live / Paper trading
