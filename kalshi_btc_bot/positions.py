@@ -92,8 +92,23 @@ class PositionManager:
             elif bid > 0:
                 self.portfolio.positions[ticker]["last_bid"] = bid
 
-            if ask <= 0:
-                # No sellers — still refresh snapshot so dashboard shows live dist/mins_left
+            entry    = pos["entry"]
+            peak     = pos.get("peak", entry)
+            contract = pos["contract"]
+            is_no    = pos.get("is_no", False)
+
+            # An exit hits the *bid*, never the ask: a YES long sells into the
+            # YES bid, a NO long sells into the NO bid (= 1 - YES ask). The old
+            # guard skipped the entire ladder — stop loss, time exit, peak
+            # giveback, near_settlement — on any ask <= 0, so a one-sided book
+            # (every offer lifted, bid still standing, ordinary near expiry)
+            # left the position unable to exit until settlement. That directly
+            # contradicts this module's "exits NEVER blocked" contract. Skip
+            # only when the side we would actually sell into has no quote.
+            can_liquidate = (ask > 0) if is_no else (bid > 0)
+            if not can_liquidate:
+                # Nothing to sell into — refresh snapshot so the dashboard still
+                # shows live dist/mins_left, then wait for a quote.
                 if live_view.ENABLED:
                     _e = pos.get("entry", 0)
                     _c = pos.get("contract", "")
@@ -108,18 +123,21 @@ class PositionManager:
                         "is_snipe": pos.get("is_snipe", False),
                     })
                 continue
-            if bid > 0 and bid >= ask:
+
+            # Crossed/locked book — only meaningful when both sides quote. The
+            # ask > 0 guard matters now that a missing ask no longer short-
+            # circuits above: bid >= 0 is trivially true against ask == 0 and
+            # would re-block every one-sided exit this change just enabled.
+            if bid > 0 and ask > 0 and bid >= ask:
                 print(f"  ⚠️  {ticker[-18:]} crossed quote bid=${bid:.4f} >= ask=${ask:.4f} — skipping this cycle")
                 continue
 
-            entry    = pos["entry"]
-            peak     = pos.get("peak", entry)
-            contract = pos["contract"]
-            is_no    = pos.get("is_no", False)
-
             # YES: track YES mid. NO: track NO value (= 1 - YES ask).
             # Previously used YES mid for both — wrong for NO peak tracking.
-            mid = (1.0 - ask) if is_no else ((bid + ask) / 2 if bid > 0 else ask)
+            # With no ask quoted, the YES bid is the only fair-value estimate
+            # available (is_no can't reach here without ask > 0).
+            mid = ((1.0 - ask) if is_no
+                   else ((bid + ask) / 2 if (bid > 0 and ask > 0) else bid))
 
             if mid > peak:
                 self.portfolio.positions[ticker]["peak"] = mid
@@ -193,7 +211,7 @@ class PositionManager:
             # cost, not price movement. STOP_LOSS_PCT is meant to catch actual
             # adverse BTC moves, so measure against mid (fair value) — was live
             # 2026-07-23 four stops in 15 min, all peak_pnl=0, one at 12s hold.
-            mid_pnl_pct  = ((bid + ask) / 2 - entry) / entry if entry > 0 else 0
+            mid_pnl_pct  = (mid - entry) / entry if entry > 0 else 0
             gam      = self.dist.gamma(contract, spot, vol, hours, regime)
             is_snipe = pos.get("is_snipe", False)
 
