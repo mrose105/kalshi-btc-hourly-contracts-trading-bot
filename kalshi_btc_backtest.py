@@ -264,16 +264,37 @@ def _worst_spot(contract: dict, bar_close: float,
 
 
 def _exit_spread(true_p: float, hours_left: float) -> float:
-    """Bid/ask spread used to mark open positions to market. true_prob's
-    vol_t = vol_h * sqrt(hours_left) mechanically collapses to 0/1 as
-    hours_left -> 0, regardless of whether the model's drift/vol assumptions
-    are correct — there's no independent market price to disagree with it.
-    Real Kalshi liquidity thins out near settlement rather than vanishing, so
-    widen the spread as expiry nears instead of letting the model's own
-    certainty stand in for a realistic exit fill."""
+    """Bid/ask spread — widens near expiry to reflect thinning Kalshi
+    liquidity. NOT sufficient on its own to prevent model-priced exits
+    from looking artificially profitable — use _exit_bid() for that."""
     base  = 0.010 if true_p > 0.35 else 0.020 if true_p > 0.15 else 0.030
     widen = 1.0 + max(0.0, (0.25 - hours_left) / 0.25) * 2.0  # up to 3x inside final 15 min
     return base * widen
+
+
+def _exit_bid(true_p: float, hours_left: float) -> float:
+    """Realistic exit bid with adverse-selection haircut.
+
+    The straw-man `bid = true_p - spread/2` used to look profitable near
+    expiry only because DistModel.true_prob mechanically converges to 0/1
+    as vol_t = vol_h*sqrt(hours_left) -> 0. That's a math artifact, not a
+    market you can actually sell into: a Kalshi maker seeing "0.98 with
+    3 min left" won't post a $0.97 bid — a last-minute spot flip could still
+    flip it to $0. Real markets discount extreme, near-expiry model prices.
+
+    Haircut has two components:
+      tau_penalty: grows from 0 (hours >= 0.5) to ~1 at expiry
+      extremeness: 0 at true_p=0.5, 1 at true_p in {0, 1}
+    Applied jointly so the discount only bites when the model is BOTH
+    confident AND close to settlement — the exact regime where the old
+    exit price was fabricating profit.
+    """
+    spread      = _exit_spread(true_p, hours_left)
+    tau_penalty = max(0.0, min(1.0, (0.5 - hours_left) / 0.5))
+    extremeness = abs(true_p - 0.5) * 2.0
+    discount    = 0.15 * tau_penalty * extremeness   # up to 15%
+    bid         = true_p - spread / 2 - discount * true_p
+    return max(0.01, bid)
 
 
 # ─────────────────────────────────────────────
@@ -443,8 +464,7 @@ class BacktestPortfolio:
                 continue
 
             true_p = dist.true_prob(c, spot, vol, hours_left, regime)
-            spread = _exit_spread(true_p, hours_left)
-            bid    = max(0.01, true_p - spread / 2)
+            bid    = _exit_bid(true_p, hours_left)
             pos["bid_now"] = bid
             if bid > pos["peak"]:
                 pos["peak"] = bid
@@ -461,7 +481,7 @@ class BacktestPortfolio:
             worst = _worst_spot(c, spot, bar_high, bar_low)
             if worst != spot:
                 w_tp  = dist.true_prob(c, worst, vol, hours_left, regime)
-                w_bid = max(0.01, w_tp - _exit_spread(w_tp, hours_left) / 2)
+                w_bid = _exit_bid(w_tp, hours_left)
                 w_pnl = (w_bid - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
                 if w_pnl <= -C.STOP_LOSS_PCT:
                     # Stop triggered during the bar — record at actual stop price

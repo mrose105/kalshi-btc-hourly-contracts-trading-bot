@@ -4,24 +4,24 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 
 ---
 
-## Backtest Results (60-day walk-forward, May 24 – Jul 23 2026)
+## Backtest Results (60-day walk-forward, May 25 – Jul 23 2026)
 
 | Metric | Value |
 |--------|-------|
 | Starting capital | $10,000 |
-| Final capital | $302,742 |
-| Return | **+2,927%** |
-| Sharpe ratio | **7.09** (daily returns, annualized √365) |
-| Profit factor | 3.64 |
-| Max drawdown | -7.7% |
-| Trades | 1,271 |
-| Win rate | 52.7% |
-| Avg hold | 10 min |
-| Vol compression WR | **61.4%** vs 41.3% normal (82% of P&L from compression trades) |
+| Final capital | $80,104 |
+| Return | **+701%** |
+| Sharpe ratio | **4.64** (daily returns, annualized √365) |
+| Profit factor | 2.54 |
+| Max drawdown | -12.3% |
+| Trades | 662 |
+| Win rate | 42.7% |
+| Avg hold | 12 min |
+| Vol compression WR | **60.6%** vs 38.0% normal (83% of P&L from compression trades) |
 
-Backtest uses real BTC-USD 5-minute OHLCV from yfinance. Fills modeled at Kalshi's spread (widened dynamically near settlement to reflect thin end-of-hour liquidity). Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session). See [`docs/STRATEGY.md`](docs/STRATEGY.md) for the full math and audit.
+Backtest uses real BTC-USD 5-minute OHLCV from yfinance. Fills are model-priced from `DistModel.true_prob` with an **adverse-selection haircut** applied to exit bids: near expiry, when `true_prob` mechanically collapses toward 0/1, the exit bid is discounted (up to ~15%) to reflect the reality that Kalshi market-makers won't quote at the model's fair value on a "certain" contract that could still whipsaw. Without this haircut the backtest inflates ~4× (`momentum_locked` exits would price at ~$0.99 instead of ~$0.85). Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session). See [`docs/STRATEGY.md`](docs/STRATEGY.md) for the full math and audit.
 
-Dominant exit by P&L: `momentum_locked` (506 trades, 100% WR, +$370,339). Biggest drag: `stop_loss` (490 trades, -$78,717).
+Dominant exit by P&L: `momentum_locked` (182 trades, 100% WR, +$81,324). Biggest drag: `stop_loss` (272 trades, -$30,833).
 
 ---
 
