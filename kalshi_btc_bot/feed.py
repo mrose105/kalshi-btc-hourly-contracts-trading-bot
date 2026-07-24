@@ -30,7 +30,12 @@ class BTCFeed:
         24h SMA vol signal is live from tick #1. Returns bar count populated."""
         try:
             import yfinance as yf
-            end = datetime.datetime.now()
+            # Timezone-aware UTC. Passing naive local datetimes made yfinance
+            # read them as UTC, so in EDT (UTC-4) the window closed four hours
+            # early and the "24h of history" actually ended four hours ago —
+            # measured 243 min of lag vs 2 min once tz-aware. That hole is what
+            # fed the synthetic-bar gap in _maybe_close_5min_bar().
+            end = datetime.datetime.now(datetime.timezone.utc)
             start = end - datetime.timedelta(hours=hours + 1)
             df = yf.download("BTC-USD", start=start, end=end, interval="5m",
                              progress=False, auto_adjust=False)
@@ -52,6 +57,10 @@ class BTCFeed:
             if self.bars_5min:
                 last_ts = self.bars_5min[-1][0]
                 self._current_bar_start = last_ts + datetime.timedelta(seconds=BAR_SECONDS)
+                stale_min = (datetime.datetime.now() - last_ts).total_seconds() / 60
+                if stale_min > 15:
+                    print(f"  ⚠️  Bootstrapped history ends {stale_min:.0f} min ago — "
+                          f"vol_ratio stays neutral until the fast window refills")
             return len(self.bars_5min)
         except Exception as e:
             print(f"  ⚠️  5-min bar bootstrap failed: {e}")
