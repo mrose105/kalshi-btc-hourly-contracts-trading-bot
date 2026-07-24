@@ -92,9 +92,15 @@ def main():
 
     def sync_step():
         if PAPER_TRADING:
-            portfolio.real_port = portfolio.exposure()
-        else:
-            portfolio.sync()
+            # Mark-to-market, not cost basis — see Portfolio.market_value().
+            # exposure() here made paper equity blind to unrealized loss, so the
+            # SESSION_STOP_PCT drawdown breaker could not fire in the one mode
+            # it was being validated in.
+            portfolio.real_port = portfolio.market_value()
+        # sync() advances the peak_total high-water mark the breaker measures
+        # against. Paper mode previously skipped it entirely, so peak_total
+        # stayed frozen at the startup baseline forever.
+        portfolio.sync()
 
     def position_step():
         spot = feed.last

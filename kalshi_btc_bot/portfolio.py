@@ -102,6 +102,25 @@ class Portfolio:
     def exposure(self) -> float:
         return sum(p["cost"] for p in self.positions.values())
 
+    def market_value(self) -> float:
+        """Mark-to-market value of open positions, from the latest liquidation
+        price PositionManager records on each cycle (`last_bid`).
+
+        exposure() sums what a position *cost*, not what it is *worth*. Paper
+        mode set real_port from exposure() (app.py sync_step), so total_value()
+        could not see an unrealized loss at all: four positions bought at $250
+        each and collapsed to zero still reported a 0% drawdown, and
+        SESSION_STOP_PCT only ever fired on realized P&L. Live mode never had
+        this problem — real_port there is Kalshi's own mark-to-market
+        portfolio_value — which meant the breaker being validated in paper was
+        not the breaker that would run live. Falls back to entry for a position
+        the manager has not marked yet (first cycle after a fill)."""
+        with self.lock:
+            return sum(
+                p["count"] * p.get("last_bid", p["entry"])
+                for p in self.positions.values()
+            )
+
     def current_exposure(self) -> float:
         return max(self.real_port, self.exposure())
 

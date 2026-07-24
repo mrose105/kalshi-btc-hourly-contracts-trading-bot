@@ -81,6 +81,17 @@ class PositionManager:
                     live_view.drop_position(ticker)
                 continue
 
+            # Record the latest liquidation mark so portfolio.market_value()
+            # can price the book mark-to-market. YES liquidates into the YES
+            # bid; NO liquidates into the NO bid (= 1 - YES ask). Only written
+            # when the corresponding side actually quotes, so a one-sided book
+            # leaves the previous mark standing rather than marking to zero.
+            if pos.get("is_no", False):
+                if ask > 0:
+                    self.portfolio.positions[ticker]["last_bid"] = max(0.0, 1.0 - ask)
+            elif bid > 0:
+                self.portfolio.positions[ticker]["last_bid"] = bid
+
             if ask <= 0:
                 # No sellers — still refresh snapshot so dashboard shows live dist/mins_left
                 if live_view.ENABLED:
