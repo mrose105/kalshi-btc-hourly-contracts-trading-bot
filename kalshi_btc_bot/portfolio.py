@@ -1,6 +1,7 @@
 import csv
 import datetime
 import os
+import shutil
 import threading
 import time
 import uuid
@@ -8,6 +9,52 @@ from pathlib import Path
 
 _LOG_PATH = Path(__file__).parent.parent / "trades.csv"
 _LOG_FIELDS = ["timestamp", "action", "ticker", "side", "count", "price", "true_prob", "pnl", "peak_pnl_pct", "reason", "mode"]
+
+
+def _ensure_log_schema() -> None:
+    """Guarantee trades.csv on disk carries the current column set.
+
+    The header was only ever written when the file did not already exist, so
+    adding a field (peak_pnl_pct) left every row written afterwards one column
+    wider than the header it would be read back against. csv.DictReader shifts
+    silently rather than erroring: `reason` came back holding the peak number,
+    `mode` held the reason, and the real mode was dropped. 66 of 300 rows were
+    corrupt on read — enough to poison any analysis of the trade log.
+
+    Migrate legacy rows up to the current field set instead of rotating the
+    file, so no trade history is lost, and keep a one-time backup alongside.
+    Matching by column name means future field additions or reorders migrate
+    on the next start rather than silently desyncing again.
+    """
+    if not _LOG_PATH.exists():
+        with open(_LOG_PATH, "w", newline="") as f:
+            csv.DictWriter(f, fieldnames=_LOG_FIELDS).writeheader()
+        return
+
+    with open(_LOG_PATH, newline="") as f:
+        rows = list(csv.reader(f))
+    if rows and rows[0] == _LOG_FIELDS:
+        return
+
+    header, body = (rows[0], rows[1:]) if rows else (_LOG_FIELDS, [])
+    migrated = []
+    for r in body:
+        # A row as wide as the current schema was written by current code and
+        # is already in _LOG_FIELDS order; anything else predates the change
+        # and maps by the on-disk header.
+        names = _LOG_FIELDS if len(r) == len(_LOG_FIELDS) else header
+        rec   = dict(zip(names, r))
+        migrated.append({k: rec.get(k, "") for k in _LOG_FIELDS})
+
+    backup = _LOG_PATH.with_name(f"{_LOG_PATH.stem}.pre-migration.csv")
+    if not backup.exists():
+        shutil.copyfile(_LOG_PATH, backup)
+    with open(_LOG_PATH, "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=_LOG_FIELDS)
+        w.writeheader()
+        w.writerows(migrated)
+    print(f"  🗃  trades.csv migrated to current schema "
+          f"({len(migrated)} rows, backup: {backup.name})")
 
 from .config import (
     MAX_EXPOSURE_PCT, MAX_POSITIONS, MAX_TRADE_PCT, MIN_CASH_FLOOR,
@@ -48,9 +95,7 @@ class Portfolio:
         # never blocks an exit — see positions.py "exits NEVER blocked".
         self.lock = threading.Lock()
 
-        if not _LOG_PATH.exists():
-            with open(_LOG_PATH, "w", newline="") as f:
-                csv.DictWriter(f, fieldnames=_LOG_FIELDS).writeheader()
+        _ensure_log_schema()
 
     def _log_trade(self, action, ticker, side, count, price, true_prob=None,
                    pnl=None, peak_pnl_pct=None, reason=""):
