@@ -4,6 +4,8 @@ import requests
 import statistics
 from collections import deque
 
+from .config import PRICE_FETCH
+
 
 # ─────────────────────────────────────────────
 # PRICE FEED
@@ -127,6 +129,33 @@ class BTCFeed:
         cutoff = datetime.datetime.now() - datetime.timedelta(seconds=seconds)
         return [p for t, p in self.prices if t >= cutoff]
 
+    def _recent_ticks(self, seconds: int) -> list:
+        cutoff = datetime.datetime.now() - datetime.timedelta(seconds=seconds)
+        return [(t, p) for t, p in self.prices if t >= cutoff]
+
+    @staticmethod
+    def _tick_log_returns(ticks: list) -> list[float]:
+        """Log-returns between consecutive ticks, skipping any pair that spans
+        a feed outage.
+
+        fetch() returns the last known price without recording a tick when the
+        HTTP call fails, so a dropped poll leaves a hole in self.prices. The
+        next return then covers the whole outage but is treated as one
+        PRICE_FETCH interval. Squared into the EWMA that prices every contract,
+        a single 5-min hole inflated vol 5.6x (9.5x for 15 min) and decayed
+        only over the EWMA half-life — mispricing the entire ladder meanwhile.
+        """
+        max_dt = PRICE_FETCH * 3
+        rets = []
+        for i in range(1, len(ticks)):
+            (t_prev, p_prev), (t_now, p_now) = ticks[i-1], ticks[i]
+            if p_prev <= 0 or p_now <= 0:
+                continue
+            if (t_now - t_prev).total_seconds() > max_dt:
+                continue
+            rets.append(math.log(p_now / p_prev))
+        return rets
+
     def momentum(self, seconds: int = 60) -> float:
         r = self.recent(seconds)
         if len(r) < 2: return 0.0
@@ -136,25 +165,26 @@ class BTCFeed:
         return self.momentum(30) - self.momentum(60)
 
     def volatility(self, seconds: int = 300) -> float:
-        r = self.recent(seconds)
-        if len(r) < 5: return 0.001
-        rets = [math.log(r[i]/r[i-1]) for i in range(1, len(r)) if r[i-1] > 0]
+        ticks = self._recent_ticks(seconds)
+        if len(ticks) < 5: return 0.001
+        rets = self._tick_log_returns(ticks)
         return statistics.stdev(rets) if len(rets) >= 2 else 0.001
 
     def ewma_volatility(self, lam: float = 0.99) -> float:
         """Fast EWMA vol — weights recent returns more than rolling stdev.
-        λ=0.99 → ~69-bar half-life ≈ 4.6 min at 4s ticks. 2026-07-06: was
+        λ=0.99 → ~69-tick half-life ≈ 2.3 min at the current 2s PRICE_FETCH
+        (the "4.6 min" this note used to quote assumed the old 4s poll, which
+        halved when PRICE_FETCH dropped to 2s). 2026-07-06: was
         λ=0.94, commented as "the standard daily decay factor from RiskMetrics" —
         that provenance is for daily bars (~11-day half-life); applied to 4s
         ticks it gave a ~45s half-life, letting one large tick flip the fast/slow
         vol_ratio and the HIGH/LOW regime read almost instantly. 0.99 keeps this
         genuinely "fast" relative to the ~46min slow EWMA below while damping
         single-tick noise."""
-        prices = [p for _, p in self.prices[-300:]]
-        if len(prices) < 3:
+        ticks = self.prices[-300:]
+        if len(ticks) < 3:
             return self.volatility(300)
-        rets = [math.log(prices[i] / prices[i-1])
-                for i in range(1, len(prices)) if prices[i-1] > 0]
+        rets = self._tick_log_returns(ticks)
         if len(rets) < 2:
             return 0.001
         var = rets[0] ** 2
