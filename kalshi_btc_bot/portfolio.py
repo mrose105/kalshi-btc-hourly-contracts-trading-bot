@@ -743,10 +743,26 @@ class Portfolio:
         # 3 re-entries on B62050 in 36 min, -$4.98).
         is_loss_cut = reason.startswith("stop_") or "boundary_risk" in reason
         with self.lock:
-            self.positions[ticker]["count"] -= count
-            done = self.positions[ticker]["count"] <= 0
+            _pos = self.positions.get(ticker)
+            if _pos is None:
+                done = True
+            else:
+                # Retire cost basis alongside the contracts it paid for. Only
+                # `count` was decremented here, so a partially-filled exit left
+                # the position holding its full original cost: exposure() then
+                # overstated the book (400 of 1000 contracts sold still read
+                # $250 rather than $150) and the *next* sell's cost_basis —
+                # pos["cost"] * (count / pos["count"]) — over-decremented
+                # real_port by that same stale amount. Partial fills are
+                # routine on both paths: a live IOC can fill short, and
+                # _walk_book deliberately fills only to real depth in paper.
+                prev = _pos["count"]
+                if prev > 0:
+                    _pos["cost"] *= (prev - count) / prev
+                _pos["count"] = prev - count
+                done = _pos["count"] <= 0
             if done:
-                del self.positions[ticker]
+                self.positions.pop(ticker, None)
                 if is_loss_cut:
                     self.stop_cooldowns[ticker] = time.time() + STOP_COOLDOWN_SECS
         if done:
