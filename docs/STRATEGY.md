@@ -81,14 +81,14 @@ The heuristic multipliers (0.3, 0.15, 0.5) are the kind of thing you'd tune empi
 
 ### 2.3 Volatility inputs
 
-The model takes a **per-4-second-bar EWMA vol** from the feed and annualizes:
+The model takes a **per-tick EWMA vol** from the feed and annualizes:
 
 ```
-σ_h = σ_bar × √900   (900 bars/hour)
+σ_h = σ_bar × √BARS_PER_HOUR
 σ_t = σ_h × √T
 ```
 
-(`model.py:42, 52`, `BARS_PER_HOUR = 900`)
+`BARS_PER_HOUR = 3600 // PRICE_FETCH`, so **1800** at the current 2 s poll. This was hardcoded to `900` (correct only for the retired 4 s poll) in both `model.py` and `regime.py`, silently understating hourly vol by √2 (~29%) and inflating every RANGE edge. Fixed Jul 23 by deriving it from `PRICE_FETCH`.
 
 **Vol estimator (`feed.py:47-66`)** — RiskMetrics EWMA:
 
@@ -96,10 +96,11 @@ The model takes a **per-4-second-bar EWMA vol** from the feed and annualizes:
 σ²_t = λ·σ²_{t-1} + (1−λ)·r²_t     with r_t = log(P_t / P_{t-1})
 ```
 
-- Fast: `λ = 0.99` → half-life = `ln(0.5)/ln(0.99) ≈ 69 bars = 4.6 min`
-- Slow: `λ = 0.999` → half-life ≈ **693 bars = 46 min**
+- `λ = 0.99` → half-life = `ln(0.5)/ln(0.99) ≈ 69 ticks`, which is **2.3 min at the 2 s poll** (not the 4.6 min quoted while `PRICE_FETCH` was 4 s).
 
-**Audit:** ✅ Standard RiskMetrics form, correctly implemented. Docstrings match derived half-lives.
+The companion slow EWMA (`λ = 0.999`, ~46 min) no longer exists — §2.4's `vol_ratio` was rewritten Jul 16 to an SMA on 5-min bars, so this estimator now feeds only `regime["vol"]` and hence `DistModel.true_prob`.
+
+**Audit:** ✅ Standard RiskMetrics form. Returns spanning a feed outage are now excluded (Jul 25): `fetch()` records nothing when the HTTP call fails, so the next return covered the whole gap while being weighted as one `PRICE_FETCH` interval — a 5-min hole inflated this vol 5.6×, and a 15-min hole 9.5×, repricing the entire ladder.
 
 **Vol regime scaling** (`model.py:44-49`):
 
@@ -138,7 +139,12 @@ vol_ratio = σ_fast / σ_slow
 
 At startup the live bot calls `feed.bootstrap_history(hours=24)` to pull 24 h of BTC 5-min bars from yfinance so the 24h SMA is meaningful from the first scan tick (before this fix, the live bot would have needed 24h of runtime to populate the window). Each tick then aggregates the incoming Coinbase price into the currently-forming 5-min bar and closes the bar at boundary crossings.
 
-**Audit:** ✅ Live and backtest now compute the identical statistic. Rewritten 2026-07-16 — previously the live bot used a `EWMA(46min)/EWMA(4.6min)` ratio on 4-second ticks, which measured a very different (much shorter) lag than Kalshi's stated 24h window. That mismatch meant the live `vol_compression = True` signal fired much more often than the backtest suggested, degrading signal quality. The fix restores backtest parity — every compression trigger in production now corresponds to a compression trigger the backtest would produce on the same data.
+**Audit:** ✅ Live and backtest now compute the identical statistic. Rewritten 2026-07-16 — previously the live bot used a `EWMA(46min)/EWMA(4.6min)` ratio on 4-second ticks, which measured a very different (much shorter) lag than Kalshi's stated 24h window. That mismatch meant the live `vol_compression = True` signal fired much more often than the backtest suggested, degrading signal quality. The fix restores backtest parity in *formula*, but two feed defects broke it in *data* until Jul 25:
+
+1. `bootstrap_history()` passed naive local datetimes to yfinance, which reads them as UTC — under EDT the 24 h window closed four hours early (measured 243 min of lag vs 2 min once timezone-aware).
+2. That hole then fed `_maybe_close_5min_bar()`, which advanced only one bar per tick, replaying the gap as ~48 synthetic bars stamped 5 minutes apart but each holding ~2 seconds of price movement. Their near-zero returns collapsed the fast window to `vol_ratio ≈ 0.079` against a 0.55 threshold.
+
+Net effect: **the compression regime fired continuously for roughly the first hour after every restart**, dropping `MIN_EDGE` to 0.010 and widening the OTM gate to 150 on fabricated data. Both are fixed; gaps now re-anchor to the live slot and `vol_ratio` returns a neutral 1.0 until the fast window holds enough contiguous bars. Paper results recorded before Jul 25 were collected under this defect.
 
 ### 2.5 Vol surface (implied vol term structure)
 
@@ -222,11 +228,11 @@ Where `KELLY_FRACTION = 0.25` (quarter-Kelly) and `KELLY_CAP = 0.025` (2.5% of a
 - Quarter-Kelly approximately quarters the drawdown risk while keeping ~44% of the log-utility growth rate.
 - The 2.5% cap is another guardrail against high-edge / low-price entries where Kelly would size aggressively (a $0.05 ask with 30% true prob has Kelly f* = 26% — the cap prevents that).
 
-Edge case: when `true_prob ≤ ask`, `kelly_fraction` returns `MAX_TRADE_PCT` (`portfolio.py:142-143`). This is only reachable defensively — the entry filters already require `raw_edge ≥ MIN_EDGE`, so this branch is not hit in normal flow.
+Edge case: when `true_prob ≤ ask`, `kelly_fraction` returns **`0.0`** — no edge, no size. It previously returned `MAX_TRADE_PCT`, i.e. maximum size on a zero-or-negative-edge input, guarded only by the caller's `MIN_EDGE` recheck. Note the caller still falls back to `MAX_TRADE_PCT` if Kelly rounds the contract count to zero, so that recheck remains load-bearing.
 
 ### 3.3 Snipe sizing
 
-Deep-OTM lottery entries skip Kelly entirely (`portfolio.py:352`) and use a fixed `SNIPE_TRADE_PCT = 0.02` (2%). Rationale (`config.py:151-153`): tail-probability estimates from a log-normal model are inherently noisy — Kelly would over-size a noisy estimate. Fixed 2% caps the downside without requiring precise probability confidence.
+Deep-OTM lottery entries skip Kelly entirely and use a fixed `SNIPE_TRADE_PCT = 0.01` (1%). Rationale: tail-probability estimates from a log-normal model are inherently noisy — Kelly would over-size a noisy estimate. Cut from 2% to 1% on Jul 16 after a single 516-contract paper snipe lost $117 (~1.2% of a $10K account), so one bad snipe was erasing weeks of small wins.
 
 **Audit:** ✅ Sound principle. In practice, when your edge estimate has meaningful variance, fractional Kelly reduces to fixed sizing that's a fraction of "Kelly-if-you-were-certain".
 
@@ -303,11 +309,11 @@ Every entry re-fetches the live best bid/ask right before order placement via `_
 |---|---|---|---|
 | — | contract settled or past expiry | `expired_settled` / `SETTLED` | all |
 | 0.5 | `bid ≥ 35¢` AND `pnl ≥ 15%` AND `true_prob` fading 2 ticks AND `|gamma| ≥ 40,000` | `gamma_lock` | non-snipe |
-| 0.75 | `peak_pnl ≥ 25%` AND `bid ≥ 20¢` AND `pnl ≤ 50% × peak_pnl` | `peak_giveback` | non-snipe |
+| 0.75 | `peak_pnl ≥ 25%` AND `bid ≥ 20¢` AND `pnl ≤ 75% × peak_pnl` | `peak_giveback` | **all** (snipes only while OTM) |
 | 1 | `bid ≥ 30¢` AND `pnl ≥ 40%` AND `T < 15 min` | `scalp_lock` | non-snipe |
 | 2 | `pnl ≥ 100%` AND `T < 9 min` | `momentum_locked` | non-snipe |
 | 3 | `pnl ≥ 150%` AND `T < 15 min` | `profit_extracted` | non-snipe |
-| 3.75 | `bid ≥ 12¢` AND `pnl ≥ 150%` AND `true_prob` fading 2 ticks | `snipe_lock` | **snipe only** |
+| 3.75 | `bid ≥ 12¢` AND `peak_pnl ≥ 50%` AND `pnl ≥ 15%` AND `true_prob` fading 2 ticks | `snipe_lock` | **snipe only** |
 | **3.5** | **`bid ≥ 75¢`** | **`near_settlement`** | **all** |
 | 4 | `pnl ≥ 300%` | `mega_profit` | non-snipe |
 | 5 | `T < 3 min` AND OTM AND `|dist| > 15` | `time_exit_OTM` | all |
@@ -315,9 +321,21 @@ Every entry re-fetches the live best bid/ask right before order placement via `_
 | 6 | `bid > 0` AND `pnl ≤ −35%/time_urgency` AND `T > 18 min` AND NOT (ITM AND `T < 3 min`) | `stop_35%` | non-snipe |
 | — | `mid ≤ 0.5¢` | `near_zero` | all |
 
-**Snipe philosophy** (`positions.py:163-169`): snipes skip every capital-protection tier by design. A snipe's max loss is already sunk at the cheap entry; there's no capital to "protect" by bailing early. Locking at pnl ≥ 40% defeats the 1000%+ payoff thesis. Snipes ride to either near-settlement, tier-3.75 reversal-lock, OTM time exit, or worthless expiry.
+**Snipe philosophy:** snipes skip most capital-protection tiers by design (`peak_giveback` is the exception — it applies to snipes while OTM, since it is peak-relative and floors giveback without capping upside). A snipe's max loss is already sunk at the cheap entry; there's no capital to "protect" by bailing early. Locking at pnl ≥ 40% defeats the 1000%+ payoff thesis. Snipes ride to either near-settlement, tier-3.75 reversal-lock, OTM time exit, or worthless expiry.
 
-**Backtest parity:** the backtest's `manage_exits()` mirrors these tiers (commit `908f83b`, memory obs 833) so backtest and live P&L attribution should match.
+**Backtest parity — partial, verify before trusting attribution.** The backtest mirrors most tiers but **tier 1 differs materially**:
+
+```python
+# backtest (kalshi_btc_backtest.py:587)   +40% AND faded 10% from peak, no time gate
+elif pnl_pct >= C.SCALP_LOCK_PCT and drop_peak > 0.10:
+
+# live (positions.py tier 1)              +40% AND bid ≥ 30¢ AND T < 15 min, no fade gate
+if bid >= SCALP_LOCK_MIN_BID and pnl_pct >= SCALP_LOCK_PCT and hours < 0.25:
+```
+
+In the backtest a position at +40% that is still *rising* (`drop_peak = 0`) is left open and can run to `momentum_locked` at +100%. Live, that same position closes at +40% as soon as it is inside 15 minutes. The backtest also has **no `snipe_lock` tier and no `is_snipe` gating**, so snipes there flow through tiers the live bot excludes them from.
+
+Consequence: P&L attribution does **not** transfer between the two. `momentum_locked` is the backtest's largest winner (+$51,601) yet has never fired in live or paper trading — across 31 recent paper trades, 9 peaked above +100% and every one was closed first by `snipe_lock` (4, structurally excluded from tier 2), `expired_settled` (3), `scalp_lock` (1) or `peak_giveback` (1).
 
 ---
 
@@ -328,7 +346,7 @@ Every entry re-fetches the live best bid/ask right before order placement via `_
 | `MAX_EXPOSURE_PCT` | 18% | Cap on total capital-at-risk |
 | `MAX_TRADE_PCT` | 2.5% | Single-trade cap, same as `KELLY_CAP` |
 | `MAX_POSITIONS` | 4 | Concurrency cap |
-| `MIN_CASH_PCT` | 5% | Reserve — trades blocked below |
+| `MIN_CASH_FLOOR` | $0.25 | Absolute cash floor (the old 5% `MIN_CASH_PCT` reserve check was removed as redundant — `MAX_EXPOSURE_PCT` already caps deployment at 18%) |
 | `SESSION_STOP_PCT` | 3% from running peak | Halt new entries after a drawdown (resets on restart) |
 | `STOP_COOLDOWN_SECS` | 300 s | Re-entry lockout after stop-out (prevents whipsaw) |
 | `STRIKE_CLUSTER_DIST` | $150 | Correlated-position cap |
@@ -343,24 +361,47 @@ Every entry re-fetches the live best bid/ask right before order placement via `_
 
 The backtest mirrors the live bot's math for pricing, sizing, and exits, but with two known asymmetries:
 
-1. **Vol compression signal** (§2.4) — SMA-based in backtest, EWMA-based live. Live is more sensitive than backtest suggests.
+1. **Vol compression signal** (§2.4) — now SMA-based on 5-min bars in *both* backtest and live (rewritten Jul 16 for parity). This asymmetry no longer applies.
 2. **Fill model** — backtest models fills at Kalshi's spread with an intrabar stop simulation using bar high/low (`kalshi_btc_backtest.py:465+`, `_exit_spread` widens dynamically near settlement per commit `49d5882`). Live uses actual Kalshi IOC orders in prod and depth-capped order-book walking in paper mode. Realistic but not identical.
 
-Fresh 60-day backtest at $5,000 starting capital (Jul 16 2026, post Itô + vol-parity fixes):
+60-day backtest at $10,000 starting capital (Jul 24 2026, **post lookahead-bias audit**):
 
 | Metric | Value |
 |---|---|
-| Trades | 1,366 |
-| Win rate | 47.3% |
-| Return | +2,621% |
-| Sharpe | 6.47 |
-| Profit factor | 2.91 |
-| Max drawdown | -9.2% |
-| Avg hold | 9 min |
-| Vol-compression WR | 51.8% vs 42.0% normal-vol |
-| Vol-compression P&L | 69% of total |
+| Trades | 516 |
+| Win rate | 36.6% |
+| Return | +185% |
+| Sharpe | 5.15 |
+| Profit factor | 1.41 |
+| Max drawdown | -16.0% |
+| Avg hold | 11 min |
+| Vol-compression WR | 39.1% vs 35.4% normal-vol |
+| Vol-compression P&L | 61% of total |
 
-Dominant winner: `momentum_locked` (499 trades, 100% WR, +$183,282). Largest drag: `stop_loss` (570 trades, 0% WR, -$45,664). The `boundary_risk` tier (48 trades, 0% WR) is working defensively as intended — cutting positions before they flip.
+Dominant winner: `momentum_locked` (122 trades, 100% WR, +$51,601). Largest drag: `stop_loss` (274 trades, 0% WR, -$34,549).
+
+### 8.1 Why this differs from the earlier Jul 16 figures
+
+An earlier revision of this document cited a Jul 16 run at $5,000 capital: 1,366 trades, +2,621%, Sharpe 6.47. **That run predates the lookahead-bias audit** and is not comparable. The audit (README §"bias-elimination fixes") removed five sources of inflation, the largest being fills executing at the same bar's close that generated the signal, and exits pricing off an un-haircut model bid:
+
+| Stage | Return | Sharpe |
+|---|---|---|
+| Pre-audit | +2,927% | 7.09 |
+| + adverse-selection exit haircut | +701% | 4.64 |
+| + next-bar fills, expiry proxy, stop slippage, NO haircut | +185–194% | 5.15–5.31 |
+
+Two separate effects are easy to conflate here, so to be explicit:
+
+- **The bias audit** accounts for essentially all of the gap (~14×). These were real defects.
+- **The rolling window** accounts for only ~±5%. `--days 60` is anchored to *now*, so two runs the same day four hours apart gave +193.8%/Sharpe 5.31 and +184.7%/Sharpe 5.15 on identical config and an identical −16.01% max drawdown.
+
+Quote the post-audit figure as a range (≈ +185–195%, Sharpe ≈ 5.2). The pre-audit numbers should not be cited at all.
+
+### 8.2 The 100% win rates are structural, not predictive
+
+`momentum_locked` reports 100% WR because it *only fires when `pnl_pct ≥ 100%`* — it cannot close a loser by construction. The same is true of `scalp_reversal`, `gamma_lock` and `near_settlement`. These are not evidence of forecasting skill; they are profit-lock tiers, and their win rate is a tautology.
+
+This matters because the backtest exits at a **model-derived bid** (`true_prob + spread`, haircut applied) rather than a recorded order book. Every additional firing of a profit-lock tier compounds the model's own optimism once more. Measured sensitivity: changing the tier-1 condition alone to match live's `scalp_lock` moves the backtest from **+185% to +2,111%** (Sharpe 7.50, `scalp_reversal` firing 778× at 100% WR). An 11× swing from one condition means the backtest cannot discriminate between these ladders, and its absolute return should not be read as a forecast of live P&L.
 
 ---
 
@@ -374,8 +415,10 @@ Dominant winner: `momentum_locked` (499 trades, 100% WR, +$183,282). Largest dra
 - Central finite difference for gamma and vega — appropriate bump sizes.
 - Vol floor/cap (`model.py:11-19`) — genuinely bounds runaway readings after the Jul 6 tightening.
 - **Vol compression signal now uses 5-min bar SMA(24h) vs SMA(1h) in both live and backtest** (§2.4). Bootstrapped at startup from 24h of yfinance data so the signal is live from tick 1.
-- Backtest exit-tier parity with live `positions.py` (commit `908f83b`).
-- Backtest session-stop reset per day (commit `b133bae`) — matches live workflow of restarting the bot each session.
+- Backtest session-stop reset per day — matches live workflow of restarting the bot each session.
+**❌ Known divergences (see §6 and §8.2):**
+- **Backtest tier 1 does not match live `scalp_lock`**, and the backtest has no `snipe_lock`/`is_snipe` gating. Exit-tier P&L attribution does not transfer between backtest and live.
+- **Profit-lock tiers report 100% win rate by construction** and exit at a model-derived bid, so backtest absolute return is not a forecast of live P&L.
 
 **⚠️ Design choices worth being aware of (not bugs):**
 - **Vol regime scaling factors** (×1.15 HIGH, ×0.92 LOW) in `DistModel.true_prob` are heuristic multipliers, not derived from a vol-of-vol model. Directionally sensible (wider distribution when vol is high) but the specific magnitudes are calibration parameters, not first-principles.
