@@ -65,6 +65,7 @@ from .config import (
     MIN_EDGE, NO_OVERPRICING_MIN, BOUNDARY_NO_OVERPRICING_MIN,
 )
 from . import live_view
+from . import recorder
 
 # ─────────────────────────────────────────────
 # PORTFOLIO — syncs from real Kalshi API
@@ -409,9 +410,14 @@ class Portfolio:
     def _parse_level(lv) -> tuple | None:
         """Normalize one orderbook level to (price_cents, qty) regardless of
         whether the API returns [price, qty] pairs or {"price":.., "quantity":..}
-        objects — response shape isn't pinned down against a live orderbook
-        response, so this fails soft (skips the level) rather than crashing a
-        live sell/buy on an unexpected format."""
+        objects. Verified against a live KXBTC book 2026-07-28: levels come back
+        as [price_cents, "qty_string"] — a float price and a STRING quantity —
+        sorted ASCENDING, so top-of-book is the last element, not the first.
+        _walk_book re-sorts descending and consumes highest-price-first, which is
+        correct for both directions: selling YES wants the highest YES bid, and
+        buying YES matches NO bids where the highest NO price is the cheapest
+        effective YES. Still fails soft on an unexpected format rather than
+        crashing a live sell/buy."""
         try:
             if isinstance(lv, (list, tuple)) and len(lv) >= 2:
                 return float(lv[0]), float(lv[1])
@@ -475,6 +481,11 @@ class Portfolio:
                     print(f"  ⚠️  BUY no depth: {ticker[-22:]} "
                           f"wanted={count} no_levels={no_levels[:3]}")
                     return False
+                recorder.record_order("buy", ticker, "yes", bid, ask,
+                                       {"no": no_levels}, limit, count,
+                                       filled, fill_price,
+                                       reason="snipe" if is_snipe else "",
+                                       true_prob=true_prob)
                 count = filled
                 ask   = fill_price
                 cost  = ask * count
@@ -700,6 +711,11 @@ class Portfolio:
             if filled <= 0:
                 print(f"  ⚠️  SELL no depth: {ticker[-22:]} reason={reason}")
                 return False
+            recorder.record_order("sell", ticker, "no" if is_no else "yes",
+                                   bid, 0.0,
+                                   {"no" if is_no else "yes": levels},
+                                   bid, requested, filled, fill_price,
+                                   reason=reason)
             with self.lock:
                 if ticker not in self.positions:
                     return False

@@ -263,6 +263,12 @@ MIN_EDGE_COMPRESSION  = 0.010  # lower entry bar when compressed (structural edg
 BID_EXIT_THRESHOLD    = 0.75  # exit any position when bid hits 75¢ (near full settlement)
 
 # Intervals
+# Market-data recording (KALSHI_RECORD=1). Book capture runs on its own thread
+# and its own cadence so it never sits on the trading path, and so its API rate
+# can be tuned independently of SCAN_INTERVAL. Each cycle costs one orderbook
+# request per visible ladder contract plus one per open position — typically
+# 2-8 calls.
+RECORD_BOOK_INTERVAL = 5
 SCAN_INTERVAL        = 2
 POSITION_CHECK       = 2
 PRICE_FETCH          = 2

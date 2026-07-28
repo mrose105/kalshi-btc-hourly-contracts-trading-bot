@@ -12,6 +12,7 @@ from .config import (
     MAX_EXPOSURE_PCT, MAX_TRADE_PCT, NO_TRADE_PCT,
     ENABLE_BOUNDARY_NO, ENABLE_MISPRICE_NO, PAPER_TRADING,
     POSITION_CHECK, PRICE_FETCH, SCAN_INTERVAL, SYNC_INTERVAL,
+    RECORD_BOOK_INTERVAL,
 )
 from .feed import BTCFeed
 from .ladder import Ladder
@@ -21,6 +22,7 @@ from .positions import PositionManager
 from .regime import RegimeEngine
 from .signals import SignalEngine
 from . import live_view
+from . import recorder
 
 # ─────────────────────────────────────────────
 # MAIN
@@ -37,6 +39,9 @@ def main():
     print(f"  Signals: {' + '.join(signals_on)}")
     print(f"  YES exits: gamma_lock · peak_giveback · scalp · momentum · "
           f"strong · mega · time · stop · near_settlement")
+    if recorder.ENABLED:
+        print(f"  📼 Recording market data -> recordings/ "
+              f"(books every {RECORD_BOOK_INTERVAL}s)")
     print(f"  Sync every {SYNC_INTERVAL}s | scan every {SCAN_INTERVAL}s")
     print("="*62 + "\n")
 
@@ -245,8 +250,29 @@ def main():
                 cd_str = f" [{len(_cd)} cooling]" if _cd else ""
                 print(f"  — No edge (ladder: {len(_ladder)} contracts{cd_str})")
 
+        recorder.record_quotes(spot, regime, ladder)
+
         if live_view.ENABLED:
             live_view.render(header, ladder_rows, portfolio)
+
+    def book_step():
+        """Sample full resting depth for the visible ladder and every open
+        position. Runs on its own thread and cadence so orderbook requests
+        never delay a scan or, more importantly, an exit."""
+        if not recorder.ENABLED:
+            return
+        spot = feed.last
+        if spot <= 0:
+            return
+        seen = {}
+        for c in (ladder_e.get(spot) or []):
+            seen[c["ticker"]] = (c.get("hours", 0.0), False)
+        for tk, p in list(portfolio.positions.items()):
+            seen[tk] = (seen.get(tk, (0.0, False))[0], True)
+        for tk, (hrs, held) in seen.items():
+            book = portfolio._orderbook(tk)
+            bid, ask = portfolio._fresh_quote(tk)
+            recorder.record_book(tk, book, bid, ask, hrs, spot, held)
 
     def summary_step():
         portfolio.summary()
@@ -262,6 +288,8 @@ def main():
                           daemon=True, name="scan"),
         threading.Thread(target=_loop, args=(summary_step, 180, "summary"),
                           daemon=True, name="summary"),
+        threading.Thread(target=_loop, args=(book_step, RECORD_BOOK_INTERVAL, "book"),
+                          daemon=True, name="book"),
     ]
     for th in threads:
         th.start()
@@ -272,3 +300,6 @@ def main():
     except KeyboardInterrupt:
         print("\n  Shutting down...")
         stop_event.set()
+        if recorder.ENABLED:
+            recorder.close()
+            print(f"  📼 {recorder.stats()}")

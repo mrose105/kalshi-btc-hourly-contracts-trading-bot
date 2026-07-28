@@ -22,6 +22,7 @@ from .config import (
 )
 from .contracts import is_in_money, otm_distance
 from . import live_view
+from . import recorder
 
 # ─────────────────────────────────────────────
 # POSITION MANAGER — exits NEVER blocked
@@ -159,6 +160,11 @@ class PositionManager:
 
             itm  = is_in_money(contract, spot)
             dist = otm_distance(contract, spot)
+
+            # The real bid an exit would hit, at the moment the ladder ran.
+            # This is the stream that removes the backtest's circular exit
+            # pricing — see recorder.py.
+            recorder.record_mark(ticker, bid, ask, hours, pos, true_prob, spot)
 
             # Time-decay urgency (CHANGE 3)
             if hours < 0.08:   time_urgency = 1.5
