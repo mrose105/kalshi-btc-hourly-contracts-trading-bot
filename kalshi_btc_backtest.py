@@ -367,8 +367,13 @@ class BacktestPortfolio:
             return False
         return True
 
-    def _budget(self, ask: float, true_prob: float) -> float:
-        if self.use_kelly and ask > 0 and ask < 1 and true_prob > ask:
+    def _budget(self, ask: float, true_prob: float, is_snipe: bool = False) -> float:
+        # Snipes skip Kelly and use a fixed fraction, exactly as live
+        # Portfolio.buy() does — tail-probability estimates are too noisy to
+        # size off.
+        if is_snipe:
+            pct = C.SNIPE_TRADE_PCT
+        elif self.use_kelly and ask > 0 and ask < 1 and true_prob > ask:
             edge   = true_prob - ask
             f_star = edge / (1.0 - ask)
             pct    = min(C.KELLY_CAP, max(0.005, f_star * C.KELLY_FRACTION))
@@ -384,12 +389,13 @@ class BacktestPortfolio:
         exposure_room = t * C.MAX_EXPOSURE_PCT - self.exposure()
         return max(0, min(max_trade, available, exposure_room))
 
-    def buy(self, contract: dict, true_prob: float, bar_ts: datetime) -> bool:
+    def buy(self, contract: dict, true_prob: float, bar_ts: datetime,
+            is_snipe: bool = False) -> bool:
         ticker = contract["ticker"]
         ask    = contract["ask"]
         if ticker in self.positions:
             return False
-        budget = self._budget(ask, true_prob)
+        budget = self._budget(ask, true_prob, is_snipe=is_snipe)
         count  = int(budget / ask) if ask > 0 else 0
         cost   = ask * count
         if count <= 0 or cost > self.cash:
@@ -413,6 +419,7 @@ class BacktestPortfolio:
             "true_prob_prev": true_prob,
             "true_prob_curr": true_prob,
             "gam":            0.0,
+            "is_snipe":       is_snipe,
         }
         return True
 
@@ -516,7 +523,13 @@ class BacktestPortfolio:
                 w_tp  = dist.true_prob(c, worst, vol, hours_left, regime)
                 w_bid = _exit_bid(w_tp, hours_left)
                 w_pnl = (w_bid - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
-                if w_pnl <= -C.STOP_LOSS_PCT:
+                _eh   = pos.get("entry_hours")
+                _cov  = (hours_left > C.STOP_MIN_HOURS
+                         or (_eh is not None and _eh <= C.STOP_MIN_HOURS))
+                # Live gates TIER 6 on `not is_snipe` and on stop coverage; the
+                # intrabar simulation stopped everything unconditionally, so the
+                # backtest was cutting snipes live would have let run.
+                if (not pos.get("is_snipe", False)) and _cov and w_pnl <= -C.STOP_LOSS_PCT:
                     # Stop triggered during the bar. Real stops slip past the
                     # threshold — fill 2c worse than the theoretical stop price
                     # (matches FORCE_EXIT_SLIPPAGE_CENTS used live).
@@ -579,35 +592,70 @@ class BacktestPortfolio:
             gam      = pos.get("gam", 0.0)
             dist_val = otm_distance(c, spot)
 
+            # Tier order, gating and thresholds below mirror
+            # kalshi_btc_bot/positions.py exactly. Any divergence here shows up
+            # as P&L attribution that cannot be compared to live.
+            is_snipe = pos.get("is_snipe", False)
+            # Live measures the stop against the bid/ask MID so the spread paid
+            # at entry is not itself counted as a loss. The backtest has no book,
+            # so the model's fair value (true_prob, pre-haircut) is the analogous
+            # quantity: _exit_bid() is that value minus spread and haircut.
+            mid_pnl_pct = (tp_curr - entry) / entry if entry > 0 else 0
+            if hours_left < 0.08:   time_urgency = 1.5
+            elif hours_left < 0.15: time_urgency = 1.2
+            else:                   time_urgency = 1.0
+            entry_hours   = pos.get("entry_hours")
+            never_covered = entry_hours is not None and entry_hours <= C.STOP_MIN_HOURS
+
             reason = None
-            # TIER 0.5 — gamma-aware convexity lock (mirrors live positions.py)
-            if (bid >= C.GAMMA_LOCK_MIN_BID and pnl_pct >= C.GAMMA_LOCK_MIN_PROFIT
+            # TIER 0.5 — gamma-aware convexity lock
+            if (not is_snipe and bid >= C.GAMMA_LOCK_MIN_BID
+                    and pnl_pct >= C.GAMMA_LOCK_MIN_PROFIT
                     and tp_curr < tp_prev and abs(gam) >= C.GAMMA_HIGH_THRESHOLD):
                 reason = "gamma_lock"
-            # TIER 0.75 — peak giveback
-            elif (peak_pnl_pct >= C.PEAK_GIVEBACK_MIN_PEAK and bid >= C.PEAK_GIVEBACK_MIN_BID
+            # TIER 0.75 — peak giveback (snipes only while OTM)
+            elif ((not is_snipe or not itm)
+                    and peak_pnl_pct >= C.PEAK_GIVEBACK_MIN_PEAK
+                    and bid >= C.PEAK_GIVEBACK_MIN_BID
                     and pnl_pct <= peak_pnl_pct * C.PEAK_GIVEBACK_FRACTION):
                 reason = "peak_giveback"
-            elif pnl_pct >= C.SCALP_LOCK_PCT and drop_peak > 0.10:
-                reason = "scalp_reversal"
-            elif pnl_pct >= C.MOMENTUM_LOCK_PCT and hours_left < 0.15:
+            # TIER 1 — scalp lock
+            elif (not is_snipe and bid >= C.SCALP_LOCK_MIN_BID
+                    and pnl_pct >= C.SCALP_LOCK_PCT and hours_left < 0.25):
+                reason = "scalp_lock"
+            # TIER 2 — momentum lock
+            elif not is_snipe and pnl_pct >= C.MOMENTUM_LOCK_PCT and hours_left < 0.15:
                 reason = "momentum_locked"
-            elif pnl_pct >= C.STRONG_PROFIT_PCT and hours_left < 0.25:
+            # TIER 3 — strong profit
+            elif not is_snipe and pnl_pct >= C.STRONG_PROFIT_PCT and hours_left < 0.25:
                 reason = "profit_extracted"
+            # TIER 3.75 — snipe reversal lock (snipes only)
+            elif (is_snipe and bid >= C.SNIPE_PROFIT_LOCK_MIN_BID
+                    and peak_pnl_pct >= C.SNIPE_PROFIT_LOCK_PEAK
+                    and pnl_pct >= C.SNIPE_PROFIT_LOCK_MIN_PNL
+                    and tp_curr < tp_prev):
+                reason = "snipe_lock"
+            # TIER 3.5 — near settlement
             elif bid >= C.BID_EXIT_THRESHOLD:
                 reason = "near_settlement"
                 bid    = C.BID_EXIT_THRESHOLD   # exit at 75¢, don't wait for spread noise
-            elif pnl_pct >= C.PROFIT_EXIT_MEGA:
+            # TIER 4 — mega profit
+            elif not is_snipe and pnl_pct >= C.PROFIT_EXIT_MEGA:
                 reason = "mega_profit"
-            elif mins_left < C.TIME_EXIT_MINS and not itm:
+            # TIER 5 — time exit while far enough OTM to not flip back
+            elif (mins_left < C.TIME_EXIT_MINS and not itm
+                    and abs(dist_val) > C.TIME_EXIT_NEAR_DIST):
                 reason = "time_exit_OTM"
             # TIER 5.25 — boundary risk: ITM but marginal + underwater + near expiry
-            elif (itm and pnl_pct <= C.BOUNDARY_RISK_MIN_LOSS
+            elif (not is_snipe and itm and pnl_pct <= C.BOUNDARY_RISK_MIN_LOSS
                     and mins_left < C.BOUNDARY_RISK_MINS
                     and abs(dist_val) <= C.BOUNDARY_RISK_DIST
                     and (tp_curr < tp_prev or pnl_pct <= C.BOUNDARY_RISK_HARD_STOP)):
                 reason = "boundary_risk"
-            elif pnl_pct <= -C.STOP_LOSS_PCT and hours_left > C.STOP_MIN_HOURS:
+            # TIER 6 — stop loss
+            elif (not is_snipe and mid_pnl_pct <= -(C.STOP_LOSS_PCT / time_urgency)
+                    and (hours_left > C.STOP_MIN_HOURS or never_covered)
+                    and not (itm and mins_left < C.TIME_EXIT_MINS)):
                 reason = "stop_loss"
             elif hours_left <= 0:
                 reason = "expiry_settle"
@@ -616,7 +664,7 @@ class BacktestPortfolio:
                 # lookahead. bar_open is a defensible proxy for spot at the
                 # actual expiry moment.
                 bid    = 1.0 if settle_itm else 0.0
-            elif bid <= 0.005:
+            elif not is_snipe and bid <= 0.005:
                 reason = "near_zero"
 
             if reason:
@@ -909,6 +957,8 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                            "bid": max(0.01, open_ask - (sig["ask"] - sig["bid"]))}
             if sig_type == "yes":
                 portfolio.buy(sig_at_open, sig["true_prob"], ts)
+            elif sig_type == "snipe":
+                portfolio.buy(sig_at_open, sig["true_prob"], ts, is_snipe=True)
             elif sig_type == "no":
                 portfolio.buy_no(sig_at_open, sig["true_prob"], ts)
         pending = []
@@ -972,6 +1022,16 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                 )
                 if bno_sig:
                     pending.append(("no", bno_sig))
+
+            # SNIPE — deep-OTM ROI-ranked scan. app.py runs this every tick
+            # alongside find_best; the backtest omitted it entirely, so an
+            # entire live entry strategy went unmodelled (3 of 6 entries and
+            # the only profitable exits in the 2026-07-28 session).
+            snipe_sig = signal_e.find_snipe(
+                spot, regime_bt["vol"], regime_bt, ladder, portfolio.positions,
+            )
+            if snipe_sig:
+                pending.append(("snipe", snipe_sig))
 
         if bar_i % SUMMARY_INTERVAL == 0:
             t       = portfolio.total()
