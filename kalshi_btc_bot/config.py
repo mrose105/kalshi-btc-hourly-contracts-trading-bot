@@ -172,14 +172,23 @@ SNIPE_TRADE_PCT       = 0.01     # sized down vs MAX_TRADE_PCT — tail-probabil
                                   # $10K account) — one bad snipe was wiping out weeks of
                                   # small wins. 1% caps single-snipe max loss to ~$100
                                   # while backtest still shows the tier remains net-positive.
-SNIPE_PROFIT_LOCK_PCT     = 1.50 # TIER 3.75 gate: lock in profit only when a big snipe run
-                                  # (150%+) reverses — gated on true_prob fading (2-tick signal,
-                                  # same as gamma_lock), NOT a fixed price cap. A snipe that keeps
-                                  # climbing without reversing is untouched and can still ride to
-                                  # 1000%+. This only catches the failure mode observed live
-                                  # 2026-07-02: B61250 (+300%) and B61350 (+195%) both held peak
-                                  # gains for 7-8 min then fully round-tripped to near-total losses
-                                  # with no tier between "hold" and 75c near_settlement.
+# TIER 3.75 — snipe reversal lock. Fires when a snipe that has already run gives
+# back into a 2-tick true_prob fade (same signal as gamma_lock), NOT a fixed price
+# cap: a snipe still climbing without a reversal is untouched.
+#
+# These are the values the tier actually uses. The previous SNIPE_PROFIT_LOCK_PCT
+# = 1.50 was imported by positions.py but never referenced — the thresholds were
+# hardcoded — so the documented "+150% run" gate never existed in running code.
+#
+# Worth being explicit about what these values mean: at peak >= 50% / pnl >= 15%
+# this tier is in practice a *scalp*, and a tighter one than TIER 1 scalp_lock
+# (+40%, bid >= 30c, T < 15 min). Snipes therefore lock EARLIER than ordinary
+# positions, which inverts the stated snipe philosophy of riding to a 1000%+
+# payout. That is a real design question, but not one to resolve by silently
+# reverting to 1.50: on 2026-07-28 this tier fired 4x for +$92.75 and was the
+# only profitable tier in the session (boundary_risk -$156.30, stop_35% -$28.00).
+SNIPE_PROFIT_LOCK_PEAK    = 0.50 # peak_pnl must have reached this
+SNIPE_PROFIT_LOCK_MIN_PNL = 0.15 # and current pnl must still be at least this
 SNIPE_PROFIT_LOCK_MIN_BID = 0.12 # absolute price floor — same rationale as GAMMA_LOCK_MIN_BID
 
 # MISPRICE_NO entry filters

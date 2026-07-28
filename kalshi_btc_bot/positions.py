@@ -15,7 +15,8 @@ from .config import (
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
     MOMENTUM_LOCK_PCT, PAPER_TRADING, PEAK_GIVEBACK_FRACTION, PEAK_GIVEBACK_MIN_BID,
     PEAK_GIVEBACK_MIN_PEAK, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT,
-    SNIPE_PROFIT_LOCK_MIN_BID, SNIPE_PROFIT_LOCK_PCT, STOP_LOSS_PCT,
+    SNIPE_PROFIT_LOCK_MIN_BID, SNIPE_PROFIT_LOCK_PEAK,
+    SNIPE_PROFIT_LOCK_MIN_PNL, STOP_LOSS_PCT,
     STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS, TIME_EXIT_NEAR_DIST,
 )
 from .contracts import is_in_money, otm_distance
@@ -282,10 +283,13 @@ class PositionManager:
                 # TIER 3.75 — Snipe reversal lock. Fires on true_prob reversal
                 # once a real run (>=+50%) has formed. Doesn't cap upside — a
                 # snipe that keeps climbing without a tp reversal is untouched.
-                # Lowered from +150% (which let +100% peaks like B64875 slip
-                # through without any protection when peak_giveback was disabled).
+                # Thresholds live in config (SNIPE_PROFIT_LOCK_PEAK / _MIN_PNL).
+                # They were hardcoded here while config carried an unused
+                # SNIPE_PROFIT_LOCK_PCT = 1.50, so the documented +150% gate was
+                # never the running behaviour — at 50%/15% this fires as a scalp.
                 if (bid >= SNIPE_PROFIT_LOCK_MIN_BID
-                        and peak_pnl_pct >= 0.50 and pnl_pct >= 0.15
+                        and peak_pnl_pct >= SNIPE_PROFIT_LOCK_PEAK
+                        and pnl_pct >= SNIPE_PROFIT_LOCK_MIN_PNL
                         and tp_curr < tp_prev):
                     self.portfolio.sell(ticker, bid, reason="snipe_lock 🔒")
                     continue
