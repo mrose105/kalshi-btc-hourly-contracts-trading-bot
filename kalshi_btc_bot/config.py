@@ -33,6 +33,15 @@ MIN_CASH_FLOOR      = 0.25       # never trade with less than $0.25
 UNTRACKED_EXPOSURE_LIMIT = 0.25  # block new trades if live exposure exceeds tracked exposure by this much
 EXIT_RETRY_COOLDOWN = 10         # seconds to wait before retrying an unfilled live exit
 STOP_COOLDOWN_SECS  = 300        # block re-entry on same ticker for 5 min after stop loss
+EXIT_COOLDOWN_SECS  = 120        # block re-entry on same ticker after a *profitable* exit.
+                                  # Only loss-cuts set a cooldown before, so a profit-lock
+                                  # allowed instant re-entry into the contract just sold —
+                                  # 2026-07-28: snipe_lock exited B63550 at $0.27, the bot
+                                  # re-bought the same ticker 47s later at $0.34 (+26%) and
+                                  # lost $64.02 on it. Shorter than the loss cooldown on
+                                  # purpose: a profit exit means the thesis worked, so this
+                                  # only needs to stop the immediate re-chase at a worse price,
+                                  # not sit out the contract entirely.
 FORCE_EXIT_SLIPPAGE_CENTS = 2    # cross stale bids by this many cents on urgent exits
 
 # Entry filters (YES signals)

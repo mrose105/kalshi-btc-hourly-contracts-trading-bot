@@ -61,7 +61,7 @@ from .config import (
     NO_TRADE_PCT, PAPER_CAPITAL, PAPER_TRADING,
     EXIT_RETRY_COOLDOWN, FORCE_EXIT_SLIPPAGE_CENTS, SESSION_STOP_PCT,
     UNTRACKED_EXPOSURE_LIMIT, MAX_ASK, MAX_SPREAD, MAX_SPREAD_PCT,
-    KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS, SNIPE_TRADE_PCT,
+    KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS, EXIT_COOLDOWN_SECS, SNIPE_TRADE_PCT,
     MIN_EDGE, NO_OVERPRICING_MIN, BOUNDARY_NO_OVERPRICING_MIN,
 )
 from . import live_view
@@ -828,15 +828,21 @@ class Portfolio:
                 done = _pos["count"] <= 0
             if done:
                 self.positions.pop(ticker, None)
-                if is_loss_cut:
-                    self.stop_cooldowns[ticker] = time.time() + STOP_COOLDOWN_SECS
+                # Every exit now sets a cooldown, not just loss-cuts. A
+                # profit-lock previously left the ticker immediately re-buyable,
+                # so the bot re-chased the contract it had just sold at a worse
+                # price. Loss-cuts still get the longer block.
+                cooldown = STOP_COOLDOWN_SECS if is_loss_cut else EXIT_COOLDOWN_SECS
+                self.stop_cooldowns[ticker] = time.time() + cooldown
         if done:
             live_view.drop_position(ticker)
-        if done and is_loss_cut:
+        if done:
+            _secs = STOP_COOLDOWN_SECS if is_loss_cut else EXIT_COOLDOWN_SECS
+            _kind = "Stop" if is_loss_cut else "Re-entry"
             if live_view.ENABLED:
-                live_view.log_event(f"🚫 Stop cooldown {ticker[-18:]} ({STOP_COOLDOWN_SECS//60}m)")
+                live_view.log_event(f"🚫 {_kind} cooldown {ticker[-18:]} ({_secs//60}m)")
             else:
-                print(f"  🚫 Stop cooldown: {ticker[-22:]} blocked for {STOP_COOLDOWN_SECS//60}m")
+                print(f"  🚫 {_kind} cooldown: {ticker[-22:]} blocked for {_secs//60}m")
         return True
 
     def summary(self):
