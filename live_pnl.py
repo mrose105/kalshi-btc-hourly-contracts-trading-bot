@@ -140,18 +140,59 @@ def backtest_tiers() -> dict:
         return {}
 
 
+def count_open(trades: list[dict]) -> tuple[int, int]:
+    """Split unmatched buys into genuinely-open vs stale.
+
+    A buy with no matching sell is not necessarily an open position: a session
+    killed while holding, or a settlement the old code never logged, leaves the
+    buy dangling forever. KXBTC contracts are hourly and MAX_HOURS caps entries
+    at 4h, so anything older than that relative to the newest log entry has
+    certainly resolved. Counting those as "open" reported 9 phantom positions
+    from three weeks earlier.
+    """
+    stamps = [r.get("timestamp", "") for r in trades if r.get("timestamp")]
+    if not stamps:
+        return 0, 0
+    try:
+        newest = datetime.datetime.strptime(max(stamps), "%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return 0, 0
+    net: dict[str, int] = {}
+    last: dict[str, datetime.datetime] = {}
+    for r in trades:
+        tk = r.get("ticker", "")
+        if not tk:
+            continue
+        delta = 1 if r.get("action") == "buy" else -1
+        net[tk] = net.get(tk, 0) + delta
+        try:
+            last[tk] = datetime.datetime.strptime(r["timestamp"], "%Y-%m-%d %H:%M:%S")
+        except (KeyError, ValueError):
+            pass
+    live_n = stale_n = 0
+    for tk, n in net.items():
+        if n <= 0:
+            continue
+        age_h = (newest - last.get(tk, newest)).total_seconds() / 3600
+        if age_h > 4:
+            stale_n += n
+        else:
+            live_n += n
+    return live_n, stale_n
+
+
 def render(trades, capital, mode, out):
     times, equity, pnls, reasons = build_series(trades, capital)
-    n_buys = sum(1 for r in trades if r.get("action") == "buy")
-    open_pos = n_buys - len(pnls)
+    open_pos, stale_pos = count_open(trades)
 
     fig, axes = plt.subplots(2, 2, figsize=(16, 10))
     stamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     # Plain text, not emoji — DejaVu Sans has no glyph for these and matplotlib
     # emits a UserWarning per render, which is noisy under --watch.
     tag = {"live": "LIVE", "paper": "PAPER"}.get(mode, "ALL MODES")
+    stale_txt = f", {stale_pos} stale" if stale_pos else ""
     fig.suptitle(f"Kalshi BTC bot — {tag}   |   {len(pnls)} closed, "
-                 f"{max(0, open_pos)} open   |   {stamp}",
+                 f"{open_pos} open{stale_txt}   |   {stamp}",
                  fontsize=14, fontweight="bold")
 
     # ── Equity curve ────────────────────────────────────────────────────────
@@ -258,8 +299,9 @@ def render(trades, capital, mode, out):
     gross_w = float(pnls[pnls > 0].sum()) if len(pnls) else 0.0
     gross_l = float(-pnls[pnls < 0].sum()) if len(pnls) else 0.0
     print(f"\n  {tag}  |  {stamp}")
-    print(f"  closed {len(pnls)}   open {max(0, open_pos)}   "
-          f"win rate {(wins/len(pnls)*100 if len(pnls) else 0):.1f}%")
+    print(f"  closed {len(pnls)}   open {open_pos}"
+          + (f"   stale/unreconciled {stale_pos}" if stale_pos else "")
+          + f"   win rate {(wins/len(pnls)*100 if len(pnls) else 0):.1f}%")
     print(f"  equity ${equity[-1] if len(equity) else capital:,.2f} "
           f"from ${capital:,.2f}   realized ${float(pnls.sum()) if len(pnls) else 0:+,.2f}")
     print(f"  profit factor {(gross_w/gross_l if gross_l else float('inf')):.2f}   "
