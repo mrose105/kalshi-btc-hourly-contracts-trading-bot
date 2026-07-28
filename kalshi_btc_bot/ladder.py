@@ -64,7 +64,9 @@ class Ladder:
                 spread = ya - yb
                 if spread > MAX_SPREAD or spread / ya > MAX_SPREAD_PCT:
                     continue
-                contract = parse_contract(m["ticker"], spot)
+                # Pass the market payload so geometry comes from the exchange's
+                # floor/cap strikes rather than being guessed from the ticker.
+                contract = parse_contract(m["ticker"], spot, m)
                 if contract["type"] == "UNKNOWN":
                     continue
                 close = m.get("close_time", "")
