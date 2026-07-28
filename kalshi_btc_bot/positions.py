@@ -15,6 +15,7 @@ from .config import (
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
     MOMENTUM_LOCK_PCT, PAPER_TRADING, PEAK_GIVEBACK_FRACTION, PEAK_GIVEBACK_MIN_BID,
     PEAK_GIVEBACK_MIN_PEAK, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT,
+    STOP_UNCOVERED_PCT,
     SNIPE_PROFIT_LOCK_MIN_BID, SNIPE_PROFIT_LOCK_PEAK,
     SNIPE_PROFIT_LOCK_MIN_PNL, STOP_LOSS_PCT,
     STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS, TIME_EXIT_NEAR_DIST,
@@ -350,9 +351,17 @@ class PositionManager:
                 # the original protection.
                 entry_hours   = pos.get("entry_hours")
                 never_covered = entry_hours is not None and entry_hours <= STOP_MIN_HOURS
-                stop_thr = -(STOP_LOSS_PCT / time_urgency)
-                if (bid > 0 and mid_pnl_pct <= stop_thr
-                        and (hours > STOP_MIN_HOURS or never_covered)
+                if never_covered:
+                    # Catastrophe floor, not a stop. A tight stop this close to
+                    # settlement would cut winners on ordinary non-monotonic
+                    # wobble, which is why STOP_MIN_HOURS exists — but a
+                    # position opened inside the gate had no floor whatsoever.
+                    # -65% cannot cut a winner; it only catches a near-total
+                    # loss. No time_urgency scaling: this is a fixed backstop.
+                    stop_thr, stop_ok = -STOP_UNCOVERED_PCT, True
+                else:
+                    stop_thr, stop_ok = -(STOP_LOSS_PCT / time_urgency), hours > STOP_MIN_HOURS
+                if (bid > 0 and mid_pnl_pct <= stop_thr and stop_ok
                         and not (itm and mins_left < TIME_EXIT_MINS)):
                     self.portfolio.sell(ticker, bid, reason=f"stop_{abs(stop_thr):.0%}")
                     continue

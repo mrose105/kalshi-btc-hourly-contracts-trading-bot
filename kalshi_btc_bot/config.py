@@ -132,6 +132,19 @@ STOP_LOSS_PCT       = 0.35       # TIER 6: base stop. 2026-07-06: tightened from
                                   # itself been widened from 0.40 on 2026-07-01 "to allow late
                                   # recoveries") — cut losers quickly, let winners ride via the
                                   # profit-lock tiers above instead of hoping for a comeback.
+STOP_UNCOVERED_PCT  = 0.65       # TIER 6 floor for positions OPENED inside STOP_MIN_HOURS.
+                                  # 2026-07-03 the user judged that a tight stop near expiry is
+                                  # wrong by design: binary prices don't move monotonically into
+                                  # settlement, so a 35% stop there cuts winners on ordinary
+                                  # wobble as often as it saves losers. That reasoning holds for
+                                  # a position riding INTO expiry — but MIN_HOURS (6 min) lets
+                                  # positions be OPENED inside the gate, and those never had any
+                                  # floor at all. 2026-07-28: the 4 entries with stop coverage
+                                  # netted +$53.53, the 2 without netted -$143.53, riding to -77%
+                                  # and -92%. This is a catastrophe floor, not a stop — at -65% it
+                                  # cannot cut a winner, only a position already most of the way
+                                  # to a total loss. Same number the user chose for
+                                  # BOUNDARY_RISK_HARD_STOP, for the same reason.
 STOP_MIN_HOURS      = 0.30       # TIER 6 gate: stop only fires if > 18 min left.
                                   # Below this, TIME_EXIT_MINS handles OTM exits and
                                   # expiry_settle captures ITM wins — don't stop binary
