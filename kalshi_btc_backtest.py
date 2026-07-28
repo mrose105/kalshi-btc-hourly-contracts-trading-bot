@@ -194,7 +194,18 @@ def build_ladder(spot: float, bar_ts: datetime,
     flat_regime = {**_FLAT_REGIME, "vol": kalshi_vol}
     ladder = []
 
-    for hours in EXPIRY_WINDOWS_H:
+    # Kalshi lists KXBTC contracts expiring on the hour. Generating them at fixed
+    # offsets from every bar instead made each bar mint a brand-new contract, and
+    # since the ticker embedded the BAR timestamp the same strike/expiry got a
+    # different ticker string every 5 minutes. That silently defeated three live
+    # gates that all key on ticker identity: the `c["ticker"] in existing` skip,
+    # _clustered(), and re-entry cooldowns — so the sim could hold and re-buy the
+    # same contract repeatedly. Snap to the hourly grid so a contract persists
+    # across bars and its hours_left decays exactly as it does live.
+    _next_hour = (bar_ts.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1))
+    for _h_i in range(1, 6):
+        expiry = _next_hour + timedelta(hours=_h_i - 1)
+        hours  = (expiry - bar_ts).total_seconds() / 3600.0
         if not (C.MIN_HOURS <= hours <= C.MAX_HOURS):
             continue
 
@@ -218,9 +229,9 @@ def build_ladder(spot: float, bar_ts: datetime,
                 "type": "RANGE", "direction": "NEUTRAL",
                 "strike": float(low + RANGE_WIDTH / 2), "low": float(low), "high": float(high),
                 "label":     f"${low:,}-${high:,}",
-                "ticker":    f"KXBTC-SIM-{bar_ts:%H%M}-B{low}-{int(hours*100):04d}h",
+                "ticker":    f"KXBTC-SIM-{expiry:%y%b%d%H}-B{low}".upper(),
                 "hours":     hours,
-                "close_time": (bar_ts + timedelta(hours=hours)).isoformat(),
+                "close_time": expiry.isoformat(),
                 "itm":       itm,
                 "otm_dist":  otm_d,
             }
@@ -327,6 +338,7 @@ class BacktestPortfolio:
         self.cash       = capital
         self.use_kelly  = use_kelly
         self.positions  = {}
+        self.cooldowns: dict = {}
         self.trades     = []
         self.realized   = 0.0
         self.peak_total = capital
@@ -353,6 +365,11 @@ class BacktestPortfolio:
     def exposure(self) -> float:
         return sum(p["cost"] for p in self.positions.values())
 
+    def cooled_off(self, ticker: str, now: datetime) -> bool:
+        """False while `ticker` is inside its post-exit re-entry cooldown."""
+        until = self.cooldowns.get(ticker)
+        return until is None or now >= until
+
     def can_trade(self) -> bool:
         t = self.total()
         if len(self.positions) >= C.MAX_POSITIONS:
@@ -362,8 +379,6 @@ class BacktestPortfolio:
         if self.cash < C.MIN_CASH_FLOOR:
             return False
         if self.exposure() >= t * C.MAX_EXPOSURE_PCT:
-            return False
-        if self.cash < t * C.MIN_CASH_PCT:
             return False
         return True
 
@@ -379,15 +394,16 @@ class BacktestPortfolio:
             pct    = min(C.KELLY_CAP, max(0.005, f_star * C.KELLY_FRACTION))
         else:
             pct = C.MAX_TRADE_PCT
-        # Cap bet size at initial-capital proportion to keep simulation realistic.
-        # Without this, Kelly compounding turns a $50 account into fictional millions.
-        max_single = self.capital * C.MAX_TRADE_PCT * 2   # 2× initial max-trade
+        # Mirrors live Portfolio.budget() exactly: percentage of current total,
+        # capped by cash on hand and remaining exposure room. The old version
+        # additionally held back a MIN_CASH_PCT reserve (removed live as
+        # redundant — MAX_EXPOSURE_PCT already caps deployment at 18%) and
+        # clamped every trade to 2x the INITIAL max trade, which stopped the
+        # simulation compounding at all while live sizes off current equity.
         t             = self.total()
-        max_trade     = min(t * pct, max_single)
-        reserve       = t * C.MIN_CASH_PCT
-        available     = self.cash - reserve
+        max_trade     = t * pct
         exposure_room = t * C.MAX_EXPOSURE_PCT - self.exposure()
-        return max(0, min(max_trade, available, exposure_room))
+        return max(0, min(max_trade, self.cash, exposure_room))
 
     def buy(self, contract: dict, true_prob: float, bar_ts: datetime,
             is_snipe: bool = False) -> bool:
@@ -674,6 +690,12 @@ class BacktestPortfolio:
         pos = self.positions.pop(ticker, None)
         if not pos:
             return
+        # Live blocks re-entry on the same ticker after every exit — 300s for a
+        # loss-cut, 120s otherwise. The backtest had no cooldown at all, so it
+        # could re-buy a contract the moment it sold it.
+        _loss = reason.startswith("stop_") or "boundary_risk" in reason
+        self.cooldowns[ticker] = bar_ts + timedelta(
+            seconds=C.STOP_COOLDOWN_SECS if _loss else C.EXIT_COOLDOWN_SECS)
         count = pos["count"]
         pnl   = (bid - pos["entry"]) * count
         self.cash    += bid * count
@@ -981,6 +1003,9 @@ def run_backtest(days: int = 7, capital: float = 50.0,
 
         if portfolio.can_trade():
             ladder = build_ladder(spot, ts, dist, regime_bt, kalshi_vol)
+            # app.py filters recently-exited tickers out of the ladder before
+            # every signal scan; mirror that here.
+            ladder = [c for c in ladder if portfolio.cooled_off(c["ticker"], ts)]
 
             # Vol term surface: fit once per bar when ladder is ready.
             # Gives per-expiry Kalshi implied vols → ranks expiries by vol-lag edge.

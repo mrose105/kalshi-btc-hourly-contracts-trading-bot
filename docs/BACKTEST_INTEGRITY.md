@@ -20,7 +20,7 @@ everything else.
 | 2. Tautological exit tiers | **structural, cannot fix** | makes win rates meaningless |
 | 3. Model-derived exit pricing | **unfixed — root cause** | unbounded |
 | 4. Instrument mismatch | **fixed** (Jul 28) | 2.5x wrong contract width |
-| 5. Live/backtest parity | **partially fixed** (Jul 28) | attribution doesn't transfer |
+| 5. Live/backtest parity | **fixed** (Jul 28) | attribution didn't transfer |
 | 6. Rolling window | inherent | ±5% run-to-run |
 
 ---
@@ -153,15 +153,36 @@ Divergences found:
 | intrabar stop | n/a | fired first, **ungated** |
 | re-entry cooldown | 120s / 300s | **none** |
 | sizing | no cash reserve, compounds | `MIN_CASH_PCT` reserve, capped at 2x initial |
+| ticker identity | stable per contract | **regenerated every bar** |
 
 The headline symptom: **`momentum_locked` was the backtest's largest winner
 (+$51,601) and has never fired live or in paper.** Live's `scalp_lock` closes
 those positions at +40% before they can reach +100%, and snipes are excluded
 from tier 2 entirely.
 
-Still outstanding: cooldowns, sizing parity.
+**The largest single defect was not in the ladder at all.** The synthetic
+ticker embedded the *bar* timestamp (`KXBTC-SIM-{bar_ts:%H%M}-B{low}-...`), so
+the same strike and expiry got a different ticker string every 5 minutes. Three
+live gates all key on ticker identity — the `c["ticker"] in existing` skip,
+`_clustered()`, and re-entry cooldowns — and all three silently failed. The
+simulation could hold and re-buy the same contract indefinitely.
 
-**Lesson:** matching tier *names* is not parity. Diff the conditions.
+Fixed by snapping expiries to the hourly grid Kalshi actually lists on, so a
+contract persists across bars and its `hours_left` decays as it does live.
+Effect on the 7-day run: **124 trades / +191% / Sharpe 20.13 → 70 trades /
++3.12% / PF 1.10 / Sharpe 3.23.**
+
+Sizing was also brought to parity — the backtest held back a `MIN_CASH_PCT`
+reserve (removed live) and clamped every trade to 2x the *initial* max trade,
+which stopped it compounding at all while live sizes off current equity.
+
+60-day $10K after full parity: **1,219 trades, +276%, PF 1.29, Sharpe 6.36,
+max DD −20.4%** — against +16,314% before. Still elevated, and
+`near_settlement` still books 38 trades at 100% WR for +$30k, which is §3
+showing through.
+
+**Lesson:** matching tier *names* is not parity. Diff the conditions — and check
+that entity identity is stable, because gates that key on it fail silently.
 
 ---
 
