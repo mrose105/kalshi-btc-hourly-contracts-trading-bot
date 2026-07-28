@@ -61,8 +61,12 @@ SMA_VOL_WINDOW  = 288   # 24h  — Kalshi's conservative lagged estimate
 SHORT_VOL_WINDOW = 12   # 1h   — our "recent" vol for vol_ratio computation
 
 EXPIRY_WINDOWS_H = [0.083, 0.117, 0.167, 0.25, 0.5, 1.0, 2.0, 3.0]
-RANGE_WIDTH      = 100
-RANGE_SPAN       = 500
+# Kalshi's real KXBTC RANGE bands are 250 wide on the hourlies (500 on the
+# weekly), verified against floor_strike/cap_strike on all 200 open markets
+# 2026-07-28. 100 simulated a narrower, harder-to-win contract than the one
+# that actually trades — see kalshi_btc_bot/contracts.py for the live-side fix.
+RANGE_WIDTH      = 250
+RANGE_SPAN       = 1250   # same dollar reach as the old 500/100 ladder (5 strikes either side)
 KALSHI_SPREAD    = 0.015
 SUMMARY_INTERVAL = 50
 
@@ -212,7 +216,7 @@ def build_ladder(spot: float, bar_ts: datetime,
 
             c = {
                 "type": "RANGE", "direction": "NEUTRAL",
-                "strike": float(low + 50), "low": float(low), "high": float(high),
+                "strike": float(low + RANGE_WIDTH / 2), "low": float(low), "high": float(high),
                 "label":     f"${low:,}-${high:,}",
                 "ticker":    f"KXBTC-SIM-{bar_ts:%H%M}-B{low}-{int(hours*100):04d}h",
                 "hours":     hours,
