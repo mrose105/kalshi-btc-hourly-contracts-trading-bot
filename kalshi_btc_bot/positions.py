@@ -334,8 +334,21 @@ class PositionManager:
                 # positions that would resolve naturally.
                 # Uses mid_pnl_pct not pnl_pct so the spread cost paid at entry
                 # doesn't count as a "loss" against the stop threshold.
+                # STOP_MIN_HOURS keeps a long-held binary from being panic-sold
+                # in its final bars while the payoff is still resolving. But
+                # MIN_HOURS (0.10 = 6 min) permits entries well inside that
+                # gate, so anything opened under STOP_MIN_HOURS never had stop
+                # coverage for a single tick of its life. 2026-07-28 session:
+                # the 4 entries with coverage netted +$53.53 (one stopping
+                # cleanly at -35%), the 2 without netted -$143.53, both riding
+                # to boundary_risk at -77% and -92%. Give those the stop they
+                # never got; positions that genuinely aged into the window keep
+                # the original protection.
+                entry_hours   = pos.get("entry_hours")
+                never_covered = entry_hours is not None and entry_hours <= STOP_MIN_HOURS
                 stop_thr = -(STOP_LOSS_PCT / time_urgency)
-                if (bid > 0 and mid_pnl_pct <= stop_thr and hours > STOP_MIN_HOURS
+                if (bid > 0 and mid_pnl_pct <= stop_thr
+                        and (hours > STOP_MIN_HOURS or never_covered)
                         and not (itm and mins_left < TIME_EXIT_MINS)):
                     self.portfolio.sell(ticker, bid, reason=f"stop_{abs(stop_thr):.0%}")
                     continue

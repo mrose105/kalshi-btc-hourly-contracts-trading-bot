@@ -519,6 +519,10 @@ class Portfolio:
                 "close_time":     contract.get("close_time", ""),
                 "is_no":          False,
                 "is_snipe":       is_snipe,
+                # Hours to expiry at entry — TIER 6 uses this to tell a position
+                # held into its final bars from one opened there, which never had
+                # stop coverage at all. See positions.py.
+                "entry_hours":    float(contract.get("hours") or 0.0),
             }
         edge     = true_prob - ask
         itm_str  = "✅ITM" if contract["itm"] else ("❌OTM " + str(round(contract["otm_dist"])))
