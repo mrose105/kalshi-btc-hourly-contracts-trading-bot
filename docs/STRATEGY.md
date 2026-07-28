@@ -364,21 +364,23 @@ The backtest mirrors the live bot's math for pricing, sizing, and exits, but wit
 1. **Vol compression signal** (§2.4) — now SMA-based on 5-min bars in *both* backtest and live (rewritten Jul 16 for parity). This asymmetry no longer applies.
 2. **Fill model** — backtest models fills at Kalshi's spread with an intrabar stop simulation using bar high/low (`kalshi_btc_backtest.py:465+`, `_exit_spread` widens dynamically near settlement per commit `49d5882`). Live uses actual Kalshi IOC orders in prod and depth-capped order-book walking in paper mode. Realistic but not identical.
 
-60-day backtest at $10,000 starting capital (Jul 24 2026, **post lookahead-bias audit**):
+60-day backtest at $10,000 starting capital (Jul 28 2026, **post lookahead-bias audit and live-parity work**):
 
 | Metric | Value |
 |---|---|
-| Trades | 516 |
-| Win rate | 36.6% |
-| Return | +185% |
-| Sharpe | 5.15 |
-| Profit factor | 1.41 |
-| Max drawdown | -16.0% |
-| Avg hold | 11 min |
-| Vol-compression WR | 39.1% vs 35.4% normal-vol |
-| Vol-compression P&L | 61% of total |
+| Trades | 1,219 |
+| Win rate | 53.0% |
+| Return | +276% |
+| Sharpe | 6.36 |
+| Profit factor | 1.29 |
+| Max drawdown | -20.4% |
+| Avg hold | 38 min |
+| Vol-compression WR | 64.7% vs 50.4% normal-vol |
+| Vol-compression P&L | 57% of total |
 
-Dominant winner: `momentum_locked` (122 trades, 100% WR, +$51,601). Largest drag: `stop_loss` (274 trades, 0% WR, -$34,549).
+Dominant winners are all profit-lock tiers and therefore all 100% WR by construction (§8.2): `near_settlement` (38, +$30,149), `scalp_lock` (62, +$24,421), `gamma_lock` (83, +$18,944), `snipe_lock` (65, +$12,827). Largest drags: `time_exit_OTM` (184 trades, 0% WR, -$47,944) and `stop_loss` (315, 0% WR, -$43,411).
+
+**A Sharpe of 6.36 on a retail event market is a defect signal, not an achievement** — see `docs/BACKTEST_INTEGRITY.md`, which this section should be read alongside.
 
 ### 8.1 Why this differs from the earlier Jul 16 figures
 

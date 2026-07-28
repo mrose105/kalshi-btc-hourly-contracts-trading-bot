@@ -1145,8 +1145,8 @@ def sweep_no_thresholds(days: int = 60, capital: float = 5000.0,
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kalshi BTC strategy backtest")
-    parser.add_argument("--days",         type=int,   default=7,    help="History window (max 60 for 5m)")
-    parser.add_argument("--capital",      type=float, default=50.0, help="Starting capital ($)")
+    parser.add_argument("--days",         type=int,   default=60,   help="History window (max 60 for 5m). 60 is the default because a 7-day window is far too small to be robust.")
+    parser.add_argument("--capital",      type=float, default=10000.0, help="Starting capital ($)")
     parser.add_argument("--min-edge",     type=float, default=None, help="Override MIN_EDGE (e.g. 0.025)")
     parser.add_argument("--no-kelly",     action="store_true",      help="Fixed MAX_TRADE_PCT sizing")
     parser.add_argument("--no-stop",      action="store_true",      help="Disable stop loss")
