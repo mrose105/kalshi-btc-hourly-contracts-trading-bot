@@ -45,6 +45,19 @@ _worker: threading.Thread | None = None
 _handles: dict[str, gzip.GzipFile] = {}
 _lock = threading.Lock()
 
+# Flush cadence, per stream. quotes/books run into the tens of thousands of
+# writes a day and get batched to bound disk I/O; orders and marks are the two
+# streams the exit-pricing fix actually depends on (realized slippage, real
+# bid at exit time) and are flushed close to immediately. A single flush
+# counter shared across all four streams was tried first and is wrong: with
+# ~25,000 quotes writes against 6 order writes in one session, the odds an
+# order write lands on a shared global threshold are near zero, so the orders
+# stream sat unflushed in memory all day — invisible to anything reading the
+# file, and one kill -9 away from actually being lost (a graceful shutdown
+# still flushes via close(), wired to both KeyboardInterrupt and atexit).
+_FLUSH_EVERY = {"orders": 1, "marks": 5, "books": 50, "quotes": 200}
+_counts: dict[str, int] = {}
+
 dropped = 0
 written = 0
 
@@ -81,10 +94,9 @@ def _run() -> None:
             h = _handle(stream, day)
             h.write(json.dumps(rec, separators=(",", ":")) + "\n")
             written += 1
-            # Flush periodically rather than per line: a kill -9 loses at most
-            # a second of data, and fsync-per-tick would defeat the point of
-            # keeping this off the trading path.
-            if written % 200 == 0:
+            n = _counts.get(stream, 0) + 1
+            _counts[stream] = n
+            if n % _FLUSH_EVERY.get(stream, 50) == 0:
                 h.flush()
         except Exception:
             pass
