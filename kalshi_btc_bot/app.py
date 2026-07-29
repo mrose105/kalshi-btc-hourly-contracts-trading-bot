@@ -264,14 +264,23 @@ def main():
         spot = feed.last
         if spot <= 0:
             return
-        seen = {}
+        # ladder_e.get() reads Ladder's own LADDER_CACHE_SECONDS cache — scan_step
+        # already refreshes it every SCAN_INTERVAL, so this is not an extra
+        # /markets call in practice. Reuse its bid/ask instead of a second
+        # _fresh_quote() round trip per contract; only held positions (which may
+        # not currently be in the visible ladder) need one.
+        quotes: dict[str, tuple] = {}
         for c in (ladder_e.get(spot) or []):
-            seen[c["ticker"]] = (c.get("hours", 0.0), False)
-        for tk, p in list(portfolio.positions.items()):
-            seen[tk] = (seen.get(tk, (0.0, False))[0], True)
-        for tk, (hrs, held) in seen.items():
+            quotes[c["ticker"]] = (c.get("bid", 0.0), c.get("ask", 0.0), c.get("hours", 0.0), False)
+        for tk in list(portfolio.positions.keys()):
+            if tk in quotes:
+                b, a, h, _ = quotes[tk]
+                quotes[tk] = (b, a, h, True)
+            else:
+                bid, ask = portfolio._fresh_quote(tk)
+                quotes[tk] = (bid, ask, 0.0, True)
+        for tk, (bid, ask, hrs, held) in quotes.items():
             book = portfolio._orderbook(tk)
-            bid, ask = portfolio._fresh_quote(tk)
             recorder.record_book(tk, book, bid, ask, hrs, spot, held)
 
     def summary_step():

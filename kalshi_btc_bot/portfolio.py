@@ -506,6 +506,10 @@ class Portfolio:
                 ask   = avg_px
                 count = filled
                 cost  = ask * count
+                recorder.record_order("buy", ticker, "yes", bid, ask, None,
+                                       limit, count, filled, ask,
+                                       reason="snipe" if is_snipe else "",
+                                       true_prob=true_prob)
                 with self.lock:
                     self.real_cash -= cost
                     self.real_port += cost
@@ -625,6 +629,9 @@ class Portfolio:
                 count   = filled
                 no_cost = avg_px
                 cost    = no_cost * count
+                recorder.record_order("buy", ticker, "no", bid, yes_ask, None,
+                                       no_cost, count, filled, no_cost,
+                                       true_prob=true_prob)
                 with self.lock:
                     self.real_cash -= cost
                     self.real_port += cost
@@ -790,6 +797,10 @@ class Portfolio:
                 print(f"  ⚠️  SELL IOC not filled: {ticker[-22:]} reason={reason}")
                 return False
             count = min(filled_count, requested)
+            recorder.record_order("sell", ticker, "no" if is_no else "yes",
+                                   bid, 0.0, None, order_bid, requested,
+                                   filled_count, proceeds / filled_count,
+                                   reason=reason)
             # bid becomes the proceeds-weighted average fill price across the
             # primary + retry orders — previously this stayed pinned to the
             # primary order's price even when the retry filled at a different
