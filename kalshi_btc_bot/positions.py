@@ -146,6 +146,26 @@ class PositionManager:
                 self.portfolio.positions[ticker]["peak"] = mid
                 peak = mid
 
+            # Separate bid-only peak for the giveback tiers below. `peak`
+            # above tracks mid, which overstates achievable value — you can
+            # never actually sell at mid, only bid or worse. Comparing a
+            # mid-based peak_pnl_pct against bid-based pnl_pct let a spread
+            # widening ALONE (ask jumping while bid sat flat) clear
+            # PEAK_GIVEBACK_MIN_PEAK and the 75%-retention check in the same
+            # tick, with zero ticks of a real peak forming or fading. Live
+            # 2026-07-29 B64450: bid sat below entry for over a minute (peak
+            # stuck at entry, 0%), then one tick moved bid $0.19->$0.26 while
+            # ask jumped further to $0.31 — mid-based peak read +35.7% and
+            # fired peak_giveback instantly. Bid-based peak on that same tick
+            # reads +23.8%, below the 25% bar, so it does not fire until a
+            # real bid move earns it. NO positions are unaffected: there is
+            # no separate NO bid quoted, `mid` (= 1-ask) already IS the sole
+            # achievable NO-sell price, and no_pnl_pct downstream compares
+            # against fixed thresholds, never peak-relative.
+            peak_mark = mid if is_no else bid
+            if peak_mark > pos.get("peak_bid", entry):
+                self.portfolio.positions[ticker]["peak_bid"] = peak_mark
+
             # Hours left
             hours     = max(0.0, _hours_from(close_time))
             mins_left = hours * 60
@@ -212,7 +232,8 @@ class PositionManager:
 
             # ── YES POSITION (unified tiered ladder) ─────────────────────
             pnl_pct      = (bid - entry) / entry if entry > 0 else 0
-            peak_pnl_pct = (peak - entry) / entry if entry > 0 else 0
+            peak_bid_val = pos.get("peak_bid", entry)
+            peak_pnl_pct = (peak_bid_val - entry) / entry if entry > 0 else 0
             # Mid-based pnl for stop-loss only. Marking a fresh position to bid
             # assumes we'd exit into the bid immediately — but on a 25% spread
             # that's an instant -25% "loss" that's really just paid-once entry

@@ -687,7 +687,8 @@ class Portfolio:
             print(f"  🏁 [PAPER] SETTLED {emoji} {ticker[-22:]} "
                   f"x{count} @ ${payout:.2f} pnl=${pnl:+.4f}")
         live_view.drop_position(ticker)
-        peak_pct = (pos["peak"] - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
+        peak_val = pos.get("peak_bid", pos["peak"])
+        peak_pct = (peak_val - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
         self._log_trade("sell", ticker, "no" if is_no else "yes", count, payout,
                         pnl=pnl, peak_pnl_pct=peak_pct, reason="expired_settled")
         return True
@@ -824,7 +825,8 @@ class Portfolio:
         else:
             print(f"  📤 {mode}SELL {emoji} [{reason:22}] {ticker[-22:]} "
                   f"x{count} @ ${bid:.4f} pnl=${pnl:+.4f}")
-        peak_pct = (pos["peak"] - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
+        peak_val = pos.get("peak_bid", pos["peak"])
+        peak_pct = (peak_val - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
         self._log_trade("sell", ticker, "no" if is_no else "yes", count, bid,
                         pnl=pnl, peak_pnl_pct=peak_pct, reason=reason)
 
