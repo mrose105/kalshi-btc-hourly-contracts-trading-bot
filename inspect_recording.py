@@ -23,12 +23,28 @@ STREAMS = ["quotes", "marks", "books", "orders"]
 
 
 def load(stream: str, date: str) -> list[dict]:
+    """Read one recorder stream, tolerating a file still being written.
+
+    gzip only writes its footer (CRC + size) on close(), and recorder.py holds
+    its handles open for the whole session — see recorder.py's _handle(). So
+    reading today's file while the bot is still running always hits an
+    unterminated gzip member and raises EOFError on the read *after* the last
+    complete line, even though every line up to that point decoded fine. That
+    is expected, not corruption: read line-by-line and stop cleanly at the
+    truncation instead of losing every row already read.
+    """
     path = _DIR / f"{stream}_{date}.jsonl.gz"
     if not path.exists():
         return []
     rows = []
     with gzip.open(path, "rt", encoding="utf-8") as f:
-        for line in f:
+        while True:
+            try:
+                line = f.readline()
+            except EOFError:
+                break  # in-progress file — stream not finalized yet
+            if not line:
+                break
             line = line.strip()
             if not line:
                 continue
