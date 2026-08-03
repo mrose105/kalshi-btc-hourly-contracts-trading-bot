@@ -72,29 +72,76 @@ was itself partly self-referential — selection bias stacked on pricing bias.
    against a window that did not inform their selection before trusting them
    further.
 
-## 2. Deflated Sharpe ratio / probability of backtest overfitting — confirmed gap
+## 2. Deflated Sharpe ratio / probability of backtest overfitting — implemented 2026-08-03
 
 **Standard** (Bailey & López de Prado 2014): when N parameter sets or
 strategies are tried, the best-looking one is inflated by chance in
 proportion to N. The deflated Sharpe ratio discounts the observed Sharpe by
 the expected maximum Sharpe achievable under pure noise, given N trials and
-the variance across trials; PBO, via combinatorial purged CV, directly
-estimates the probability that the in-sample winner underperforms
-out-of-sample.
+the variance across trials.
 
-**What we actually do:** nothing. No deflation, no PBO, anywhere in the
-repo. `docs/BACKTEST_INTEGRITY.md` already flags "Sharpe above ~6 on a retail
-event market is a defect signal" as a qualitative rule of thumb — this is the
-formal version of that same instinct, and it would let us quantify it instead
-of eyeballing it.
+**Implementation:** `deflated_sharpe.py`. Self-checked against five algebraic
+properties any correct implementation must satisfy (PSR(SR\*=SR_hat) == 0.5
+exactly, `E[max SR|N]` strictly increasing in N, undefined at N≤1, the
+normal-case denominator reduces to Lo (2002)'s `1 + SR²/2`, and directional
+sanity at extreme inputs) — `python3 deflated_sharpe.py --selftest`.
 
-**Fix:** given the sweep history above, N (number of parameter combinations
-effectively tried across sessions: peak-giveback sweep, NO_STOP sweep,
-z-score sweep, plus every manual threshold edit in `config.py`'s change log)
-is not small. Before quoting Sharpe 6.36 (or any future backtest Sharpe) as a
-headline number again, compute a deflated version against a realistic trial
-count. This is the single highest-leverage fix on this list — it directly
-answers "is this Sharpe real" instead of asserting it by feel.
+**Result, run against the current production backtest**
+(`results/backtest_20260803_1944.json`, Sharpe 7.32, T=59 daily
+observations, skew +1.50, kurtosis 5.03) and the 8 real `peak_giveback`
+sweep trials (Sharpe range 4.11–8.04, run fresh on current code — see the
+finding below):
+
+| N (trial count assumed) | E[max Sharpe \| N trials of noise] | Deflated Sharpe Ratio |
+|---|---|---|
+| 8 (verified: the one saved sweep) | 1.98 | 99.8% |
+| 15 | 2.41 | 99.5% |
+| 20 | 2.58 | 99.4% |
+| 30 | 2.82 | 99.1% |
+| 50 (generous over-estimate) | 3.09 | 98.7% |
+
+**Reading this correctly — DSR answers one narrow question.** It's stable
+above 98.7% across the entire plausible range of "how many parameter trials
+has this project actually run" (from 8 verified up to a deliberately generous
+50). `E[max SR|N]` grows only logarithmically in N, and a Sharpe of 7.3 sits
+far enough above even the N=50 noise ceiling (3.09) that no defensible trial
+count explains it away. **Parameter-selection bias is real and the fix below
+still stands, but it is demonstrably not the dominant reason this Sharpe
+looks implausible.**
+
+DSR corrects for exactly one thing: whether the winning parameter among
+several tried is more likely signal than luck. It has no visibility into
+whether the underlying trade-by-trade P&L itself is trustworthy. That's a
+separate question, already answered elsewhere: `docs/BACKTEST_INTEGRITY.md`
+§3 — exits price off the bot's own model rather than a recorded book. A
+high DSR does not clear that; it just tells us the exit-pricing circularity,
+not the parameter search, is the primary suspect. This re-orders the
+priority list below.
+
+**Second finding, incidental to running the sweep fresh:** the
+`sweep_no_thresholds()` grid (7 values of `NO_OVERPRICING_MIN`) returned
+**identical** Sharpe/return/trade-count across every threshold — confirming
+the stale `config.py` comment ("synthetic backtest can't discriminate
+thresholds") is still literally true on current code. Those 7 trials are
+degenerate, not independent, and were excluded from N rather than silently
+inflating the trial count with duplicate draws. Separately, the sweep also
+showed the *currently configured* `PEAK_GIVEBACK_FRACTION = 0.75` is no
+longer even the best value under current code (`0.85` scores higher, 8.04 vs
+7.32) — the parameter drifted out of sync with its own justification as the
+backtest changed underneath it since the Jul 21 sweep that chose it.
+
+**Fix, updated:**
+1. Re-validate the two informative parameters (`PEAK_GIVEBACK_FRACTION`,
+   and `NO_STOP`/`BOUNDARY_NO_ZSCORE_MIN` once `ENABLE_MISPRICE_NO` is
+   actually on and that gate can bind) against a genuinely held-out window —
+   still worth doing, just no longer the top-priority fix.
+2. Prioritize closing the model-derived exit-pricing gap
+   (`docs/BACKTEST_INTEGRITY.md` §3, via `recorder.py`'s accumulating `marks`
+   data) over further parameter re-validation — DSR indicates that's where
+   the inflation actually lives.
+3. Fix the degenerate `NO_OVERPRICING_MIN` sweep (or drop it) — it currently
+   cannot discriminate anything, so any config value justified by it is
+   unvalidated.
 
 ## 3. Purged / embargo cross-validation — pass
 
@@ -208,14 +255,21 @@ trades one instrument, not a basket. Correctly out of scope.
 
 ## Priority order
 
-1. **Deflated Sharpe ratio / PBO** — highest leverage, directly answers
-   whether the backtest's Sharpe numbers mean anything.
-2. **Re-validate the three swept parameters** (`PEAK_GIVEBACK_FRACTION`,
-   `NO_STOP`, `BOUNDARY_NO_ZSCORE_MIN`) against a genuinely held-out window.
-3. **Fit the adverse-selection haircut from recorded `marks` data** once
-   there's enough of it — the recorder is already shipped, this is a
-   downstream analysis task.
-4. **Liquidation-cascade regime detection** — real candidate, needs to be
+1. ~~Deflated Sharpe ratio / PBO~~ — **done 2026-08-03**
+   (`deflated_sharpe.py`). Result: parameter-selection bias is real but not
+   the dominant driver of the inflated Sharpe (DSR stays 98.7–99.8% across
+   N=8 to a generous N=50). Redirects priority below.
+2. **Close the model-derived exit-pricing gap**
+   (`docs/BACKTEST_INTEGRITY.md` §3) via `recorder.py`'s accumulating
+   `marks`/`books` data — DSR indicates this, not the parameter sweeps, is
+   where the Sharpe inflation actually lives. Now the top priority.
+3. **Fix or drop the degenerate `NO_OVERPRICING_MIN` sweep** — currently
+   cannot discriminate any threshold value on current code; any config
+   value justified by it is unvalidated.
+4. Re-validate `PEAK_GIVEBACK_FRACTION` (and `NO_STOP`/
+   `BOUNDARY_NO_ZSCORE_MIN` once `ENABLE_MISPRICE_NO` is on) against a
+   genuinely held-out window — still worth doing, demoted from top priority.
+5. **Liquidation-cascade regime detection** — real candidate, needs to be
    derived and backtested, not lifted.
-5. `gamma_lock` docstring/`STRATEGY.md` clarification, paper-sell depth
+6. `gamma_lock` docstring/`STRATEGY.md` clarification, paper-sell depth
    floor — both low priority, quick fixes whenever convenient.
