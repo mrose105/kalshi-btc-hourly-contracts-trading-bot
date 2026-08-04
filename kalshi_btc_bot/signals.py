@@ -2,14 +2,27 @@ from . import config as _C
 from .config import (
     MAX_HOURS, MAX_OTM_B, MAX_OTM_T, MIN_HOURS, MIN_RANGE_BOUNDARY_BUFFER,
     NO_CASH_MIN_PCT, NO_DIST_MAX, NO_DIST_MIN, NO_HOURS_MAX, NO_HOURS_MIN,
-    NO_OVERPRICING_MIN, NO_TRUE_PROB_MAX, NO_YES_ASK_MAX, NO_YES_ASK_MIN, TIME_EXIT_MINS,
+    NO_TRUE_PROB_MAX, NO_YES_ASK_MAX, NO_YES_ASK_MIN, TIME_EXIT_MINS,
     SNIPE_MAX_ENTRY_PRICE, SNIPE_MIN_EDGE_RATIO, SNIPE_MIN_ENTRY_PRICE, STRIKE_CLUSTER_DIST,
-    BOUNDARY_NO_ZSCORE_MIN, BOUNDARY_NO_OTM_MIN, BOUNDARY_NO_OTM_MAX,
-    BOUNDARY_NO_OVERPRICING_MIN, BOUNDARY_NO_HOURS_MIN, BOUNDARY_NO_HOURS_MAX,
+    BOUNDARY_NO_OTM_MIN, BOUNDARY_NO_OTM_MAX,
+    BOUNDARY_NO_HOURS_MIN, BOUNDARY_NO_HOURS_MAX,
     BOUNDARY_NO_YES_ASK_MIN, BOUNDARY_NO_YES_ASK_MAX,
 )
 # MIN_EDGE and MIN_EDGE_COMPRESSION intentionally NOT imported as local names —
 # read via _C.MIN_EDGE so that run_backtest()'s C.MIN_EDGE = override takes effect.
+#
+# NO_OVERPRICING_MIN, BOUNDARY_NO_ZSCORE_MIN and BOUNDARY_NO_OVERPRICING_MIN
+# get the same treatment, for the same reason, after the same bug actually
+# bit: `from .config import NO_OVERPRICING_MIN` binds a name-local snapshot
+# at import time, so kalshi_btc_backtest.py's `C.NO_OVERPRICING_MIN = thr`
+# (mutating the module attribute mid-process, exactly like the MIN_EDGE
+# override above) silently did nothing here — every threshold in
+# sweep_no_thresholds()'s 7-value grid produced byte-identical trades
+# (2026-08-03, see docs/QUANT_STANDARDS_AUDIT.md). BOUNDARY_NO_ZSCORE_MIN and
+# BOUNDARY_NO_OVERPRICING_MIN have no override path in the backtest today,
+# but they're the exact same import shape and are named in that same doc's
+# priority list as parameters that still need a real out-of-sample sweep —
+# fixed pre-emptively so that future sweep doesn't silently no-op the same way.
 
 def _clustered(ticker: str, strike: float, existing: dict) -> bool:
     """True if `ticker` (in the same expiry window, i.e. same ticker prefix
@@ -187,7 +200,7 @@ class SignalEngine:
         if start_total > 0 and real_cash < start_total * NO_CASH_MIN_PCT:
             return None
 
-        best_ratio = NO_OVERPRICING_MIN
+        best_ratio = _C.NO_OVERPRICING_MIN
         best       = None
 
         for c in ladder:
@@ -244,12 +257,12 @@ class SignalEngine:
 
         if r not in ("RANGING", "REVERTING"):
             return None
-        if abs(zscore) < BOUNDARY_NO_ZSCORE_MIN:
+        if abs(zscore) < _C.BOUNDARY_NO_ZSCORE_MIN:
             return None
         if start_total > 0 and real_cash < start_total * NO_CASH_MIN_PCT:
             return None
 
-        best_ratio = BOUNDARY_NO_OVERPRICING_MIN
+        best_ratio = _C.BOUNDARY_NO_OVERPRICING_MIN
         best       = None
 
         for c in ladder:
