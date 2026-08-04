@@ -263,9 +263,15 @@ trades one instrument, not a basket. Correctly out of scope.
    (`docs/BACKTEST_INTEGRITY.md` §3) via `recorder.py`'s accumulating
    `marks`/`books` data — DSR indicates this, not the parameter sweeps, is
    where the Sharpe inflation actually lives. Now the top priority.
-3. **Fix or drop the degenerate `NO_OVERPRICING_MIN` sweep** — currently
-   cannot discriminate any threshold value on current code; any config
-   value justified by it is unvalidated.
+3. ~~Fix or drop the degenerate `NO_OVERPRICING_MIN` sweep~~ — **done
+   2026-08-03**. Root cause: `signals.py` imported `NO_OVERPRICING_MIN` (and
+   `BOUNDARY_NO_ZSCORE_MIN`/`BOUNDARY_NO_OVERPRICING_MIN`) as frozen
+   name-local snapshots rather than via `_C.` module access — the exact bug
+   class the file already documents a fix for on `MIN_EDGE`. The backtest's
+   `C.NO_OVERPRICING_MIN = thr` override was a silent no-op. Fixed and
+   verified: the same 7-value sweep now genuinely discriminates
+   (Sharpe 6.76–8.00, `no_trades` 98–139, where every value previously
+   produced byte-identical output).
 4. Re-validate `PEAK_GIVEBACK_FRACTION` (and `NO_STOP`/
    `BOUNDARY_NO_ZSCORE_MIN` once `ENABLE_MISPRICE_NO` is on) against a
    genuinely held-out window — still worth doing, demoted from top priority.
