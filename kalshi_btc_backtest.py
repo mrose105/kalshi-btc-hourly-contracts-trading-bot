@@ -980,7 +980,13 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                  min_edge: float = None, use_kelly: bool = True,
                  no_stop: bool = False, verbose: bool = False,
                  use_vol_surface: bool = False,
-                 no_threshold: float = None):
+                 no_threshold: float = None,
+                 start_date: str = None, end_date: str = None):
+    """start_date/end_date (YYYY-MM-DD): fetch an explicit, fixed calendar
+    window instead of `days` back from now. Exists so a parameter sweep can
+    tune on one window and validate on a genuinely separate one — `days`
+    alone can't do that, since it's always anchored to the current moment
+    (see docs/BACKTEST_INTEGRITY.md §6). Ignored unless both are given."""
     try:
         import yfinance as yf
     except ImportError:
@@ -995,9 +1001,13 @@ def run_backtest(days: int = 7, capital: float = 50.0,
         C.STOP_LOSS_PCT  = 999.0   # effectively infinite — stop never fires
         C.STOP_MIN_HOURS = 0.0
 
+    fixed_window = bool(start_date and end_date)
     print(f"\n{'═'*62}")
     print(f"  🧪 KALSHI BTC BACKTEST")
-    print(f"  Period: {days} days  |  Capital: ${capital:.2f}")
+    if fixed_window:
+        print(f"  Period: {start_date} -> {end_date} (fixed)  |  Capital: ${capital:.2f}")
+    else:
+        print(f"  Period: {days} days  |  Capital: ${capital:.2f}")
     stop_str = "OFF" if no_stop else f"ON ({C.STOP_LOSS_PCT:.0%})"
     vs_str   = "ON"  if use_vol_surface else "OFF"
     print(f"  Min edge: {C.MIN_EDGE:.1%}  |  Kelly: {'ON' if use_kelly else 'OFF'}  |  Stop: {stop_str}")
@@ -1006,8 +1016,12 @@ def run_backtest(days: int = 7, capital: float = 50.0,
     print(f"{'═'*62}")
 
     print("  Fetching BTC-USD 5m OHLCV from yfinance...")
-    btc = yf.download("BTC-USD", period=f"{days}d", interval="5m",
-                      progress=False, auto_adjust=True)
+    if fixed_window:
+        btc = yf.download("BTC-USD", start=start_date, end=end_date, interval="5m",
+                          progress=False, auto_adjust=True)
+    else:
+        btc = yf.download("BTC-USD", period=f"{days}d", interval="5m",
+                          progress=False, auto_adjust=True)
     if btc.empty:
         print("  ✗ No data returned.")
         sys.exit(1)
