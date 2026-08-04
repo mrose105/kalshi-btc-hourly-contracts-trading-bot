@@ -835,7 +835,17 @@ class Portfolio:
         # ticker gets immediately re-bought at escalating Kelly size and whipsaws
         # (observed live 2026-07-03: boundary_risk exits with no cooldown led to
         # 3 re-entries on B62050 in 36 min, -$4.98).
-        is_loss_cut = reason.startswith("stop_") or "boundary_risk" in reason
+        #
+        # Classified on ACTUAL realized pnl sign, not the exit-reason string.
+        # The reason-based version mislabeled time_exit_OTM as a non-loss (0%
+        # WR in every 2026-08 backtest run, but its reason string matches
+        # neither "stop_" nor "boundary_risk") and couldn't catch an
+        # occasional loss from a normally-profitable tier. 2026-08-04
+        # cooldown_sweep.py: with EXIT_COOLDOWN_SECS -> 0 for real wins (loss
+        # cooldown left at 300s), Sharpe improved on BOTH an in-sample tuning
+        # window and a held-out validation window it never touched — a
+        # confirmed edge, not an in-sample artifact.
+        is_loss_cut = pnl < 0
         with self.lock:
             _pos = self.positions.get(ticker)
             if _pos is None:

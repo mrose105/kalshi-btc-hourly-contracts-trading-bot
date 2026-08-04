@@ -782,14 +782,18 @@ class BacktestPortfolio:
         # no size impact.
         if "expiry_settle" not in reason:
             bid *= (1.0 - _size_impact_penalty(pos.get("count", 0)))
-        # Live blocks re-entry on the same ticker after every exit — 300s for a
-        # loss-cut, 120s otherwise. The backtest had no cooldown at all, so it
-        # could re-buy a contract the moment it sold it.
-        _loss = reason.startswith("stop_") or "boundary_risk" in reason
-        self.cooldowns[ticker] = bar_ts + timedelta(
-            seconds=C.STOP_COOLDOWN_SECS if _loss else C.EXIT_COOLDOWN_SECS)
         count = pos["count"]
         pnl   = (bid - pos["entry"]) * count
+        # Cooldown keyed on ACTUAL realized pnl sign, not the exit-reason
+        # string. The reason-based version (reason.startswith("stop_") or
+        # "boundary_risk" in reason) mislabels time_exit_OTM as a non-loss —
+        # it's 0% WR in every run this session — and can't catch the
+        # occasional loss from a tier that's usually profitable (e.g.
+        # peak_giveback). A cooldown meant to stop chasing a bad setup
+        # should fire on outcome, not on which tier happened to close it.
+        _loss = pnl < 0
+        self.cooldowns[ticker] = bar_ts + timedelta(
+            seconds=C.STOP_COOLDOWN_SECS if _loss else C.EXIT_COOLDOWN_SECS)
         self.cash    += bid * count
         self.realized += pnl
         t = self.total()
