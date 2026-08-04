@@ -364,23 +364,25 @@ The backtest mirrors the live bot's math for pricing, sizing, and exits, but wit
 1. **Vol compression signal** (§2.4) — now SMA-based on 5-min bars in *both* backtest and live (rewritten Jul 16 for parity). This asymmetry no longer applies.
 2. **Fill model** — backtest models fills at Kalshi's spread with an intrabar stop simulation using bar high/low (`kalshi_btc_backtest.py:465+`, `_exit_spread` widens dynamically near settlement per commit `49d5882`). Live uses actual Kalshi IOC orders in prod and depth-capped order-book walking in paper mode. Realistic but not identical.
 
-60-day backtest at $10,000 starting capital (Jul 28 2026, **post lookahead-bias audit and live-parity work**):
+60-day backtest, post lookahead-bias audit, live-parity work, and (2026-08-04)
+depth-realism fixes: neither exits nor entries accounted for position size,
+and $10,000 capital drives Kelly sizing far past what real Kalshi book depth
+can absorb. Return is now a function of capital scale, not a single number —
+`docs/BACKTEST_INTEGRITY.md` §7 has the full derivation:
 
-| Metric | Value |
-|---|---|
-| Trades | 1,219 |
-| Win rate | 53.0% |
-| Return | +276% |
-| Sharpe | 6.36 |
-| Profit factor | 1.29 |
-| Max drawdown | -20.4% |
-| Avg hold | 38 min |
-| Vol-compression WR | 64.7% vs 50.4% normal-vol |
-| Vol-compression P&L | 57% of total |
+| Capital | Return | Sharpe | Profit factor | Trades |
+|---|---|---|---|---|
+| $44 *(actual live account)* | +313% | 7.04 | 1.37 | 1,339 |
+| $500 | +307% | 6.52 | 1.30 | 1,287 |
+| $2,000 | +29% | 2.10 | 1.07 | 1,164 |
+| $10,000 | -60% | -7.43 | 0.66 | 858 |
 
-Dominant winners are all profit-lock tiers and therefore all 100% WR by construction (§8.2): `near_settlement` (38, +$30,149), `scalp_lock` (62, +$24,421), `gamma_lock` (83, +$18,944), `snipe_lock` (65, +$12,827). Largest drags: `time_exit_OTM` (184 trades, 0% WR, -$47,944) and `stop_loss` (315, 0% WR, -$43,411).
-
-**A Sharpe of 6.36 on a retail event market is a defect signal, not an achievement** — see `docs/BACKTEST_INTEGRITY.md`, which this section should be read alongside.
+The edge is real and strong at the scale that matters (the $44 live account)
+and does not scale to $10K — see `docs/BACKTEST_INTEGRITY.md` §7 for the full
+7-point curve, the fix, and the false starts along the way. A Sharpe above ~6
+at large capital scale is still a defect signal; at small, account-realistic
+scale it's no longer automatically suspect post-§7, but check the stated
+capital before trusting any single figure.
 
 ### 8.1 Why this differs from the earlier Jul 16 figures
 
