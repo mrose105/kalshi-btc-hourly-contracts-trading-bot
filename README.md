@@ -4,22 +4,23 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 
 ---
 
-## Backtest Results (60-day walk-forward, run 2026-07-28, post live-parity)
+## Backtest Results (60-day walk-forward, run 2026-08-04, post depth-realism fixes)
 
-| Metric | Value |
-|--------|-------|
-| Starting capital | $10,000 |
-| Final capital | $37,576 |
-| Return | **+276%** |
-| Sharpe ratio | **6.36** (daily returns, annualized √365) |
-| Profit factor | 1.29 |
-| Max drawdown | -20.4% |
-| Trades | 1,219 |
-| Win rate | 53.0% |
-| Avg hold | 38 min |
-| Vol compression WR | 64.7% vs 50.4% normal (57% of P&L from compression trades) |
+There is no single headline return — the strategy has a real, measured **capacity limit**, and which side of it you're on determines the sign of the result:
 
-These figures move run to run: `--days 60` is a rolling window anchored to *now* rather than fixed dates, and exit pricing still relies on the bot's own probability model rather than a recorded Kalshi order book. Treat the table as illustrative of the strategy's shape, not a forecast of live returns — full methodology, known limitations, and how to read the numbers are in [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md).
+| Starting capital | Return | Sharpe | Profit factor | Trades |
+|---|---|---|---|---|
+| $44 *(current live account)* | **+313%** | 7.04 | 1.37 | 1,339 |
+| $200 | +442% | 7.29 | 1.38 | 1,319 |
+| $500 | +307% | 6.52 | 1.30 | 1,287 |
+| $1,000 | +129% | 4.70 | 1.19 | 1,257 |
+| $2,000 | +29% | 2.10 | 1.07 | 1,164 |
+| $5,000 | -39% | -3.28 | 0.83 | 986 |
+| $10,000 | -60% | -7.43 | 0.66 | 858 |
+
+At small size the edge is real and strong. Past roughly $2,000, Kelly sizing wants positions larger than Kalshi's real KXBTC order-book depth can absorb without severe exit slippage — the strategy doesn't scale, and profitability inverts smoothly and monotonically, not because of a bug but because the backtest now models that constraint instead of assuming infinite liquidity (`_size_impact_penalty()` / `_MAX_ENTRY_SIZE` in `kalshi_btc_backtest.py`, anchored to real recorded Kalshi book depth in `recordings/*.jsonl.gz`).
+
+These figures still move run to run — `--days 60` is a rolling window anchored to *now*, not fixed dates. Full methodology, known limitations, and the capacity-constraint finding in detail are in [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md).
 
 Backtest uses real BTC-USD 5-minute OHLCV from yfinance and applies five bias-elimination fixes to prevent inflated returns:
 
@@ -29,49 +30,45 @@ Backtest uses real BTC-USD 5-minute OHLCV from yfinance and applies five bias-el
 4. **Intrabar stop slippage** — stops fill 2¢ worse than the theoretical threshold (matches live `FORCE_EXIT_SLIPPAGE_CENTS`), not at exactly the stop price.
 5. **NO position exit markup** — mirror haircut on the counterparty side so NO exits don't fabricate settlement-certainty gains either.
 
-Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session).
+Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session). As of 2026-08-04, both entries and exits are also **depth-aware**: exits carry a size-based impact penalty and entries are capped to what a real book could plausibly fill, calibrated conservatively against real recorded Kalshi order-book depth (`recordings/*.jsonl.gz`) rather than assuming any position size fills at the model price — this is what produces the capacity curve above.
 
-**Known limitation:** exit prices come from the bot's own probability model plus a hand-tuned discount, not a recorded Kalshi order book — see [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md) §3 for the full breakdown and current status. The only market-verified (non-simulated) result to date is the 2026-07-01–03 live run: 63 trades, profit factor 0.78. Paper trade before deploying real capital.
+**Known limitation:** exit prices still come from the bot's own probability model plus a hand-tuned discount (now also size-adjusted), not a recorded Kalshi order book directly — see [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md) §3 for the full breakdown and current status. The only market-verified (non-simulated) result to date is the 2026-07-01–03 live run: 63 trades, profit factor 0.78. Paper trade before deploying real capital, and size to the capacity the table above shows, not the account balance you wish you had.
 
 ---
 
-## Risk Profile — 10,000-path Monte Carlo
+## Risk Profile — 10,000-path Monte Carlo (at $44, the account-realistic scale)
 
-Return alone says nothing about what running this actually feels like. Bootstrapping the 1,219 backtest trades into 10,000 resampled equity paths (`python3 montecarlo.py --n 10000 --capital 10000`):
+Return alone says nothing about what running this actually feels like. Bootstrapping the 1,339 trades from the **$44-capital** backtest run — the capacity-curve point that matches the real account, not the $10K point where the strategy is already shown not to work — into 10,000 resampled equity paths (`python3 montecarlo.py results/backtest_20260804_0745.json --n 10000 --capital 44`):
 
 | Percentile | Final equity | Return |
 |------------|--------------|--------|
-| worst path | $1,746 | -82.5% |
-| p5 | $21,555 | +115.6% |
-| p25 | $30,905 | +209.0% |
-| **p50 (median)** | **$37,376** | **+273.8%** |
-| p75 | $44,116 | +341.2% |
-| p95 | $54,015 | +440.1% |
-| best path | $75,467 | +654.7% |
+| worst path | $42 | -4.5% |
+| p5 | $122 | +176.7% |
+| p25 | $157 | +257.4% |
+| **p50 (median)** | **$182** | **+313.5%** |
+| p75 | $207 | +369.4% |
+| p95 | $243 | +453.3% |
+| best path | $335 | +661.3% |
 
-The actual backtest ($37,576) lands almost exactly on the median, so the historical trade *ordering* wasn't unusually lucky.
+The actual backtest ($182) lands almost exactly on the median, so the historical trade *ordering* wasn't unusually lucky. Notably the **worst path across 10,000 resamples is still only -4.5%** — a very different risk picture from the $10K point, where the strategy loses money outright.
 
-### Drawdown is the binding constraint, not return
+### Drawdown is still the thing to watch, even here
 
 ```
-P(equity ever dips below start)    89.6%
-P(max DD > 20%)                    71.3%
-P(max DD > 30%)                    34.7%
+P(equity ever dips below start)    87.8%
+P(max DD > 20%)                    43.8%
+P(max DD > 30%)                    13.6%
 
-Max DD:  median -25%   p95 -54%   worst -133%
+Max DD:  median -19%   p95 -38%   worst -99%
 ```
 
-The backtest's own -20.4% max drawdown is **better than the median path** (-25%). Half of all paths reaching a similar endpoint get there through a deeper hole.
+The backtest's own -19.3% max drawdown sits almost exactly on the median path. Nearly 9 in 10 paths dip below the starting balance at some point, and roughly 2 in 5 take a 20%+ drawdown — the edge being real at this scale doesn't mean the ride is smooth.
 
-**Nearly 3 in 4 paths take a 20%+ drawdown and 1 in 3 takes 30%+.** The real question is not whether the edge is positive — it is whether you would still be running the bot after a -54% stretch, which is a p95 event rather than a tail.
-
-A max drawdown worse than -100% is not a typo: the bootstrap resamples fixed dollar P&Ls with no bankruptcy check, so at this position sizing some paths drive equity negative. That is itself the finding — the sizing admits ruin.
-
-### The Monte Carlo understates risk in three ways
+### The Monte Carlo still understates risk in three ways
 
 1. **Fixed dollar P&L, no compounding.** The bootstrap resamples raw dollar amounts, but the live bot Kelly-sizes off *current* equity. Real paths compound, widening both tails.
-2. **IID resampling destroys loss clustering.** Losses correlate in reality — same regime, adjacent strikes, one BTC move busting several positions at once. Shuffling breaks that, so real drawdowns run worse than the -25% median suggests.
-3. **It inherits the model-pricing error.** Every path resamples trades whose exit price came from the bot's own model rather than a recorded book. The bootstrap treats those P&Ls as given, so it cannot model the one failure that matters most — the market refusing to bid where the model assumes.
+2. **IID resampling destroys loss clustering.** Losses correlate in reality — same regime, adjacent strikes, one BTC move busting several positions at once. Shuffling breaks that, so real drawdowns can run worse than the median suggests.
+3. **It inherits the model-pricing error.** Every path resamples trades whose exit price came from the bot's own model (now with a depth-aware size penalty, but still not a recorded book). The bootstrap treats those P&Ls as given.
 
 `SESSION_STOP_PCT` (3%) gates *new entries* only — it never closes open positions, so it does not floor these drawdowns.
 
@@ -246,11 +243,12 @@ size = min(f* × 0.25, 0.025) × account_value
 
 ```bash
 pip install -r requirements.txt
-python3 kalshi_btc_backtest.py --days 60 --capital 10000               # matches the results table above
-python3 kalshi_btc_backtest.py --days 60 --capital 10000 --vol-surface # with implied vol term structure
-python3 kalshi_btc_backtest.py --days 60 --capital 10000 --no-stop     # compare without stop loss
-python3 kalshi_btc_backtest.py --days 60 --capital 10000 --verbose     # print every trade entry
-python3 montecarlo.py --n 10000 --capital 10000                        # bootstrap equity fan + drawdown distribution
+python3 kalshi_btc_backtest.py --days 60 --capital 44                  # account-realistic scale (see capacity curve above)
+python3 kalshi_btc_backtest.py --days 60 --capital 10000               # the scale where the capacity constraint bites
+python3 kalshi_btc_backtest.py --days 60 --capital 44 --vol-surface    # with implied vol term structure
+python3 kalshi_btc_backtest.py --days 60 --capital 44 --no-stop        # compare without stop loss
+python3 kalshi_btc_backtest.py --days 60 --capital 44 --verbose        # print every trade entry
+python3 montecarlo.py --n 10000 --capital 44                           # bootstrap equity fan + drawdown distribution
 ```
 
 ### Live / Paper trading
