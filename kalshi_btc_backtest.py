@@ -3,7 +3,11 @@ kalshi_btc_backtest.py — Walk-forward simulation of the KXBTC binary strategy
 
 Data:   yfinance BTC-USD (5-minute OHLCV bars, up to 60 days available)
 Ladder: synthetic KXBTC RANGE contracts reconstructed from spot + DistModel
-Fills:  entry at ask, exit at bid  (pessimistic market-impact assumption)
+Fills:  entry at ask, exit at model-priced bid with an adverse-selection
+        haircut plus a coarse, conservative size-based impact penalty
+        (see _exit_bid() / _size_impact_penalty()) — not a fitted market-
+        impact model; still not a substitute for pricing off a recorded
+        order book (docs/BACKTEST_INTEGRITY.md §3)
 Model:  same DistModel + RegimeEngine + SignalEngine as live bot
 
 Edge source: Kalshi prices with a long-window lagged vol estimate (SMA_VOL_WINDOW bars).
@@ -329,6 +333,49 @@ def _exit_bid(true_p: float, hours_left: float) -> float:
     return max(0.01, bid)
 
 
+# Real recorded Kalshi KXBTC top-of-book depth (recordings/*.jsonl.gz) has
+# ranged from a median ~460 contracts across ~2,300 snapshots (2026-07-29) to
+# as thin as 1 contract on a specific strike (2026-08-04). On that same day,
+# selling 833 contracts into that thin book walked down to a ~4.4c blended
+# fill versus a ~19c top-of-book bid moments earlier — roughly 58% below
+# top-of-book, entirely from consuming real resting depth, not from the
+# model's true_prob estimate moving. _exit_bid() takes no size parameter at
+# all: a 1-contract exit and a 1,600-contract exit (backtest position counts
+# routinely run into the hundreds to low thousands) price IDENTICALLY. That
+# is provably wrong, not just imprecise.
+#
+# This is NOT a fitted empirical curve — real recorded book-SHAPE data (not
+# just top-of-book size) is still far too sparse to fit one responsibly
+# (fit_adverse_selection.py stays gated at 4 of a required 50 independent
+# positions as of 2026-08-04; fitting anything on less would repeat the exact
+# overfitting problem docs/QUANT_STANDARDS_AUDIT.md exists to catch). This is
+# a deliberately coarse, conservative floor instead: it uses the general
+# SHAPE of market-impact literature (impact grows roughly with sqrt(size)
+# beyond some reference liquidity), with a reference depth set well BELOW the
+# observed median (closer to the kind of thin book that produced the real
+# 2026-08-04 event) so the correction leans conservative rather than
+# optimistic. It is deliberately NOT reverse-fit to match that one event's
+# 58% exactly — capped below it (32% at the same 833-contract size) so a
+# single anecdote doesn't get treated as a calibrated constant.
+#
+# Replace with a real empirical fit once fit_adverse_selection.py ungates.
+_SIZE_IMPACT_REFERENCE_DEPTH = 100    # contracts
+_SIZE_IMPACT_COEFFICIENT     = 0.12
+_SIZE_IMPACT_MAX             = 0.35   # hard cap — do not extrapolate further
+
+
+def _size_impact_penalty(count: float) -> float:
+    """Additional fractional discount for exiting `count` contracts, on top
+    of _exit_bid()'s model-price haircut. 0.0 below the reference depth
+    (matches live-account-sized trades of a few contracts, which real top-of-
+    book depth covers ~94% of the time — see docs/QUANT_STANDARDS_AUDIT.md)."""
+    if count <= _SIZE_IMPACT_REFERENCE_DEPTH:
+        return 0.0
+    impact = _SIZE_IMPACT_COEFFICIENT * math.sqrt(
+        count / _SIZE_IMPACT_REFERENCE_DEPTH - 1.0)
+    return min(_SIZE_IMPACT_MAX, impact)
+
+
 # ─────────────────────────────────────────────
 # BACKTEST PORTFOLIO
 # ─────────────────────────────────────────────
@@ -520,6 +567,15 @@ class BacktestPortfolio:
                 continue
 
             true_p = dist.true_prob(c, spot, vol, hours_left, regime)
+            # Size-impact penalty is deliberately NOT applied here — this bid
+            # feeds ongoing peak-tracking and every tier's decision threshold
+            # across potentially many bars. Live marks positions off the raw
+            # quoted bid and only discovers size-driven slippage at the
+            # moment it actually tries to sell (see _close()). Applying it
+            # here too made stops trigger far more readily AND realize worse
+            # prices, compounding in a way live never would — first attempt
+            # at this fix flipped the 60-day return from +276% to -74.6%,
+            # which was the tell that the penalty was being double-applied.
             bid    = _exit_bid(true_p, hours_left)
             pos["bid_now"] = bid
             if bid > pos["peak"]:
@@ -537,6 +593,9 @@ class BacktestPortfolio:
             worst = _worst_spot(c, spot, bar_high, bar_low)
             if worst != spot:
                 w_tp  = dist.true_prob(c, worst, vol, hours_left, regime)
+                # Same reasoning as above: not discounted here. intrabar_stop_bid
+                # gets consumed directly by _close() next bar, where the size
+                # penalty is applied once, consistently with every other exit path.
                 w_bid = _exit_bid(w_tp, hours_left)
                 w_pnl = (w_bid - pos["entry"]) / pos["entry"] if pos["entry"] > 0 else 0
                 _eh   = pos.get("entry_hours")
@@ -690,6 +749,15 @@ class BacktestPortfolio:
         pos = self.positions.pop(ticker, None)
         if not pos:
             return
+        # Size-impact penalty applied exactly once, here, at the realized
+        # fill — not to the ongoing mark in update() (see the comments there
+        # for why: applying it to the decision-making mark as well made
+        # stops trigger far more readily and compounded in a way live never
+        # would). Excludes expiry settlement: that's a cash-settled $1/$0
+        # payout from Kalshi directly, not a market sale — no book to walk,
+        # no size impact.
+        if "expiry_settle" not in reason:
+            bid *= (1.0 - _size_impact_penalty(pos.get("count", 0)))
         # Live blocks re-entry on the same ticker after every exit — 300s for a
         # loss-cut, 120s otherwise. The backtest had no cooldown at all, so it
         # could re-buy a contract the moment it sold it.

@@ -19,9 +19,7 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 | Avg hold | 38 min |
 | Vol compression WR | 64.7% vs 50.4% normal (57% of P&L from compression trades) |
 
-> **Read [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md) before quoting any of this.** These figures are from the post-parity build (2026-07-28) and are *not* a forecast of live P&L: exits still price off the bot's own model rather than a recorded order book, so `near_settlement` and the other profit-lock tiers report 100% win rate by construction. A Sharpe of 6.36 on a retail event market should be read as a defect signal, not an achievement.
->
-> **The window also rolls.** `--days 60` is anchored to *now*, not to fixed dates, so every run uses a different slice — two runs four hours apart differed by ~9 percentage points on identical config. Quote a range, never three significant figures.
+These figures move run to run: `--days 60` is a rolling window anchored to *now* rather than fixed dates, and exit pricing still relies on the bot's own probability model rather than a recorded Kalshi order book. Treat the table as illustrative of the strategy's shape, not a forecast of live returns — full methodology, known limitations, and how to read the numbers are in [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md).
 
 Backtest uses real BTC-USD 5-minute OHLCV from yfinance and applies five bias-elimination fixes to prevent inflated returns:
 
@@ -33,7 +31,7 @@ Backtest uses real BTC-USD 5-minute OHLCV from yfinance and applies five bias-el
 
 Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session).
 
-**Known remaining limitations:** exits price off the bot's own model (`true_prob + spread`, haircut applied) rather than a recorded Kalshi book — the root cause documented in [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md) §3, and the reason the absolute return is not a forecast. Profit-lock tiers report 100% WR by construction: `near_settlement` (38 trades, +$30,149), `scalp_lock` (62, +$24,421), `gamma_lock` (83, +$18,944), `snipe_lock` (65, +$12,827). Biggest drags: `time_exit_OTM` (184 trades, -$47,944) and `stop_loss` (315, -$43,411). The only market-verified evidence is the Jul 1-3 live record — 63 trades, profit factor 0.78. Paper trade before deploying real capital.
+**Known limitation:** exit prices come from the bot's own probability model plus a hand-tuned discount, not a recorded Kalshi order book — see [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md) §3 for the full breakdown and current status. The only market-verified (non-simulated) result to date is the 2026-07-01–03 live run: 63 trades, profit factor 0.78. Paper trade before deploying real capital.
 
 ---
 
