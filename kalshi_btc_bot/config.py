@@ -2,7 +2,11 @@
 # MODE — switch here before running
 # ─────────────────────────────────────────────
 PAPER_TRADING = True    # True = paper mode (no real orders), False = live trading
-PAPER_CAPITAL = 10000.00   # simulated capital for paper mode
+PAPER_CAPITAL = 500.00     # simulated capital for paper mode — matches the
+                            # backtest's capacity-curve reference point where
+                            # the strategy is shown to work (docs/BACKTEST_INTEGRITY.md
+                            # §7); $10K sizes positions past what real Kalshi
+                            # depth can absorb without severe exit slippage.
 
 # ─────────────────────────────────────────────
 # CONFIG
@@ -189,18 +193,19 @@ SNIPE_TRADE_PCT       = 0.01     # sized down vs MAX_TRADE_PCT — tail-probabil
 # back into a 2-tick true_prob fade (same signal as gamma_lock), NOT a fixed price
 # cap: a snipe still climbing without a reversal is untouched.
 #
-# These are the values the tier actually uses. The previous SNIPE_PROFIT_LOCK_PCT
-# = 1.50 was imported by positions.py but never referenced — the thresholds were
-# hardcoded — so the documented "+150% run" gate never existed in running code.
-#
-# Worth being explicit about what these values mean: at peak >= 50% / pnl >= 15%
-# this tier is in practice a *scalp*, and a tighter one than TIER 1 scalp_lock
-# (+40%, bid >= 30c, T < 15 min). Snipes therefore lock EARLIER than ordinary
-# positions, which inverts the stated snipe philosophy of riding to a 1000%+
-# payout. That is a real design question, but not one to resolve by silently
-# reverting to 1.50: on 2026-07-28 this tier fired 4x for +$92.75 and was the
-# only profitable tier in the session (boundary_risk -$156.30, stop_35% -$28.00).
-SNIPE_PROFIT_LOCK_PEAK    = 0.50 # peak_pnl must have reached this
+# PEAK raised 0.50 -> 1.50 on 2026-08-04, resolving the design question the
+# previous comment here deliberately left open. Evidence: a 2026-08-04 paper
+# session saw this tier fire twice at peak 50.0%/54.6%, exiting at +50%/+37%
+# pnl — essentially at first wobble past the old 50% gate. Snipes enter at
+# 10-13c targeting settlement near $1.00 (a 700-900% gain); locking a third
+# to half of that is capturing a sliver of the position's designed upside, and
+# reacting to any 2-tick fade the moment peak crosses 50% behaves like
+# gamma_lock (fast, convexity-driven) rather than a patient lock that only
+# protects against a genuine reversal after a genuine run. 1.50 restores the
+# ORIGINAL documented intent (the dead SNIPE_PROFIT_LOCK_PCT this tier's
+# thresholds were hardcoded around before being wired to config on Jul 28) —
+# a snipe must have actually run before this tier can even become eligible.
+SNIPE_PROFIT_LOCK_PEAK    = 1.50 # peak_pnl must have reached this
 SNIPE_PROFIT_LOCK_MIN_PNL = 0.15 # and current pnl must still be at least this
 SNIPE_PROFIT_LOCK_MIN_BID = 0.12 # absolute price floor — same rationale as GAMMA_LOCK_MIN_BID
 
