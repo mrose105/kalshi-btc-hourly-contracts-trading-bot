@@ -228,19 +228,38 @@ estimate overstates realized vol — is functionally the same trade from the
 buy-cheap-convexity side. Useful as independent confirmation the underlying
 hypothesis is economically grounded, not just a backtest artifact.
 
-**Liquidation cascades — worth exploring, confirmed relevant to what you
-watched live.** Site's definition, confirmed accurate: *"a feedback loop — a
-price move forces leveraged positions to close, those forced trades move
-price further, and the next layer of positions breaches maintenance
-margin."* That's the same shape as the "flashing, reverting up" behavior
-observed live on 2026-07-30 — fast one-directional move, then snap-back. The
-site didn't yield a concrete detection filter (truncated), so this isn't
-something to lift directly; it would need to be derived and backtested from
-scratch — e.g. unusually fast one-directional velocity followed by
-above-average reversion, as a regime distinct from the current
-`RegimeEngine`'s BREAKOUT/TRENDING split, which may currently be conflating a
-cascade-and-revert with genuine trend continuation. Flagged as a real
-candidate, not yet verified.
+**Liquidation cascades — studied 2026-08-04, real but not currently
+actionable.** `liquidation_cascade_detector.py`. Method: an independent
+fast-move detector (z-scored FAST_WINDOW-bar return against SLOW_WINDOW-bar
+trailing vol, not borrowed from the bot's own thresholds) replayed through
+the actual `SyntheticFeed`/`RegimeEngine` for real regime labels, then
+classified each event by how much it reverted within 30 min.
+
+60-day result: 289 fast-move events (|z| ≥ 3), of which 52 (18%) were
+cascade-shaped (≥50% reverted within 30 min) and 196 (68%) trend-shaped
+(≤25% reverted). **Liquidation-cascade-shaped moves are real and common in
+this data — 18% of all flagged fast moves.**
+
+But the original hypothesis — that `RegimeEngine` mislabels them as
+BREAKOUT/TRENDING — doesn't hold up under a fair comparison. Cascade-shaped
+events get labeled BREAKOUT/TRENDING 94% of the time; trend-shaped events,
+89% — nearly identical. A chi-square test of independence between the two
+label distributions: χ²=5.14, dof=6, **p=0.53**, not distinguishable at
+conventional significance (with a caveat: several regime labels are too
+sparse for the test's own validity assumptions — read as suggestive, not
+conclusive).
+
+**What this actually shows:** any fast |z|≥3 move looks abrupt to the
+current regime engine regardless of what it does next — the label isn't
+specifically *wrong* about cascades, it's just uninformative about the
+one thing that would matter (will this revert or persist). A usable signal
+would need information `RegimeEngine` doesn't already compute
+(velocity/acceleration/z-score are already saturated by any large move) —
+e.g. order-book thinness, funding-rate-adjacent proxies, or cross-asset
+confirmation. Not a validated trading edge; the honest output of this study
+is "real phenomenon, current regime engine doesn't help distinguish it,"
+which is a real but different and smaller finding than originally
+hypothesized.
 
 **Gamma scalping (as an actual strategy, not the exit-tier name) — not
 transferable without scope expansion.** Requires a continuously-hedgeable
@@ -275,7 +294,10 @@ trades one instrument, not a basket. Correctly out of scope.
 4. Re-validate `PEAK_GIVEBACK_FRACTION` (and `NO_STOP`/
    `BOUNDARY_NO_ZSCORE_MIN` once `ENABLE_MISPRICE_NO` is on) against a
    genuinely held-out window — still worth doing, demoted from top priority.
-5. **Liquidation-cascade regime detection** — real candidate, needs to be
-   derived and backtested, not lifted.
+5. ~~Liquidation-cascade regime detection~~ — **studied 2026-08-04**
+   (`liquidation_cascade_detector.py`). Cascade-shaped moves are real (18%
+   of flagged fast moves) but `RegimeEngine`'s labels don't distinguish
+   them from genuine trends (p=0.53) — smaller finding than hypothesized,
+   not currently actionable without a new information source.
 6. `gamma_lock` docstring/`STRATEGY.md` clarification, paper-sell depth
    floor — both low priority, quick fixes whenever convenient.
