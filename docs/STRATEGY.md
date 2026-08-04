@@ -372,16 +372,16 @@ can absorb. Return is now a function of capital scale, not a single number —
 
 | Capital | Return | Sharpe | Profit factor | Trades |
 |---|---|---|---|---|
-| $44 *(actual live account)* | +313% | 7.04 | 1.37 | 1,339 |
+| $100 | +412% | 7.16 | 1.37 | 1,321 |
 | $500 | +307% | 6.52 | 1.30 | 1,287 |
 | $2,000 | +29% | 2.10 | 1.07 | 1,164 |
 | $10,000 | -60% | -7.43 | 0.66 | 858 |
 
-The edge is real and strong at the scale that matters (the $44 live account)
-and does not scale to $10K — see `docs/BACKTEST_INTEGRITY.md` §7 for the full
-7-point curve, the fix, and the false starts along the way. A Sharpe above ~6
-at large capital scale is still a defect signal; at small, account-realistic
-scale it's no longer automatically suspect post-§7, but check the stated
+The edge is real and strong at small capital scale and does not scale to
+$10K — see `docs/BACKTEST_INTEGRITY.md` §7 for the full 7-point curve, the
+fix, and the false starts along the way. A Sharpe above ~6 at large capital
+scale is still a defect signal; at small scale it's no longer automatically
+suspect post-§7, but check the stated
 capital before trusting any single figure.
 
 ### 8.1 Why this differs from the earlier Jul 16 figures

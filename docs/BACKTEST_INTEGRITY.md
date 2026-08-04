@@ -246,7 +246,7 @@ $10K too much size for real depth":
 
 | Capital | Return | Sharpe | Profit factor | Trades |
 |---|---|---|---|---|
-| $44 *(actual live account)* | +313% | 7.04 | 1.37 | 1,339 |
+| $100 | +412% | 7.16 | 1.37 | 1,321 |
 | $200 | +442% | 7.29 | 1.38 | 1,319 |
 | $500 | +307% | 6.52 | 1.30 | 1,287 |
 | $1,000 | +129% | 4.70 | 1.19 | 1,257 |
@@ -255,11 +255,10 @@ $10K too much size for real depth":
 | $10,000 | -60% | -7.43 | 0.66 | 858 |
 
 Smooth and monotonic — the signature of a real constraint, not an artifact of
-one parameter choice. **The edge is real and strong at the scale that actually
-matters (the $44 live account) and does not scale to $10K.** Treat any future
-headline figure as a *function of capital*, not a single number — see
-`README.md`'s capacity-curve table, which replaced the old single-figure
-headline for exactly this reason.
+one parameter choice. **The edge is real and strong at small capital scale and
+does not scale to $10K.** Treat any future headline figure as a *function of
+capital*, not a single number — see `README.md`'s capacity-curve table, which
+replaced the old single-figure headline for exactly this reason.
 
 **What this does and doesn't resolve.** This models a real, previously-absent
 dimension (size vs. depth) and materially changes which capital scales look
@@ -290,7 +289,7 @@ Both need to hold for a number to be believed.
    plausible-looking outputs of a broken pipeline. Sharpe above ~6 at large
    capital scale ($5K+, where §7's capacity constraint should already be
    dragging results down) is still a defect signal. At small, account-realistic
-   scale it's no longer automatically suspect post-§7 (the $44 run genuinely
+   scale it's no longer automatically suspect post-§7 (the $100 run genuinely
    shows ~7) — but verify the capital was actually stated and small before
    accepting it.
 9. **What capital was it run at?** A single number without a stated capital

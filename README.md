@@ -10,7 +10,7 @@ There is no single headline return — the strategy has a real, measured **capac
 
 | Starting capital | Return | Sharpe | Profit factor | Trades |
 |---|---|---|---|---|
-| $44 *(current live account)* | **+313%** | 7.04 | 1.37 | 1,339 |
+| $100 | **+412%** | 7.16 | 1.37 | 1,321 |
 | $200 | +442% | 7.29 | 1.38 | 1,319 |
 | $500 | +307% | 6.52 | 1.30 | 1,287 |
 | $1,000 | +129% | 4.70 | 1.19 | 1,257 |
@@ -36,33 +36,33 @@ Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_S
 
 ---
 
-## Risk Profile — 10,000-path Monte Carlo (at $44, the account-realistic scale)
+## Risk Profile — 10,000-path Monte Carlo (at $100)
 
-Return alone says nothing about what running this actually feels like. Bootstrapping the 1,339 trades from the **$44-capital** backtest run — the capacity-curve point that matches the real account, not the $10K point where the strategy is already shown not to work — into 10,000 resampled equity paths (`python3 montecarlo.py results/backtest_20260804_0745.json --n 10000 --capital 44`):
+Return alone says nothing about what running this actually feels like. Bootstrapping the 1,321 trades from the **$100-capital** backtest run into 10,000 resampled equity paths (`python3 montecarlo.py results/backtest_20260804_0802.json --n 10000 --capital 100`):
 
 | Percentile | Final equity | Return |
 |------------|--------------|--------|
-| worst path | $42 | -4.5% |
-| p5 | $122 | +176.7% |
-| p25 | $157 | +257.4% |
-| **p50 (median)** | **$182** | **+313.5%** |
-| p75 | $207 | +369.4% |
-| p95 | $243 | +453.3% |
-| best path | $335 | +661.3% |
+| worst path | $45 | -54.8% |
+| p5 | $329 | +228.8% |
+| p25 | $436 | +336.4% |
+| **p50 (median)** | **$511** | **+411.3%** |
+| p75 | $587 | +486.9% |
+| p95 | $699 | +599.3% |
+| best path | $954 | +853.6% |
 
-The actual backtest ($182) lands almost exactly on the median, so the historical trade *ordering* wasn't unusually lucky. Notably the **worst path across 10,000 resamples is still only -4.5%** — a very different risk picture from the $10K point, where the strategy loses money outright.
+The actual backtest ($512) lands almost exactly on the median, so the historical trade *ordering* wasn't unusually lucky. The tail is meaningfully worse here than at smaller scale: doubling capital from $44 to $100 roughly doubles typical position size too, pushing more trades past the depth threshold where `_size_impact_penalty()` bites — the worst-path Monte Carlo result at $44 was -4.5%; at $100 it's -54.8%.
 
-### Drawdown is still the thing to watch, even here
+### Drawdown is the thing to watch
 
 ```
-P(equity ever dips below start)    87.8%
-P(max DD > 20%)                    43.8%
-P(max DD > 30%)                    13.6%
+P(equity ever dips below start)    88.0%
+P(max DD > 20%)                    61.2%
+P(max DD > 30%)                    25.6%
 
-Max DD:  median -19%   p95 -38%   worst -99%
+Max DD:  median -23%   p95 -48%   worst -131%
 ```
 
-The backtest's own -19.3% max drawdown sits almost exactly on the median path. Nearly 9 in 10 paths dip below the starting balance at some point, and roughly 2 in 5 take a 20%+ drawdown — the edge being real at this scale doesn't mean the ride is smooth.
+The backtest's own -20.4% max drawdown sits close to the median path (-23%). Roughly 3 in 5 paths take a 20%+ drawdown and 1 in 4 take 30%+ — the edge being real at this scale doesn't mean the ride is smooth, and it's a noticeably rougher ride than at $44. A worst-case beyond -100% is not a typo: the bootstrap resamples fixed dollar P&Ls with no bankruptcy floor.
 
 ### The Monte Carlo still understates risk in three ways
 
@@ -243,12 +243,12 @@ size = min(f* × 0.25, 0.025) × account_value
 
 ```bash
 pip install -r requirements.txt
-python3 kalshi_btc_backtest.py --days 60 --capital 44                  # account-realistic scale (see capacity curve above)
+python3 kalshi_btc_backtest.py --days 60 --capital 100                 # small scale (see capacity curve above)
 python3 kalshi_btc_backtest.py --days 60 --capital 10000               # the scale where the capacity constraint bites
-python3 kalshi_btc_backtest.py --days 60 --capital 44 --vol-surface    # with implied vol term structure
-python3 kalshi_btc_backtest.py --days 60 --capital 44 --no-stop        # compare without stop loss
-python3 kalshi_btc_backtest.py --days 60 --capital 44 --verbose        # print every trade entry
-python3 montecarlo.py --n 10000 --capital 44                           # bootstrap equity fan + drawdown distribution
+python3 kalshi_btc_backtest.py --days 60 --capital 100 --vol-surface   # with implied vol term structure
+python3 kalshi_btc_backtest.py --days 60 --capital 100 --no-stop       # compare without stop loss
+python3 kalshi_btc_backtest.py --days 60 --capital 100 --verbose       # print every trade entry
+python3 montecarlo.py --n 10000 --capital 100                          # bootstrap equity fan + drawdown distribution
 ```
 
 ### Live / Paper trading
