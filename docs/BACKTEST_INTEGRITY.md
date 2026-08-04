@@ -5,10 +5,11 @@ large factors, more than once — and each time it looked entirely plausible unt
 someone measured it. It catalogues every class of defect found so far, the
 evidence for each, and a checklist to run before quoting any figure.
 
-**Current status: the backtest's absolute return is not a forecast of live P&L.**
-Logic parity with the live bot is close (see §5), but exits still price off the
-model rather than a recorded order book (§3), which is unfixed and dominates
-everything else.
+**Current status: the backtest's absolute return is not a forecast of live P&L,
+and there is no longer a single number to forecast with — return is now a
+function of capital scale (§7).** Logic parity with the live bot is close (see
+§5), but exits still price off the model rather than a recorded order book
+(§3), which is unfixed and dominates everything not already explained by §7.
 
 ---
 
@@ -22,6 +23,7 @@ everything else.
 | 4. Instrument mismatch | **fixed** (Jul 28) | 2.5x wrong contract width |
 | 5. Live/backtest parity | **fixed** (Jul 28) | attribution didn't transfer |
 | 6. Rolling window | inherent | ±5% run-to-run |
+| 7. Capacity constraint (size vs. real depth) | **modeled Aug 4** | flips the sign past ~$2-5K capital |
 
 ---
 
@@ -200,6 +202,75 @@ inspection.
 
 ---
 
+## 7. Capacity constraint — modeled Aug 4, flips the sign at scale
+
+Neither `_exit_bid()` nor the entry sizing in `buy()`/`buy_no()` took position
+size into account at all. A 1-contract exit and a 1,000+-contract exit priced
+identically — the backtest assumed infinite liquidity on both legs of every
+trade. At $10K capital, Kelly sizing routinely produced 100–1,000+ contract
+positions (median 243, 91% exceeded a conservative 100-contract reference
+depth). Real recorded Kalshi KXBTC book depth (`recordings/*.jsonl.gz`) ranges
+from a median ~460 top-of-book contracts down to as thin as 1 on a specific
+strike (2026-08-04) — and on that day, selling 833 contracts into that thin
+book realized a ~4.4¢ blended fill against a ~19¢ quote moments earlier, ~58%
+below top-of-book, entirely from consuming real resting depth.
+
+**Fix.** `_size_impact_penalty(count)`: a deliberately coarse, conservative
+discount (not a fitted curve — real book-*shape* data is still far too sparse
+for that, same gate as §3/`fit_adverse_selection.py`), using the general shape
+of market-impact literature (impact ~ √size beyond a reference depth), capped
+well below the one severe real anecdote (32% at 833 contracts vs. the 58%
+actually realized) so a single event doesn't get treated as a calibrated
+constant. Applied **exactly once, at the realized fill inside `_close()`** —
+not to the ongoing per-tick mark. First attempt applied it to both and flipped
+the 60-day $10K return from +276% to **-74.6%**; that implausibly large swing
+was the tell that the decision-making mark itself had been discounted, causing
+stops to trigger far more readily on top of realizing worse prices — live
+never does this, since positions are marked and exit decisions made off the
+raw quoted bid, with size-driven slippage only discovered at the moment of the
+actual sell. Corrected to -61.0%.
+
+Entry side got a size **cap** only (`_MAX_ENTRY_SIZE = 500`, 5× the exit
+penalty's reference depth) — not a symmetric price penalty. That was tried
+first (worse ask paid for large buys, mirroring the exit discount) and pushed
+the result to -73.3%, worse than the exit-only fix. Reverted: the only real
+evidence behind the impact function is a *sell*; there's no equivalent
+evidence entries face the same effect, and stacking two evidence-thin
+penalties on the same trade goes further than the evidence supports. With the
+cap alone: -59.7% — the cap barely binds against the 243-contract median,
+confirming the exit-side penalty does essentially all of the work.
+
+**The capacity curve.** Re-ran the corrected backtest across capital scales,
+everything else held constant, to separate "is the strategy broken" from "is
+$10K too much size for real depth":
+
+| Capital | Return | Sharpe | Profit factor | Trades |
+|---|---|---|---|---|
+| $44 *(actual live account)* | +313% | 7.04 | 1.37 | 1,339 |
+| $200 | +442% | 7.29 | 1.38 | 1,319 |
+| $500 | +307% | 6.52 | 1.30 | 1,287 |
+| $1,000 | +129% | 4.70 | 1.19 | 1,257 |
+| $2,000 | +29% | 2.10 | 1.07 | 1,164 |
+| $5,000 | -39% | -3.28 | 0.83 | 986 |
+| $10,000 | -60% | -7.43 | 0.66 | 858 |
+
+Smooth and monotonic — the signature of a real constraint, not an artifact of
+one parameter choice. **The edge is real and strong at the scale that actually
+matters (the $44 live account) and does not scale to $10K.** Treat any future
+headline figure as a *function of capital*, not a single number — see
+`README.md`'s capacity-curve table, which replaced the old single-figure
+headline for exactly this reason.
+
+**What this does and doesn't resolve.** This models a real, previously-absent
+dimension (size vs. depth) and materially changes which capital scales look
+viable. It does **not** resolve §3 — exits still price off the model, now with
+a coarse size adjustment on top, not off a recorded book. The two issues are
+independent: §3 is about whether the *price* at any given size is trustworthy;
+§7 is about whether that price is achievable at the *size actually traded*.
+Both need to hold for a number to be believed.
+
+---
+
 ## Checklist before quoting any backtest number
 
 1. **Does any tier report 100% win rate?** If yes, it is a profit-lock tier and
@@ -216,8 +287,16 @@ inspection.
    ~2x, it is measuring that condition, not an edge.
 7. **Is the window fixed or rolling?** If rolling, quote a range.
 8. **Does the number seem too good?** +2,927%, +2,111%, +16,314% were each
-   plausible-looking outputs of a broken pipeline. Sharpe above ~6 on a retail
-   event-market strategy is a defect signal, not an achievement.
+   plausible-looking outputs of a broken pipeline. Sharpe above ~6 at large
+   capital scale ($5K+, where §7's capacity constraint should already be
+   dragging results down) is still a defect signal. At small, account-realistic
+   scale it's no longer automatically suspect post-§7 (the $44 run genuinely
+   shows ~7) — but verify the capital was actually stated and small before
+   accepting it.
+9. **What capital was it run at?** A single number without a stated capital
+   scale is close to meaningless post-§7 — re-run across a few scales (§7's
+   table) before trusting a figure at any one of them, especially $10K or
+   above.
 
 ---
 
