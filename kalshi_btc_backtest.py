@@ -376,6 +376,19 @@ def _size_impact_penalty(count: float) -> float:
     return min(_SIZE_IMPACT_MAX, impact)
 
 
+# Entry-side counterpart. Live's paper buy() already caps fills to real
+# resting depth via _walk_book — the backtest had no equivalent at all, so
+# Kelly sizing at $10K capital routinely produced 100-1,000+ contract entries
+# (median backtest position 243, 91% exceed 100) with zero check against what
+# a real book could actually fill. 5x the exit penalty's reference depth: a
+# round, clearly-labeled ceiling in the same conservative spirit, not a fitted
+# number — real total depth across levels was ~2,285 contracts for the one
+# fully-recorded book snapshot available (2026-08-04), so this sits below
+# that but above the ~460 median top-of-book, erring toward still allowing
+# real trade sizes through while refusing the most unrealistic tail.
+_MAX_ENTRY_SIZE = 5 * _SIZE_IMPACT_REFERENCE_DEPTH   # 500 contracts
+
+
 # ─────────────────────────────────────────────
 # BACKTEST PORTFOLIO
 # ─────────────────────────────────────────────
@@ -460,6 +473,15 @@ class BacktestPortfolio:
             return False
         budget = self._budget(ask, true_prob, is_snipe=is_snipe)
         count  = int(budget / ask) if ask > 0 else 0
+        # Depth realism — see _MAX_ENTRY_SIZE docstring. Cap fill size only;
+        # deliberately NOT also charging an entry-side price penalty. The one
+        # real anecdote behind _size_impact_penalty is a SELL (the 2026-08-04
+        # B63550 exit) — there's no equivalent evidence yet that entries face
+        # the same impact, and applying an unverified penalty to both legs of
+        # every trade compounds two judgment calls into one number, which
+        # goes further than the evidence supports. The cap alone is still a
+        # real, defensible constraint: it cannot fill more than a book could.
+        count = min(count, _MAX_ENTRY_SIZE)
         cost   = ask * count
         if count <= 0 or cost > self.cash:
             return False
@@ -498,6 +520,8 @@ class BacktestPortfolio:
         budget = min(self.total() * C.NO_TRADE_PCT,
                      self.cash - self.total() * C.MIN_CASH_PCT)
         count  = int(budget / no_cost) if no_cost > 0 else 0
+        # Depth realism, symmetric with buy() — cap only, see that comment.
+        count = min(count, _MAX_ENTRY_SIZE)
         cost   = no_cost * count
         if count <= 0 or cost > self.cash:
             return False
