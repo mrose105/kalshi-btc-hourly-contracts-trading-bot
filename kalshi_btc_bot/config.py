@@ -127,6 +127,24 @@ PEAK_GIVEBACK_FRACTION = 0.75    # exit once current pnl has faded to <= 75% of 
                                   # momentum_locked (+32% more trades in that tier), so both
                                   # profit tiers work together better.
 PEAK_GIVEBACK_MIN_BID  = 0.20    # same rationale as GAMMA_LOCK_MIN_BID — don't lock trivial cents
+SNIPE_PEAK_GIVEBACK_MIN_BID = 0.20  # snipe-specific floor for the same tier — kept equal to
+                                  # PEAK_GIVEBACK_MIN_BID for now (no-op default). 2026-08-04:
+                                  # a real snipe (entry $0.13) ran to peak +42% then +46% (bid
+                                  # $0.17-$0.185) and lost it all — peak_giveback never engaged
+                                  # because it never crossed $0.20. Snipes enter at 10-25c
+                                  # (SNIPE_MIN/MAX_ENTRY_PRICE) — a shared $0.20 floor sits
+                                  # INSIDE that range, so a real percentage-sized run can still
+                                  # never clear the absolute-cents gate meant to protect it.
+                                  # Split out so a lower snipe-specific value can be tested
+                                  # (peak_giveback_bid_sweep.py) without touching the general
+                                  # entries this floor was calibrated for.
+                                  # 2026-08-05: swept [0.02,0.05,0.08,0.10,0.15,0.20] with a
+                                  # 40d-tune/19d-validate split. Tuning picked $0.10 (Sharpe
+                                  # 6.78); validation picked $0.15 (5.90) and ranked $0.10 WORST
+                                  # of the four re-checked candidates (5.24) — did not
+                                  # generalize. Different winner per window = fails the same bar
+                                  # that validated EXIT_COOLDOWN_SECS -> 0. Left at $0.20 (no-op)
+                                  # pending more data; re-run the sweep periodically.
 
 SCALP_LOCK_MIN_BID  = 0.30       # TIER 1 gate: same rationale — pnl% alone let tiny-entry
                                   # positions lock at trivial absolute prices.

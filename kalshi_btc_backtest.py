@@ -715,7 +715,7 @@ class BacktestPortfolio:
             # TIER 0.75 — peak giveback (snipes only while OTM)
             elif ((not is_snipe or not itm)
                     and peak_pnl_pct >= C.PEAK_GIVEBACK_MIN_PEAK
-                    and bid >= C.PEAK_GIVEBACK_MIN_BID
+                    and bid >= (C.SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe else C.PEAK_GIVEBACK_MIN_BID)
                     and pnl_pct <= peak_pnl_pct * C.PEAK_GIVEBACK_FRACTION):
                 reason = "peak_giveback"
             # TIER 1 — scalp lock

@@ -15,7 +15,7 @@ from .config import (
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
     MOMENTUM_LOCK_PCT, PAPER_TRADING, PEAK_GIVEBACK_FRACTION, PEAK_GIVEBACK_MIN_BID,
     PEAK_GIVEBACK_MIN_PEAK, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT,
-    STOP_UNCOVERED_PCT,
+    SNIPE_PEAK_GIVEBACK_MIN_BID, STOP_UNCOVERED_PCT,
     SNIPE_PROFIT_LOCK_MIN_BID, SNIPE_PROFIT_LOCK_PEAK,
     SNIPE_PROFIT_LOCK_MIN_PNL, STOP_LOSS_PCT,
     STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS, TIME_EXIT_NEAR_DIST,
@@ -284,9 +284,10 @@ class PositionManager:
             # price has faded back to PEAK_GIVEBACK_FRACTION of its own peak.
             # Now applies to snipes too, but only while OTM — an ITM snipe is
             # on the settlement path and mid-hold fades are expected.
+            _pg_min_bid = SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe else PEAK_GIVEBACK_MIN_BID
             if ((not is_snipe or not itm)
                     and peak_pnl_pct >= PEAK_GIVEBACK_MIN_PEAK
-                    and bid >= PEAK_GIVEBACK_MIN_BID
+                    and bid >= _pg_min_bid
                     and pnl_pct <= peak_pnl_pct * PEAK_GIVEBACK_FRACTION):
                 self.portfolio.sell(ticker, bid, reason="peak_giveback 📉")
                 continue

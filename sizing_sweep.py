@@ -34,8 +34,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from kalshi_btc_bot import config as C
 from kalshi_btc_backtest import run_backtest
 
-TUNE_START,  TUNE_END  = "2026-06-06", "2026-07-16"   # 40 days
-VALID_START, VALID_END = "2026-07-16", "2026-08-04"   # 19 days, held out
+TUNE_START,  TUNE_END  = "2026-06-07", "2026-07-17"   # 40 days
+VALID_START, VALID_END = "2026-07-17", "2026-08-05"   # 19 days, held out
 # yfinance's 5m interval hard-limits any request to the last 60 days from
 # now (confirmed empirically: 59 days back succeeds, 60 fails). TUNE_START
 # is pinned just inside that boundary — update both constants together if

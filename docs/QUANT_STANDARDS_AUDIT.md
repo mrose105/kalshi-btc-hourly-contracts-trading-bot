@@ -72,6 +72,21 @@ was itself partly self-referential — selection bias stacked on pricing bias.
    against a window that did not inform their selection before trusting them
    further.
 
+**Update, applied since:** the tune/validate split described above is now a
+standing tool pattern (`sizing_sweep.py`, `cooldown_sweep.py`,
+`peak_giveback_bid_sweep.py` — each a 40d-tune/19d-validate split, "same
+value wins on both windows" as the bar to act). Three parameters run through
+it so far:
+- `KELLY_CAP`/`MAX_TRADE_PCT`: current 2.5% baseline held up — 3.0% won on
+  tuning but lost to 2.5% on validation. No change made.
+- `EXIT_COOLDOWN_SECS`: 0s won on both windows (Sharpe 6.82/7.44 tuning/valid
+  vs. 120s's 6.20/6.05). Changed 120 -> 0.
+- `SNIPE_PEAK_GIVEBACK_MIN_BID`: 2026-08-05, $0.10 won tuning (6.78) but
+  ranked worst of the re-checked candidates on validation (5.24); $0.15 won
+  validation (5.90) instead. Different winner per window — fails the bar.
+  Left at $0.20 (no-op vs. the general `PEAK_GIVEBACK_MIN_BID`); an honest
+  negative result, not implemented.
+
 ## 2. Deflated Sharpe ratio / probability of backtest overfitting — implemented 2026-08-03
 
 **Standard** (Bailey & López de Prado 2014): when N parameter sets or
