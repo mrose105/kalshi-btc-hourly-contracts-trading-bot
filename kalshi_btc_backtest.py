@@ -831,6 +831,7 @@ class BacktestPortfolio:
             "vol_compression": pos.get("vol_compression", False),
             "vol_term_edge":   round(pos.get("vol_term_edge", 0.0), 5),
             "is_no":           pos.get("is_no", False),
+            "no_signal":       pos["contract"].get("signal") if pos.get("is_no") else None,
             "entry_hours":     pos.get("entry_hours"),
             "peak_pnl_pct":    round((pos["peak"] - pos["entry"]) / pos["entry"] * 100, 1)
                                 if pos["entry"] > 0 else 0.0,
