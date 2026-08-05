@@ -712,11 +712,14 @@ class BacktestPortfolio:
                     and pnl_pct >= C.GAMMA_LOCK_MIN_PROFIT
                     and tp_curr < tp_prev and abs(gam) >= C.GAMMA_HIGH_THRESHOLD):
                 reason = "gamma_lock"
-            # TIER 0.75 — peak giveback (snipes only while OTM)
+            # TIER 0.75 — peak giveback (snipes only while OTM). 0.75b OR-branch
+            # bypasses the bid floor once pnl has cratered past the hard-loss
+            # threshold, catching single-bar crashes that skip the floor's window.
             elif ((not is_snipe or not itm)
                     and peak_pnl_pct >= C.PEAK_GIVEBACK_MIN_PEAK
-                    and bid >= (C.SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe else C.PEAK_GIVEBACK_MIN_BID)
-                    and pnl_pct <= peak_pnl_pct * C.PEAK_GIVEBACK_FRACTION):
+                    and ((bid >= (C.SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe else C.PEAK_GIVEBACK_MIN_BID)
+                          and pnl_pct <= peak_pnl_pct * C.PEAK_GIVEBACK_FRACTION)
+                         or pnl_pct <= -C.PEAK_GIVEBACK_HARD_LOSS_PCT)):
                 reason = "peak_giveback"
             # TIER 1 — scalp lock
             elif (not is_snipe and bid >= C.SCALP_LOCK_MIN_BID
@@ -751,11 +754,23 @@ class BacktestPortfolio:
                     and abs(dist_val) <= C.BOUNDARY_RISK_DIST
                     and (tp_curr < tp_prev or pnl_pct <= C.BOUNDARY_RISK_HARD_STOP)):
                 reason = "boundary_risk"
-            # TIER 6 — stop loss
-            elif (not is_snipe and mid_pnl_pct <= -(C.STOP_LOSS_PCT / time_urgency)
+            # TIER 6 — stop loss. never_covered uses the wider STOP_UNCOVERED_PCT
+            # catastrophe floor, not the tighter STOP_LOSS_PCT/time_urgency stop —
+            # matches positions.py's stop_thr/stop_ok branch (previously this
+            # backtest applied the tight threshold to never_covered positions too,
+            # only relaxing the time gate, understating live's actual protection).
+            elif (not is_snipe
+                    and mid_pnl_pct <= (-C.STOP_UNCOVERED_PCT if never_covered
+                                         else -(C.STOP_LOSS_PCT / time_urgency))
                     and (hours_left > C.STOP_MIN_HOURS or never_covered)
                     and not (itm and mins_left < C.TIME_EXIT_MINS)):
                 reason = "stop_loss"
+            # TIER 6-snipe — catastrophe floor. Snipes skip TIER 5.25/6 above
+            # entirely by design; this is the last-resort floor for a snipe that
+            # never built a peak (see config.py SNIPE_STOP_PCT for the evidence).
+            elif (is_snipe and mid_pnl_pct <= -C.SNIPE_STOP_PCT
+                    and not (itm and mins_left < C.TIME_EXIT_MINS)):
+                reason = "snipe_stop"
             elif hours_left <= 0:
                 reason = "expiry_settle"
                 # Use bar_open-based ITM check (settle_spot), not bar_close —
@@ -816,6 +831,10 @@ class BacktestPortfolio:
             "vol_compression": pos.get("vol_compression", False),
             "vol_term_edge":   round(pos.get("vol_term_edge", 0.0), 5),
             "is_no":           pos.get("is_no", False),
+            "entry_hours":     pos.get("entry_hours"),
+            "peak_pnl_pct":    round((pos["peak"] - pos["entry"]) / pos["entry"] * 100, 1)
+                                if pos["entry"] > 0 else 0.0,
+            "is_snipe":        pos.get("is_snipe", False),
         })
 
 

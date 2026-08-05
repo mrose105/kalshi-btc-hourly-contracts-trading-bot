@@ -13,9 +13,10 @@ from .config import (
     BOUNDARY_RISK_MIN_LOSS, BOUNDARY_RISK_MINS, GAMMA_HIGH_THRESHOLD,
     GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT,
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
-    MOMENTUM_LOCK_PCT, PAPER_TRADING, PEAK_GIVEBACK_FRACTION, PEAK_GIVEBACK_MIN_BID,
+    MOMENTUM_LOCK_PCT, PAPER_TRADING, PEAK_GIVEBACK_FRACTION,
+    PEAK_GIVEBACK_HARD_LOSS_PCT, PEAK_GIVEBACK_MIN_BID,
     PEAK_GIVEBACK_MIN_PEAK, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT,
-    SNIPE_PEAK_GIVEBACK_MIN_BID, STOP_UNCOVERED_PCT,
+    SNIPE_PEAK_GIVEBACK_MIN_BID, SNIPE_STOP_PCT, STOP_UNCOVERED_PCT,
     SNIPE_PROFIT_LOCK_MIN_BID, SNIPE_PROFIT_LOCK_PEAK,
     SNIPE_PROFIT_LOCK_MIN_PNL, STOP_LOSS_PCT,
     STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS, TIME_EXIT_NEAR_DIST,
@@ -284,11 +285,15 @@ class PositionManager:
             # price has faded back to PEAK_GIVEBACK_FRACTION of its own peak.
             # Now applies to snipes too, but only while OTM — an ITM snipe is
             # on the settlement path and mid-hold fades are expected.
+            # TIER 0.75b: a real crash can fall below _pg_min_bid in a single tick,
+            # skipping the whole window this tier needs to act in — this OR-branch
+            # bypasses the bid floor once pnl has cratered well past the giveback
+            # fraction anyway, so the position isn't left to ride unprotected.
             _pg_min_bid = SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe else PEAK_GIVEBACK_MIN_BID
             if ((not is_snipe or not itm)
                     and peak_pnl_pct >= PEAK_GIVEBACK_MIN_PEAK
-                    and bid >= _pg_min_bid
-                    and pnl_pct <= peak_pnl_pct * PEAK_GIVEBACK_FRACTION):
+                    and ((bid >= _pg_min_bid and pnl_pct <= peak_pnl_pct * PEAK_GIVEBACK_FRACTION)
+                         or pnl_pct <= -PEAK_GIVEBACK_HARD_LOSS_PCT)):
                 self.portfolio.sell(ticker, bid, reason="peak_giveback 📉")
                 continue
 
@@ -397,4 +402,18 @@ class PositionManager:
                 # Safety — near zero
                 if mid <= 0.005 and bid > 0:
                     self.portfolio.sell(ticker, bid, reason="near_zero")
+                    continue
+
+            if is_snipe:
+                # TIER 6-snipe — catastrophe floor. Snipes skip TIER 5.25/6 above by
+                # design (a fixed % stop defeats their whole 1000%+-payout thesis),
+                # but that leaves a snipe that never builds a peak with NO floor at
+                # all. 2026-08-05: 179 of 196 losing snipe exits in a 59d/$500
+                # backtest rode to an average -94.7% pnl_pct (vs -45.7% for non-snipe
+                # stopped/boundary_risk losses) — 99% of all snipe-loss dollars.
+                # mid_pnl_pct like the general stop, same rationale (spread paid at
+                # entry shouldn't count as loss against the floor).
+                if (bid > 0 and mid_pnl_pct <= -SNIPE_STOP_PCT
+                        and not (itm and mins_left < TIME_EXIT_MINS)):
+                    self.portfolio.sell(ticker, bid, reason="snipe_stop 🛑")
                     continue

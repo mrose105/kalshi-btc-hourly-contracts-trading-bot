@@ -145,6 +145,24 @@ SNIPE_PEAK_GIVEBACK_MIN_BID = 0.20  # snipe-specific floor for the same tier —
                                   # generalize. Different winner per window = fails the same bar
                                   # that validated EXIT_COOLDOWN_SECS -> 0. Left at $0.20 (no-op)
                                   # pending more data; re-run the sweep periodically.
+PEAK_GIVEBACK_HARD_LOSS_PCT = 1.50  # TIER 0.75b: once a position has cleared MIN_PEAK, exit
+                                  # even if bid is below the min-bid floor above, once pnl_pct
+                                  # has cratered past this threshold. 2026-08-05: exit_coverage_
+                                  # analysis.py on a 59d/$500 backtest found time_exit_OTM trades
+                                  # averaged peak +105.5% -> exit -94.9% (200pp giveback, $2,848
+                                  # total) — fast single-bar crashes fell straight through the
+                                  # bid floor, skipping the whole window peak_giveback needs to
+                                  # act, and no other tier is peak-aware. 1.50 is a true no-op
+                                  # (pnl_pct floors at -100% at bid=0).
+                                  # 2026-08-05: swept [0.30,0.50,0.65,0.80] with the standard
+                                  # 40d-tune/19d-validate split. No-op (1.50) won tuning outright
+                                  # (Sharpe 6.60 vs 5.89-6.31 for every real threshold — adding
+                                  # this exit made the tuning window worse, not better); 0.50 won
+                                  # validation (5.68 vs 5.46) — different winner per window, fails
+                                  # the bar. Left at 1.50 (no-op): the anecdotal giveback was real,
+                                  # but exiting early into it cuts more recoveries than it saves,
+                                  # consistent with STOP_UNCOVERED_PCT's own non-monotonic-price
+                                  # rationale below.
 
 SCALP_LOCK_MIN_BID  = 0.30       # TIER 1 gate: same rationale — pnl% alone let tiny-entry
                                   # positions lock at trivial absolute prices.
@@ -180,6 +198,26 @@ STOP_MIN_HOURS      = 0.30       # TIER 6 gate: stop only fires if > 18 min left
                                   # expiry_settle captures ITM wins — don't stop binary
                                   # options in their last bars when the binary payoff
                                   # hasn't resolved yet.
+SNIPE_STOP_PCT      = 1.50       # TIER 6-snipe catastrophe floor. Snipes skip TIER 5.25/6
+                                  # above entirely (gated `not is_snipe`) — a fixed % stop
+                                  # defeats their whole 1000%+-payout thesis. But that leaves
+                                  # a snipe that never builds a peak with NO floor at all.
+                                  # 2026-08-05: exit_coverage_analysis.py on a 59d/$500
+                                  # backtest found 179 of 196 losing snipe exits averaged
+                                  # -94.7% pnl_pct (vs -45.7% for non-snipe stopped/
+                                  # boundary_risk losses) — 99% of all snipe-loss dollars,
+                                  # spread across entry times (not just the near-expiry
+                                  # window). 1.50 is a true no-op (mid_pnl_pct floors at
+                                  # -100%).
+                                  # 2026-08-05: swept [0.50,0.65,0.80,0.95] with the standard
+                                  # 40d-tune/19d-validate split. No-op (1.50) won tuning outright
+                                  # (Sharpe 6.60 vs 5.84-6.14 for every real threshold — adding
+                                  # any stop made the tuning window worse); 0.50 won validation
+                                  # (5.66 vs 5.46) — different winner per window, fails the bar.
+                                  # Left at 1.50 (no-op): the -94.7% average was real, but the
+                                  # aggregate data says cutting these trades early loses more to
+                                  # foregone recoveries than it saves — same non-monotonic-price
+                                  # dynamic STOP_UNCOVERED_PCT above already accounts for.
 
 # TIER 5.25: Boundary risk — ITM but marginal + underwater + near expiry.
 # TIME_EXIT_MINS (TIER 5) only protects positions once already OTM; a marginal ITM

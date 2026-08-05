@@ -74,9 +74,9 @@ was itself partly self-referential — selection bias stacked on pricing bias.
 
 **Update, applied since:** the tune/validate split described above is now a
 standing tool pattern (`sizing_sweep.py`, `cooldown_sweep.py`,
-`peak_giveback_bid_sweep.py` — each a 40d-tune/19d-validate split, "same
-value wins on both windows" as the bar to act). Three parameters run through
-it so far:
+`peak_giveback_bid_sweep.py`, `exit_gap_fixes_sweep.py` — each a
+40d-tune/19d-validate split, "same value wins on both windows" as the bar to
+act). Five parameters run through it so far:
 - `KELLY_CAP`/`MAX_TRADE_PCT`: current 2.5% baseline held up — 3.0% won on
   tuning but lost to 2.5% on validation. No change made.
 - `EXIT_COOLDOWN_SECS`: 0s won on both windows (Sharpe 6.82/7.44 tuning/valid
@@ -86,6 +86,21 @@ it so far:
   validation (5.90) instead. Different winner per window — fails the bar.
   Left at $0.20 (no-op vs. the general `PEAK_GIVEBACK_MIN_BID`); an honest
   negative result, not implemented.
+- `SNIPE_STOP_PCT` and `PEAK_GIVEBACK_HARD_LOSS_PCT`: 2026-08-05, two new
+  exit-tier catastrophe floors built after `exit_coverage_analysis.py` found
+  snipes get zero stop coverage by design (179/196 losing snipe exits
+  averaged -94.7% pnl_pct) and several tiers bleed peaks with no
+  giveback-awareness ($3,930 total across trades that ran >=20pp peak then
+  exited blind). Both swept — and on both, the tuning window preferred
+  *no floor at all* over every real threshold tried (Sharpe 6.60 vs.
+  5.84-6.31), while validation preferred a mid threshold (~0.50) instead.
+  Different winner per window on both — fails the bar on both. Left at 1.50
+  (no-op, i.e. current live behavior unchanged). Read: the anecdotal losses
+  were real, but cutting these trades early loses more to foregone
+  non-monotonic recoveries near expiry than it saves in aggregate — the same
+  dynamic `STOP_UNCOVERED_PCT`'s own rationale already documents. Two sweeps
+  in a row now where an anecdote-driven "add more protection" fix looked
+  obviously right and out-of-sample data disagreed.
 
 ## 2. Deflated Sharpe ratio / probability of backtest overfitting — implemented 2026-08-03
 
