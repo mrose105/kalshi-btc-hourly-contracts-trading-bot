@@ -19,7 +19,7 @@ import sys
 from pathlib import Path
 
 _DIR = Path(__file__).parent / "recordings"
-STREAMS = ["quotes", "marks", "books", "orders"]
+STREAMS = ["quotes", "marks", "books", "orders", "walls"]
 
 
 def load(stream: str, date: str) -> list[dict]:

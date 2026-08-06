@@ -55,7 +55,11 @@ _lock = threading.Lock()
 # stream sat unflushed in memory all day — invisible to anything reading the
 # file, and one kill -9 away from actually being lost (a graceful shutdown
 # still flushes via close(), wired to both KeyboardInterrupt and atexit).
-_FLUSH_EVERY = {"orders": 1, "marks": 5, "books": 50, "quotes": 200}
+# walls: flushed immediately like orders. Snapshots arrive every ~5 min from a
+# standalone poller, so the default (50) would leave hours of irreplaceable
+# data unflushed — and unlike quotes it can never be re-fetched, since Deribit
+# publishes no historical open interest.
+_FLUSH_EVERY = {"orders": 1, "walls": 1, "marks": 5, "books": 50, "quotes": 200}
 _counts: dict[str, int] = {}
 
 dropped = 0
@@ -238,6 +242,42 @@ def record_book(ticker: str, book: dict, bid: float, ask: float,
         "held": held,
         "yes":  (book or {}).get("yes") or [],
         "no":   (book or {}).get("no") or [],
+    })
+
+
+def record_walls(walls: dict) -> None:
+    """Deribit options-wall snapshot (see deribit_walls.py).
+
+    Deliberately NOT called from the bot's polling loop — walls come from an
+    external API (Deribit), and putting that network call in the trading hot
+    path would add latency and a new failure mode to live trading for a signal
+    that is not yet validated. `python3 deribit_walls.py --record` runs this
+    standalone instead.
+
+    Exists because Deribit's public API exposes only a CURRENT open-interest
+    snapshot — there is no historical OI endpoint — so the walls hypothesis
+    cannot be backtested against history the way everything else in this repo
+    is. The only path to validating it is accruing snapshots forward from now.
+    """
+    if not ENABLED:
+        return
+    _emit("walls", {
+        "t": _now(),
+        "exp": walls["expiry"],
+        "spot": round(walls["spot"], 2),
+        "h_exp": round(walls["hours_to_expiry"], 3),
+        "gex": round(walls["total_signed_gex"], 1),
+        # only strikes with real gamma weight — far-OTM rows are ~0 and would
+        # bloat every snapshot for no analytical value
+        "k": [
+            {
+                "s": s["strike"], "c": round(s["call_oi"], 1),
+                "p": round(s["put_oi"], 1), "iv": round(s["iv"], 4),
+                "w": round(s["wall_strength"], 1),
+                "d": round(s["dist_pct"], 3),
+            }
+            for s in walls["strikes"] if s["wall_strength"] > 0
+        ],
     })
 
 
