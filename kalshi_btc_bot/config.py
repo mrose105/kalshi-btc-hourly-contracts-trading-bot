@@ -198,7 +198,7 @@ STOP_MIN_HOURS      = 0.30       # TIER 6 gate: stop only fires if > 18 min left
                                   # expiry_settle captures ITM wins — don't stop binary
                                   # options in their last bars when the binary payoff
                                   # hasn't resolved yet.
-SNIPE_STOP_PCT      = 1.50       # TIER 6-snipe catastrophe floor. Snipes skip TIER 5.25/6
+SNIPE_STOP_PCT      = 0.50       # TIER 6-snipe catastrophe floor. Snipes skip TIER 5.25/6
                                   # above entirely (gated `not is_snipe`) — a fixed % stop
                                   # defeats their whole 1000%+-payout thesis. But that leaves
                                   # a snipe that never builds a peak with NO floor at all.
@@ -207,17 +207,19 @@ SNIPE_STOP_PCT      = 1.50       # TIER 6-snipe catastrophe floor. Snipes skip T
                                   # -94.7% pnl_pct (vs -45.7% for non-snipe stopped/
                                   # boundary_risk losses) — 99% of all snipe-loss dollars,
                                   # spread across entry times (not just the near-expiry
-                                  # window). 1.50 is a true no-op (mid_pnl_pct floors at
-                                  # -100%).
-                                  # 2026-08-05: swept [0.50,0.65,0.80,0.95] with the standard
-                                  # 40d-tune/19d-validate split. No-op (1.50) won tuning outright
-                                  # (Sharpe 6.60 vs 5.84-6.14 for every real threshold — adding
-                                  # any stop made the tuning window worse); 0.50 won validation
-                                  # (5.66 vs 5.46) — different winner per window, fails the bar.
-                                  # Left at 1.50 (no-op): the -94.7% average was real, but the
-                                  # aggregate data says cutting these trades early loses more to
-                                  # foregone recoveries than it saves — same non-monotonic-price
-                                  # dynamic STOP_UNCOVERED_PCT above already accounts for.
+                                  # window).
+                                  # Swept [0.50,0.65,0.80,0.95] vs the no-op (1.50) with the
+                                  # standard 40d-tune/19d-validate split: no-op won tuning
+                                  # outright (Sharpe 6.60 vs 5.84-6.14) but 0.50 won validation
+                                  # (5.66 vs 5.46) — different winner per window, so initially
+                                  # left at 1.50 pending more evidence. 2026-08-06: real
+                                  # paper+live history (FIFO-matched across 61 closed snipe
+                                  # lots, 5 weeks) settled the disagreement — snipes are net
+                                  # -$653.41 despite a 57.4% win rate, because expired_settled +
+                                  # time_exit_OTM (both unprotected) total -$1,712.53, more than
+                                  # snipe_lock's +$938.08 in wins recovers. That's real fills,
+                                  # not a model; turned the floor on at 0.50, the validated
+                                  # out-of-sample winner.
 
 # TIER 5.25: Boundary risk — ITM but marginal + underwater + near expiry.
 # TIME_EXIT_MINS (TIER 5) only protects positions once already OTM; a marginal ITM
