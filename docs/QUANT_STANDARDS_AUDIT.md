@@ -94,13 +94,63 @@ act). Five parameters run through it so far:
   exited blind). Both swept — and on both, the tuning window preferred
   *no floor at all* over every real threshold tried (Sharpe 6.60 vs.
   5.84-6.31), while validation preferred a mid threshold (~0.50) instead.
-  Different winner per window on both — fails the bar on both. Left at 1.50
-  (no-op, i.e. current live behavior unchanged). Read: the anecdotal losses
-  were real, but cutting these trades early loses more to foregone
-  non-monotonic recoveries near expiry than it saves in aggregate — the same
-  dynamic `STOP_UNCOVERED_PCT`'s own rationale already documents. Two sweeps
-  in a row now where an anecdote-driven "add more protection" fix looked
-  obviously right and out-of-sample data disagreed.
+  Different winner per window on both — fails the bar on both. Initially
+  left at 1.50 (no-op) pending more evidence. 2026-08-06: real paper+live
+  history (FIFO-matched, 61 closed snipe lots, 5 weeks) settled `SNIPE_STOP_PCT`
+  in favor of the backtest-rejected value — snipes net -$653.41 despite a
+  57.4% win rate, unprotected losses (`expired_settled`+`time_exit_OTM`,
+  -$1,712.53) outweighing `snipe_lock` wins (+$938.08). Turned on at 0.50
+  (the validation-window winner) on real-fill evidence rather than the
+  backtest sweep. `PEAK_GIVEBACK_HARD_LOSS_PCT` remains at 1.50 (no-op) —
+  no equivalent real-fill evidence yet.
+
+## 1b. Backtest chop-window artifact — found 2026-08-06, affects every sweep above
+
+Splitting a continuous backtest into disjoint tuning/validation sub-windows
+(what every sweep above does) is not a neutral operation: each sub-window
+restarts capital at the nominal value and re-warms regime/vol rolling stats
+from scratch, so the simulated trade sequence can diverge non-trivially from
+what the same calendar span produces run continuously. Caught concretely
+while testing a one-snipe-per-expiry concentration filter (not yet shipped,
+stashed pending resolution): the filter changed 39 real entry decisions in
+the 40-day tuning window (confirmed by instrumentation), yet final
+Sharpe/return/trade-count came out byte-identical to baseline — while the
+same calendar span run as one continuous backtest showed a +139pp return
+difference. That gap is compounding path-dependence from Kelly sizing, not
+the filter's real effect: a few early diverted trades change capital at
+every later trade, and the difference amplifies over 59 days.
+
+Practical takeaway: a tuning/validation split still catches genuine
+overfitting (a value that only wins on the window that picked it), which is
+its job. But for structural/behavioral changes (not numeric threshold
+sweeps), the compounding, capital-linked backtest can produce misleading
+magnitudes even when the win/lose *direction* is being read correctly on
+each window. Measuring a structural change's true effect requires either
+(a) fixed, non-compounding position sizing per trial, or (b) a direct
+counterfactual — see `stop_loss_counterfactual.py` and
+`snipe_concentration_counterfactual.py`, which fork a shadow position at the
+decision point and replay it forward against the real price path instead of
+letting the change cascade through 59 days of compounding.
+
+## 1c. Convex/wider stop-loss for OTM contracts — tested and rejected, 2026-08-06
+
+Hypothesis (user-proposed, from a real trade that stopped out then would
+have recovered): far-OTM/cheap contracts move more in percentage terms on
+ordinary noise, so a flat 35% `STOP_LOSS_PCT` may cut them too early: widen
+the stop (toward `STOP_UNCOVERED_PCT`'s 65%) for the leverage-y/far-OTM end.
+
+Tested with `stop_loss_counterfactual.py`: forks a shadow position at every
+real `stop_loss` exit that skips *only* that tier (every other tier still
+applies) and replays it forward on the real price path, isolating the
+stop's true effect without compounding contamination (see 1b above).
+
+Result: net effect of removing the stop flips sign between windows (tuning
++$223.24, validation -$65.32) — fails the bar, like most sweeps above. But
+one sub-result *is* consistent both windows: OTM entries are reliably worse
+off without the stop (-$64.09 tuning, -$74.50 validation, same sign both
+times) — the opposite of the hypothesis. The "cheap contracts get whipsawed"
+read didn't hold either (+$260.92 tuning, -$11.15 validation). `STOP_LOSS_PCT`
+left unchanged at 0.35 flat.
 
 ## 2. Deflated Sharpe ratio / probability of backtest overfitting — implemented 2026-08-03
 
