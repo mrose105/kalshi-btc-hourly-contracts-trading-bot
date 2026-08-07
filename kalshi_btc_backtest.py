@@ -65,12 +65,27 @@ SMA_VOL_WINDOW  = 288   # 24h  — Kalshi's conservative lagged estimate
 SHORT_VOL_WINDOW = 12   # 1h   — our "recent" vol for vol_ratio computation
 
 EXPIRY_WINDOWS_H = [0.083, 0.117, 0.167, 0.25, 0.5, 1.0, 2.0, 3.0]
-# Kalshi's real KXBTC RANGE bands are 250 wide on the hourlies (500 on the
-# weekly), verified against floor_strike/cap_strike on all 200 open markets
-# 2026-07-28. 100 simulated a narrower, harder-to-win contract than the one
-# that actually trades — see kalshi_btc_bot/contracts.py for the live-side fix.
-RANGE_WIDTH      = 250
-RANGE_SPAN       = 1250   # same dollar reach as the old 500/100 ladder (5 strikes either side)
+# Kalshi's real KXBTC hourly RANGE band is 100 wide. Measured from the
+# exchange's own floor_strike/cap_strike in recordings/quotes_*: ~20,000
+# observations at 100 against 21 at 250 (2026-07-29 .. 2026-08-07).
+#
+# 2026-08-07: reverted from 250 back to 100. Commit cafc517 had set 250 on
+# 2026-07-28 citing verification "against floor_strike/cap_strike on all 200
+# open markets" — but the only 250-wide observation in the entire recording
+# set is from that same day, so that check generalised from an
+# unrepresentative sample. A 250-wide band is 2.3x-4.7x likelier to contain
+# spot at settlement than the real 100-wide one (distortion grows with
+# distance from spot), which made every simulated contract systematically
+# overpriced and hit the deep-OTM snipe population hardest: snipe entries ran
+# median $0.218 in the backtest vs $0.120 in live/paper. See
+# docs/QUANT_STANDARDS_AUDIT.md sec 1d.
+#
+# Caveat: 250-wide bands do exist, rarely, and skew to higher volatility
+# (vol_ratio median 1.34 on ticks containing one vs 1.05 otherwise, n=21 —
+# suggestive, not established). If band width turns out to be vol-dependent,
+# the right fix is sourcing width from recorded data, not a constant.
+RANGE_WIDTH      = 100
+RANGE_SPAN       = 1250   # dollar reach, independent of width (12 strikes either side at 100)
 KALSHI_SPREAD    = 0.015
 SUMMARY_INTERVAL = 50
 
