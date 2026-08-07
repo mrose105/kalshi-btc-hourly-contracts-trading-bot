@@ -132,6 +132,67 @@ counterfactual — see `stop_loss_counterfactual.py` and
 decision point and replay it forward against the real price path instead of
 letting the change cascade through 59 days of compounding.
 
+## 1d. RANGE_WIDTH is 250 in the backtest, but the real hourly band is 100 — open, high severity
+
+Found 2026-08-07 while investigating why a snipe exit-tier bug that has now
+occurred twice in live trading never occurs once in the backtest.
+
+`kalshi_btc_backtest.py` builds its ladder with `RANGE_WIDTH = 250`. The real
+KXBTC hourly RANGE band is **100 wide**, per the exchange's own
+`floor_strike`/`cap_strike` fields captured in `recordings/quotes_*`:
+
+| date | observed `cap_strike - floor_strike` |
+|---|---|
+| 2026-07-29 | 100 × 5,013 |
+| 2026-07-30 | 100 × 1,412 |
+| 2026-08-04 | 100 × 14,229, 250 × 20 |
+| 2026-08-05 | 100 × 3,837 |
+| 2026-08-07 | 100 × 2,235 |
+
+~20,000 observations at 100 against 21 at 250. This is authoritative, not
+inferred: `contracts.py::_from_strikes` prefers the exchange fields, and the
+recorded values disagree with what the ticker-string fallback would produce
+(ticker `B64950` records as `lo=64900, hi=64999.99` — the ticker number is the
+band MIDPOINT, so the fallback's `low=64950` is visibly not what was used).
+
+**How it got here:** commit `cafc517` ("Backtest: simulate the real 250-wide
+RANGE band, not 100") changed it from 100 to 250 on 2026-07-28, citing
+verification "against floor_strike/cap_strike on all 200 open markets". The
+only 250-wide observation in the entire recording set is from that same day.
+The change appears to have generalised from an unrepresentative sample.
+
+**Why it matters:** a 250-wide band is far likelier to contain spot at
+settlement, so every simulated contract is systematically overpriced relative
+to the real one (spot $64,400, vol 8e-5, 0.5h):
+
+| band offset from spot | P(100-wide, real) | P(250-wide, backtest) | ratio |
+|---|---|---|---|
+| +$0   | 0.2537 | 0.5813 | 2.29x |
+| +$100 | 0.2069 | 0.4909 | 2.37x |
+| +$200 | 0.1128 | 0.2955 | 2.62x |
+| +$300 | 0.0412 | 0.1258 | 3.06x |
+| +$500 | 0.0017 | 0.0077 | 4.67x |
+
+The distortion grows with distance from spot, so it hits the deep-OTM snipe
+population hardest — exactly the strategy most sensitive to entry price. It
+shows up directly in the entry distributions: snipe entries are median $0.218
+in the backtest versus **$0.120** in live/paper (75% of live snipes enter
+below $0.1667 vs 19% in the backtest).
+
+**Consequences:** the backtest is trading a different, easier, more expensive
+instrument than the live bot. Every backtest-derived conclusion about snipes
+is suspect, including the 2026-08-05 `SNIPE_STOP_PCT` sweep that said "add no
+floor" (already overridden by real-fill evidence — this explains why that
+override was correct). It also means a snipe exit bug that is real and
+recurring live is undetectable in simulation, which is how it went unnoticed.
+
+**Caveat, unresolved:** 250-wide bands do exist, just rarely (2 expiries,
+21 observations). They skew to higher volatility — vol_ratio median 1.34 on
+ticks containing one, versus 1.05 on 100-only ticks — consistent with the
+hypothesis that Kalshi widens bands in fast markets. n is far too small to
+confirm. If band width really is vol-dependent, the correct fix is not a
+different constant but sourcing width from recorded/exchange data.
+
 ## 1c. Convex/wider stop-loss for OTM contracts — tested and rejected, 2026-08-06
 
 Hypothesis (user-proposed, from a real trade that stopped out then would
