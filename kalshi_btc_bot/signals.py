@@ -54,6 +54,8 @@ class SignalEngine:
         Live bot passes None (unchanged); backtest passes a fitted KalshiVolTerm.
         """
         vol_comp  = regime.get("vol_compression", False)
+        if _C.TRADE_ONLY_COMPRESSION and not vol_comp:
+            return None
         use_t     = regime["use_t"]
         direction = regime["direction"]
 
@@ -156,6 +158,8 @@ class SignalEngine:
         of raw probability-point edge. find_best() never surfaces these — see config.py
         SNIPE_* comment for why. Directional gate reused from find_best() to avoid
         buying a long-shot straight into a confirmed opposing trend."""
+        if _C.TRADE_ONLY_COMPRESSION and not regime.get("vol_compression", False):
+            return None
         use_t     = regime["use_t"]
         direction = regime["direction"]
 

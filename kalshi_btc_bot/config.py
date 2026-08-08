@@ -331,6 +331,27 @@ VOL_REGIME_HIGH_H   = 0.015   # > HIGH → stressed market (~150% annualized)
 # RANGE contracts are mispriced cheap → buy YES, target 80¢+ or full settlement
 VOL_RATIO_COMPRESSION = 0.55  # fast/slow EWMA ratio below this → compressed
 MIN_EDGE_COMPRESSION  = 0.010  # lower entry bar when compressed (structural edge is larger)
+TRADE_ONLY_COMPRESSION = True  # gate ALL entries (find_best and find_snipe) on the
+                              # compression regime, rather than merely lowering the edge
+                              # bar inside it. 2026-08-08: once RANGE_WIDTH was corrected
+                              # to the real 100-wide band (see kalshi_btc_backtest.py),
+                              # segmenting the 59d/$500 run showed the entire loss comes
+                              # from trading OUTSIDE compression:
+                              #     compression  n=132  WR 43.2%  +$88.44  (+18.4%/$ risked)
+                              #     normal vol   n=338  WR 17.5%  -$443.86 (-47.3%/$ risked)
+                              # Normal-vol trades also carry the LARGEST model edge
+                              # (median 0.0645 vs 0.0163) while losing — outside
+                              # compression the EWMA/SMA gap is noise, not mispricing, so
+                              # the model manufactures fake edge exactly where it is least
+                              # reliable. That is the mechanism behind the
+                              # "edge is anti-predictive" result in calibration_check.py.
+                              # Gating on compression flips the sign on BOTH windows of a
+                              # 40d-tune/19d-validate split, which no other change this
+                              # session managed:
+                              #     tuning      -53.6% Sharpe -6.91  ->  +41.2% Sharpe 4.03
+                              #     validation  -32.1% Sharpe -9.92  ->  +23.8% Sharpe 9.49
+                              # with max drawdown cut ~4-5x (-66%/-32% -> -14%/-6.9%).
+                              # Set False to restore the old all-regimes behaviour.
 BID_EXIT_THRESHOLD    = 0.75  # exit any position when bid hits 75¢ (near full settlement)
 
 # Intervals
