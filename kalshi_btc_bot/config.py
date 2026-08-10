@@ -127,6 +127,31 @@ PEAK_GIVEBACK_FRACTION = 0.75    # exit once current pnl has faded to <= 75% of 
                                   # momentum_locked (+32% more trades in that tier), so both
                                   # profit tiers work together better.
 PEAK_GIVEBACK_MIN_BID  = 0.20    # same rationale as GAMMA_LOCK_MIN_BID — don't lock trivial cents
+PEAK_GIVEBACK_MIN_BID_MULT = 1.30 # the floor above is applied as min(abs, MULT * entry).
+                                  # A FIXED 20c floor demands a different amount of profit
+                                  # depending on entry price — +150% for an 8c entry, 0% for
+                                  # a 20c one — so the cheapest positions, which need the
+                                  # giveback protection most, effectively had none.
+                                  # Worse, it can be STRUCTURALLY unreachable: peak_giveback
+                                  # triggers at entry*(1+peak_pnl*PEAK_GIVEBACK_FRACTION), and
+                                  # when that price is below the floor the tier can never fire
+                                  # at ANY price path. Live 2026-08-10 B64150: entry $0.13,
+                                  # peak $0.21 (+61.5%), trigger $0.19 < $0.20 floor -> exit
+                                  # window [0.20, 0.19] was empty, and it rode +61.5% to a
+                                  # total loss (-$7.28). Four such cases observed live; the
+                                  # corrected-instrument backtest shows 36 of 193 positions
+                                  # (19%) structurally blocked this way in a 40d window.
+                                  # min() form, not a pure multiple: a bare 1.3x floor would
+                                  # be STRICTER than $0.20 for entries above ~15c and would
+                                  # remove protection those positions already have.
+                                  # 2026-08-10 counterfactual (snipe_giveback_floor_
+                                  # counterfactual.py, replays real tick paths so nothing
+                                  # compounds): every candidate beat the status quo on BOTH
+                                  # windows — unlike earlier sweeps where the sign flipped.
+                                  #   min($0.20,1.20x)  tuning +68.52  validation +14.30
+                                  #   min($0.20,1.30x)  tuning +39.80  validation +17.01
+                                  # 1.30 chosen: it wins the HELD-OUT window, and the two
+                                  # leaders are within noise on the tuning one.
 SNIPE_PEAK_GIVEBACK_MIN_BID = 0.20  # snipe-specific floor for the same tier — kept equal to
                                   # PEAK_GIVEBACK_MIN_BID for now (no-op default). 2026-08-04:
                                   # a real snipe (entry $0.13) ran to peak +42% then +46% (bid

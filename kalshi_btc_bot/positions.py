@@ -14,7 +14,7 @@ from .config import (
     GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT,
     NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
     MOMENTUM_LOCK_PCT, PAPER_TRADING, PEAK_GIVEBACK_FRACTION,
-    PEAK_GIVEBACK_HARD_LOSS_PCT, PEAK_GIVEBACK_MIN_BID,
+    PEAK_GIVEBACK_HARD_LOSS_PCT, PEAK_GIVEBACK_MIN_BID, PEAK_GIVEBACK_MIN_BID_MULT,
     PEAK_GIVEBACK_MIN_PEAK, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT,
     SNIPE_PEAK_GIVEBACK_MIN_BID, SNIPE_STOP_PCT, STOP_UNCOVERED_PCT,
     SNIPE_PROFIT_LOCK_MIN_BID, SNIPE_PROFIT_LOCK_PEAK,
@@ -298,7 +298,12 @@ class PositionManager:
             # skipping the whole window this tier needs to act in — this OR-branch
             # bypasses the bid floor once pnl has cratered well past the giveback
             # fraction anyway, so the position isn't left to ride unprotected.
-            _pg_min_bid = SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe else PEAK_GIVEBACK_MIN_BID
+            # min(absolute, MULT * entry) — see config.PEAK_GIVEBACK_MIN_BID_MULT.
+            # Never stricter than the absolute floor, but relaxes it for cheap
+            # entries where a fixed 20c gate is unreachable or, worse, sits above
+            # the tier's own trigger price so it could never fire at all.
+            _pg_abs     = SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe else PEAK_GIVEBACK_MIN_BID
+            _pg_min_bid = min(_pg_abs, PEAK_GIVEBACK_MIN_BID_MULT * entry) if entry > 0 else _pg_abs
             if ((not is_snipe or not itm)
                     and peak_pnl_pct >= PEAK_GIVEBACK_MIN_PEAK
                     and ((bid >= _pg_min_bid and pnl_pct <= peak_pnl_pct * PEAK_GIVEBACK_FRACTION)

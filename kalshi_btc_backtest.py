@@ -732,7 +732,9 @@ class BacktestPortfolio:
             # threshold, catching single-bar crashes that skip the floor's window.
             elif ((not is_snipe or not itm)
                     and peak_pnl_pct >= C.PEAK_GIVEBACK_MIN_PEAK
-                    and ((bid >= (C.SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe else C.PEAK_GIVEBACK_MIN_BID)
+                    and ((bid >= min(C.SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe
+                                     else C.PEAK_GIVEBACK_MIN_BID,
+                                     C.PEAK_GIVEBACK_MIN_BID_MULT * entry)
                           and pnl_pct <= peak_pnl_pct * C.PEAK_GIVEBACK_FRACTION)
                          or pnl_pct <= -C.PEAK_GIVEBACK_HARD_LOSS_PCT)):
                 reason = "peak_giveback"

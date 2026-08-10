@@ -105,7 +105,7 @@ def capture(start: str, end: str, capital: float) -> list:
 
     def patched_manage(self, spot, bar_ts, settle_spot=None):
         for tk, pos in self.positions.items():
-            if not pos.get("is_snipe") or pos.get("is_no"):
+            if pos.get("is_no"):
                 continue
             c = pos["contract"]
             itm = c["low"] <= spot < c["high"]
@@ -115,8 +115,9 @@ def capture(start: str, end: str, capital: float) -> list:
     def patched_close(self, ticker, bid, reason, bar_ts):
         pos = self.positions.get(ticker)
         snap = None
-        if pos is not None and pos.get("is_snipe") and not pos.get("is_no"):
+        if pos is not None and not pos.get("is_no"):
             snap = {"ticker": ticker, "entry": pos["entry"], "count": pos["count"],
+                    "is_snipe": pos.get("is_snipe", False),
                     "path": list(paths.get(ticker, []))}
         n_before = len(self.trades)
         r = orig_close(self, ticker, bid, reason, bar_ts)
@@ -150,7 +151,24 @@ def evaluate(snipes: list, label: str) -> dict:
 
     actual_total = sum(s["actual_pnl"] for s in snipes)
     print(f"\n=== {label} ===")
-    print(f"  snipe positions captured: {len(snipes)}   actual total P&L: {actual_total:+.2f}")
+    n_snipe = sum(1 for s in snipes if s.get("is_snipe"))
+    print(f"  positions captured: {len(snipes)} ({n_snipe} snipe / "
+          f"{len(snipes)-n_snipe} non-snipe)   actual total P&L: {actual_total:+.2f}")
+    import kalshi_btc_bot.config as _cc
+    blocked = 0
+    for s in snipes:
+        e = s["entry"]
+        if e <= 0 or not s["path"]:
+            continue
+        pk = max([b for b, _ in s["path"]] + [e])
+        ppct = (pk - e) / e
+        if ppct < _cc.PEAK_GIVEBACK_MIN_PEAK:
+            continue
+        trigger = e * (1 + ppct * _cc.PEAK_GIVEBACK_FRACTION)
+        if trigger < cur_abs:
+            blocked += 1
+    print(f"  peaked >={_cc.PEAK_GIVEBACK_MIN_PEAK:.0%} but giveback trigger price sits BELOW "
+          f"the ${cur_abs:.2f} floor -> peak_giveback could NEVER fire: {blocked}")
     print(f"\n  {'rule':>22} {'fired':>6} {'total P&L':>11} {'vs actual':>11}")
     out = {}
     for name, kw in rules:
@@ -236,10 +254,10 @@ def selftest() -> int:
 def main():
     ap = argparse.ArgumentParser(description=__doc__,
                                  formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("--start", default="2026-06-09")
-    ap.add_argument("--end", default="2026-07-19")
-    ap.add_argument("--valid-start", default="2026-07-19")
-    ap.add_argument("--valid-end", default="2026-08-07")
+    ap.add_argument("--start", default="2026-06-12")
+    ap.add_argument("--end", default="2026-07-22")
+    ap.add_argument("--valid-start", default="2026-07-22")
+    ap.add_argument("--valid-end", default="2026-08-10")
     ap.add_argument("--capital", type=float, default=500.0)
     ap.add_argument("--selftest", action="store_true")
     args = ap.parse_args()
