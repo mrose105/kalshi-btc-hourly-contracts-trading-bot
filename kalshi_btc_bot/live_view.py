@@ -58,8 +58,15 @@ def mark_to_market(positions: dict) -> float:
 
 
 def _fmt_position(ticker: str, snap: dict) -> str:
-    itm = "✅" if snap.get("itm") else "❌"
-    snipe = " 🎯" if snap.get("is_snipe") else "  "
+    # `itm` is always YES-side (does spot sit inside the contract's band). A NO
+    # holder wins when it does NOT, so the glyph is inverted for those rows —
+    # otherwise a losing NO position displays a ✅. The NO tag matters too: the
+    # row is otherwise indistinguishable from a YES position at a wildly
+    # different price (NO $0.87 vs YES $0.10 on the same contract).
+    is_no = snap.get("is_no", False)
+    won   = (not snap.get("itm")) if is_no else snap.get("itm")
+    itm   = "✅" if won else "❌"
+    snipe = " 🎯" if snap.get("is_snipe") else (" NO" if is_no else "  ")
     return (
         f"  {ticker[-22:]:<22}{snipe} "
         f"bid=${snap.get('bid', 0):.3f}  "

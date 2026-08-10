@@ -203,15 +203,24 @@ class PositionManager:
                 rep_str    = "repriced:YES ⬆" if repriced else "repriced:NO  "
 
                 if live_view.ENABLED:
+                    # Report the NO side's own exit price and mark the row as NO.
+                    # This passed `bid` (the YES bid) and raw `itm` (YES-side ITM),
+                    # so a NO position rendered as if it were a YES one: the price
+                    # shown was the wrong leg entirely (YES ~$0.10 vs NO ~$0.87 on
+                    # the same contract), and the ✅ lit up exactly when the NO
+                    # position was LOSING. live_view flips the glyph for is_no.
                     live_view.update_position(ticker, {
-                        "bid": bid, "pnl_pct": no_pnl_pct, "true_prob": true_prob,
+                        "bid": no_bid_px, "pnl_pct": no_pnl_pct, "true_prob": true_prob,
                         "itm": itm, "dist": dist, "mins_left": mins_left,
-                        "is_snipe": False,
+                        "is_snipe": False, "is_no": True,
                     })
                 else:
-                    print(f"  👁  {ticker[-22:]:<22} bid=${bid:.4f} "
+                    # Same correction as the live_view branch above: show the NO
+                    # exit price, and invert the glyph — a NO position wins when
+                    # the YES side is OTM.
+                    print(f"  👁  {ticker[-22:]:<22} NO bid=${no_bid_px:.4f} "
                           f"pnl={no_pnl_pct:+.0%} true={true_prob:.0%} "
-                          f"{'✅' if itm else '❌'} dist={dist:+.0f} "
+                          f"{'❌' if itm else '✅'} dist={dist:+.0f} "
                           f"{rep_str} {mins_left:.0f}m left")
 
                 if no_pnl_pct >= NO_PROFIT_CAPTURE:
