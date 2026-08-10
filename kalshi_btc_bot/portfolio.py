@@ -654,8 +654,23 @@ class Portfolio:
                 "is_no":          True,
             }
         mode = "[PAPER] " if PAPER_TRADING else ""
-        print(f"  📥 {mode}BUY_NO [MISPRICE] {ticker[-22:]} "
-              f"x{count} @ NO=${no_cost:.4f} (YES_ask=${yes_ask:.4f}) true={true_prob:.0%}")
+        sig  = contract.get("signal", "MISPRICE_NO")
+        if live_view.ENABLED:
+            live_view.log_trade(
+                f"📥 BUY_NO {ticker[-18:]} x{count} @ ${no_cost:.3f} "
+                f"(YES_ask=${yes_ask:.3f}) true={true_prob:.0%}"
+            )
+        else:
+            print(f"  📥 {mode}BUY_NO [{sig}] {ticker[-22:]} "
+                  f"x{count} @ NO=${no_cost:.4f} (YES_ask=${yes_ask:.4f}) true={true_prob:.0%}")
+        # buy() logs every fill to trades.csv; buy_no() only ever called
+        # recorder.record_order(), so NO ENTRIES WERE MISSING FROM trades.csv
+        # entirely (0 buys logged against 2 sells as of 2026-08-09). That left
+        # every NO position as an unmatched sell — which is what produced the
+        # phantom "open positions" in FIFO reconstruction, and made NO entry
+        # prices and edge unauditable from the trade log.
+        self._log_trade("buy", ticker, "no", count, no_cost, true_prob,
+                        reason=sig)
         return True
 
     def settle_paper_position(self, ticker: str, payout: float) -> bool:

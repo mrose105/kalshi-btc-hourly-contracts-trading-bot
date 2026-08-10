@@ -331,9 +331,18 @@ VOL_REGIME_HIGH_H   = 0.015   # > HIGH → stressed market (~150% annualized)
 # RANGE contracts are mispriced cheap → buy YES, target 80¢+ or full settlement
 VOL_RATIO_COMPRESSION = 0.55  # fast/slow EWMA ratio below this → compressed
 MIN_EDGE_COMPRESSION  = 0.010  # lower entry bar when compressed (structural edge is larger)
-TRADE_ONLY_COMPRESSION = True  # gate ALL entries (find_best and find_snipe) on the
+TRADE_ONLY_COMPRESSION = True  # gate the YES entries (find_best and find_snipe) on the
                               # compression regime, rather than merely lowering the edge
-                              # bar inside it. 2026-08-08: once RANGE_WIDTH was corrected
+                              # bar inside it. Deliberately does NOT gate find_no_scalp or
+                              # find_boundary_no: those sell overpriced OTM premium at
+                              # z-score range extremes, a different edge thesis from the
+                              # EWMA-vs-SMA vol lag this gate is derived from, and the
+                              # validation below was YES-only (the backtest omits NO
+                              # signals unless --no-threshold is passed). Gating them
+                              # would extend an unvalidated constraint to a strategy it
+                              # was never tested against. See [NO strategy status] —
+                              # BOUNDARY_NO is still unproven on its own tiny sample.
+                              # 2026-08-08: once RANGE_WIDTH was corrected
                               # to the real 100-wide band (see kalshi_btc_backtest.py),
                               # segmenting the 59d/$500 run showed the entire loss comes
                               # from trading OUTSIDE compression:
