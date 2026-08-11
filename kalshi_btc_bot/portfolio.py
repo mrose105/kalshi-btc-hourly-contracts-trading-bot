@@ -338,20 +338,47 @@ class Portfolio:
             return filled, float(cost_c) / filled / 100.0
         return filled, fallback_price
 
-    def _fresh_quote(self, ticker: str) -> tuple:
+    def _fresh_quote(self, ticker: str, attempts: int = 3) -> tuple:
         """Fetch the live best bid/ask for `ticker` directly, bypassing the
         ladder's up-to-LADDER_CACHE_SECONDS-old snapshot, so entries price off
         the actual current market rather than a quote that may have moved.
-        Returns (0.0, 0.0) on any failure so the caller aborts the trade
-        rather than acting on stale/fallback data."""
-        try:
-            m   = self.client._request("GET", f"/markets/{ticker}", timeout=8)
-            mkt = m.get("market", m)
-            bid = float(mkt.get("yes_bid_dollars") or 0)
-            ask = float(mkt.get("yes_ask_dollars") or 0)
-            return bid, ask
-        except Exception:
-            return 0.0, 0.0
+        Returns (0.0, 0.0) on failure so the caller aborts the trade rather
+        than acting on stale/fallback data.
+
+        Retries before giving up. This is the FIRST gate every entry passes, and
+        a single transient timeout here used to kill a fully-validated signal
+        silently — no log line, no recorder entry, nothing to distinguish "the
+        market moved" from "one HTTP call blipped". Observed 2026-08-11 on a
+        BOUNDARY_NO with z=+3.54 and 1.19x overpricing: signal printed, no order,
+        no trace. Aborting on a real quote failure is right; aborting on one
+        dropped packet is not.
+        """
+        last_err = None
+        for i in range(max(1, attempts)):
+            try:
+                m   = self.client._request("GET", f"/markets/{ticker}", timeout=8)
+                mkt = m.get("market", m)
+                bid = float(mkt.get("yes_bid_dollars") or 0)
+                ask = float(mkt.get("yes_ask_dollars") or 0)
+                if bid > 0 and ask > 0:
+                    return bid, ask
+                last_err = f"empty quote (bid={bid}, ask={ask})"
+            except Exception as e:
+                last_err = f"{type(e).__name__}: {e}"
+            if i + 1 < attempts:
+                time.sleep(0.35 * (i + 1))
+        self._log_reject(ticker, f"fresh quote failed after {attempts} tries — {last_err}")
+        return 0.0, 0.0
+
+    def _log_reject(self, ticker: str, why: str) -> None:
+        """Say why an entry was dropped. buy()/buy_no() abort through several
+        guards that all used to `return False` silently, so a signal could be
+        printed and then vanish with no way to tell which gate stopped it."""
+        msg = f"🚫 skipped {ticker[-18:]} — {why}"
+        if live_view.ENABLED:
+            live_view.log_event(msg)
+        else:
+            print(f"  {msg}")
 
     def _orderbook(self, ticker: str) -> dict:
         """Fetch live order-book depth for `ticker`. Only resting bids exist on
@@ -560,9 +587,12 @@ class Portfolio:
         ticker       = contract["ticker"]
         bid, yes_ask = self._fresh_quote(ticker)
         if yes_ask <= 0 or bid <= 0 or yes_ask <= bid:
+            # _fresh_quote already logged the failure reason
             return False
         spread = yes_ask - bid
         if spread > MAX_SPREAD or spread / yes_ask > MAX_SPREAD_PCT:
+            self._log_reject(ticker, f"spread ${spread:.3f} ({spread/yes_ask:.0%}) "
+                                     f"over MAX_SPREAD ${MAX_SPREAD:.2f}/{MAX_SPREAD_PCT:.0%}")
             return False
 
         # Re-validate the mispricing against the fresh quote before committing.
@@ -578,6 +608,9 @@ class Portfolio:
                      if contract.get("signal") == "BOUNDARY_NO"
                      else NO_OVERPRICING_MIN)
         if true_prob <= 0 or yes_ask / true_prob < min_ratio:
+            _r = (yes_ask / true_prob) if true_prob > 0 else 0
+            self._log_reject(ticker, f"overpricing {_r:.2f}x fell under {min_ratio:.2f}x "
+                                     f"on the fresh quote (ask ${yes_ask:.3f})")
             return False
 
         no_cost = 1.0 - yes_ask
@@ -586,10 +619,13 @@ class Portfolio:
 
         with self.lock:
             if ticker in self.positions:
+                self._log_reject(ticker, "already holding this contract")
                 return False
             if len(self.positions) >= MAX_POSITIONS:
+                self._log_reject(ticker, f"MAX_POSITIONS {MAX_POSITIONS} already open")
                 return False
             if no_cost <= 0 or no_cost >= 1.0:
+                self._log_reject(ticker, f"no_cost ${no_cost:.3f} out of range")
                 return False
 
             budget = self.budget(NO_TRADE_PCT)
@@ -597,6 +633,8 @@ class Portfolio:
             cost   = no_cost * count
 
             if cost > self.real_cash or cost > budget or count <= 0:
+                self._log_reject(ticker, f"size: budget ${budget:.2f} / no_cost ${no_cost:.3f} "
+                                         f"-> {count} contracts (cash ${self.real_cash:.2f})")
                 return False
 
             if PAPER_TRADING:
@@ -605,8 +643,8 @@ class Portfolio:
                     yes_levels, count, transform=lambda p: 100 - p,
                     limit_price_c=no_cost * 100)
                 if filled <= 0:
-                    print(f"  ⚠️  BUY_NO no depth: {ticker[-22:]} "
-                          f"wanted={count} yes_levels={yes_levels[:3]}")
+                    self._log_reject(ticker, f"no book depth for NO at <=${no_cost:.2f} "
+                                             f"(wanted {count}, yes_levels={yes_levels[:3]})")
                     return False
                 count   = filled
                 no_cost = fill_price
