@@ -371,6 +371,35 @@ BOUNDARY_NO_YES_ASK_MIN     = 0.10
 BOUNDARY_NO_YES_ASK_MAX     = 0.65
 
 # Regime
+# Momentum lookback the regime classifier measures trend/acceleration over.
+# 2026-08-11: RegimeEngine hardcoded feed.momentum(60) — 60 SECONDS on 2s live
+# ticks. Measured against 212k recorded live ticks, |mom| clears
+# TREND_THRESHOLD on 0.5% of them, which is why live classified TRENDING 0.37%
+# of the time and BREAKOUT literally never (0 of 212,331). Sixty-second
+# momentum on hourly contracts is microstructure noise, and the classifier was
+# correctly finding no trend in it. Same thresholds on longer windows:
+#     60s -> 0.5%   5m -> 6.7%   10m -> 13.4%   30m -> 31.3%   60m -> 41.2%
+MOMENTUM_WINDOW_SECS = 600
+# 2026-08-11 sweep (momentum_window_sweep.py, 40d tune / 19d held out), real-time
+# windows vs the 60s-scaled baseline:
+#                  TUNING                     VALIDATION
+#   baseline 60s   +24.9%  Sharpe 3.71  WR 33.1%   +21.6%  Sharpe  9.99  WR 51.4%
+#   600s           +72.7%  Sharpe 5.61  WR 44.4%   +22.9%  Sharpe 15.30  WR 56.8%
+#   900s           +14.0%  Sharpe 2.18            +25.8%  Sharpe 15.37
+#   1800s          +59.3%  Sharpe 4.70            +17.1%  Sharpe  7.85
+#   3600s          +16.5%  Sharpe 2.29            +12.4%  Sharpe  6.18
+# 900s edges 600s on validation but is the WORST on tuning — erratic, so noise.
+# 600s is the only window strong on both, and beats the baseline on both for
+# Sharpe, return and win rate. Note it does NOT trade more: validation goes
+# 70 -> 37 trades. The gain is selection (WR 51.4% -> 56.8%, PF 1.91 -> 2.75),
+# not volume.
+# Whether the BACKTEST stretches that window by TIME_SCALE (150x at 5-min bars
+# / 2s polling). True reproduces the historical behaviour, in which the same
+# constant meant 60s live but 2.5 HOURS in the backtest — which is why the two
+# reported near-opposite regime mixes (backtest 43% TRENDING / 18% BREAKOUT vs
+# live 0.37% / 0.00%) and why nothing regime-dependent has ever been validly
+# backtested. False makes both sides measure the same real-time window.
+MOMENTUM_WINDOW_SCALED = False
 TREND_BARS          = 3
 TREND_THRESHOLD     = 0.0015
 REVERT_ZSCORE       = 1.5

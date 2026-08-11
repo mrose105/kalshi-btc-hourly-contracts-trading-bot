@@ -118,14 +118,23 @@ class SyntheticFeed:
             self.highs  = self.highs[-cap:]
             self.lows   = self.lows[-cap:]
 
-    def recent(self, seconds: int) -> list:
-        scaled = seconds * TIME_SCALE
-        cutoff = (self.prices[-1][0] - timedelta(seconds=scaled)
+    def recent(self, seconds: int, scaled: bool = True) -> list:
+        """Prices from the last `seconds`.
+
+        `scaled=True` stretches the window by TIME_SCALE so it spans the same
+        NUMBER of samples a live 2s-tick feed would (5-min bars are 150x
+        coarser). That is right for sample-count-driven stats, but wrong for
+        anything compared against a wall-clock-calibrated threshold: it made
+        momentum(60) mean 60s live and 2.5 HOURS here, off the same constant.
+        Momentum passes scaled=False so both sides measure real elapsed time.
+        """
+        span = seconds * TIME_SCALE if scaled else seconds
+        cutoff = (self.prices[-1][0] - timedelta(seconds=span)
                   if self.prices else datetime.min)
         return [p for t, p in self.prices if t >= cutoff]
 
     def momentum(self, seconds: int = 60) -> float:
-        r = self.recent(seconds)
+        r = self.recent(seconds, scaled=C.MOMENTUM_WINDOW_SCALED)
         return (r[-1] - r[0]) / r[0] if len(r) >= 2 else 0.0
 
     def acceleration(self) -> float:

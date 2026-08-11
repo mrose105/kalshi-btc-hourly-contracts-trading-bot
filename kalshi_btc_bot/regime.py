@@ -1,9 +1,14 @@
 import math
 
 from .config import (
-    BARS_PER_HOUR, BREAKOUT_ACCEL, REVERT_ZSCORE, TREND_BARS, TREND_THRESHOLD,
+    BARS_PER_HOUR, BREAKOUT_ACCEL, REVERT_ZSCORE,
+    TREND_BARS, TREND_THRESHOLD,
     VOL_REGIME_LOW_H, VOL_REGIME_HIGH_H, VOL_RATIO_COMPRESSION,
 )
+from . import config as _C   # module-qualified: sweeps mutate config at
+                             # runtime, and a `from .config import X` name is
+                             # frozen at import so it never sees the override
+                             # (same trap as MIN_EDGE in signals.py)
 from .feed import BTCFeed
 
 # ─────────────────────────────────────────────
@@ -11,8 +16,11 @@ from .feed import BTCFeed
 # ─────────────────────────────────────────────
 class RegimeEngine:
     def detect(self, feed: BTCFeed) -> dict:
-        mom   = feed.momentum(60)
-        accel = feed.acceleration()
+        # Window comes from config so it can be calibrated; acceleration stays
+        # the half-window/full-window difference the hardcoded 30/60 expressed.
+        _w    = _C.MOMENTUM_WINDOW_SECS
+        mom   = feed.momentum(_w)
+        accel = feed.momentum(max(1, _w // 2)) - mom
         vol   = feed.ewma_volatility()   # EWMA replaces plain rolling stdev
         z     = feed.zscore(300)
         cn, cd= feed.consecutive()
