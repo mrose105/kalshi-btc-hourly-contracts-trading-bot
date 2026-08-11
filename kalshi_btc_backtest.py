@@ -127,6 +127,23 @@ class SyntheticFeed:
         anything compared against a wall-clock-calibrated threshold: it made
         momentum(60) mean 60s live and 2.5 HOURS here, off the same constant.
         Momentum passes scaled=False so both sides measure real elapsed time.
+
+        zscore() deliberately keeps scaled=True, and that is NOT an oversight.
+        Unlike momentum, z is self-normalising — (x - mean)/std over the same
+        window — so its distribution tracks SAMPLE COUNT, not elapsed time. Its
+        tail is hard-capped at |z|max = (n-1)/sqrt(n): six 5-min bars (a 30-min
+        real-time window) can never exceed 2.04, which would make
+        BOUNDARY_NO_ZSCORE_MIN=2.5 mathematically unreachable and silently kill
+        the strategy. Measured 2026-08-11 against 213k live ticks:
+
+            setting                       p90   >1.5    >=2.5
+            scaled 300s (= 12.5h here)   2.35   30.5%   7.58%
+            real-time 1800s               1.87   25.3%   0.00%   <- dead
+            real-time 3600s               2.01   27.6%   2.86%
+            LIVE zscore(300) reference    2.28   30.8%   6.90%
+
+        Scaling makes the backtest use 150 bars where live uses 150 ticks, and
+        the distributions match. Leave it alone.
         """
         span = seconds * TIME_SCALE if scaled else seconds
         cutoff = (self.prices[-1][0] - timedelta(seconds=span)
