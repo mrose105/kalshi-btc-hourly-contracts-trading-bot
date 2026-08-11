@@ -80,7 +80,24 @@ act). Five parameters run through it so far:
 - `KELLY_CAP`/`MAX_TRADE_PCT`: current 2.5% baseline held up — 3.0% won on
   tuning but lost to 2.5% on validation. No change made.
 - `EXIT_COOLDOWN_SECS`: 0s won on both windows (Sharpe 6.82/7.44 tuning/valid
-  vs. 120s's 6.20/6.05). Changed 120 -> 0.
+  vs. 120s's 6.20/6.05). Changed 120 -> 0. **REVERTED to 300 on 2026-08-11** —
+  that sweep could not resolve what it appeared to. Backtest bars are 5 min and
+  fills queue to the next bar's open, so "0s" was a ~5-MINUTE effective gap;
+  15s-300s merely pushed one further bar (~10 min), which is why all five were
+  byte-identical. Live polls every 2s, so live 0s allowed re-entry 150x faster
+  than anything simulated. Real fills settled it: re-entry after a WINNING exit
+  (median gap 132s, no cooldown) returned -24.1% per $ risked over 27 round
+  trips, while re-entry after a LOSING exit (median 419s, 300s cooldown forced)
+  returned +11.8% over 17. A winning exit fires *because* the move is over, so
+  re-entering two minutes later buys the fade.
+- `PEAK_GIVEBACK_MIN_BID`: 2026-08-10, made relative — `min($0.20, 1.30 × entry)`.
+  A flat 20c floor demands +150% profit from an 8c entry but 0% from a 20c one,
+  and can sit ABOVE the tier's own trigger price, making `peak_giveback`
+  mathematically unable to fire at any price path (19% of positions in a 40-day
+  window; four instances observed live). Counterfactual replay of real tick
+  paths: every candidate beat the status quo on BOTH windows, unlike the earlier
+  sweeps where the sign flipped. Full 58d/$500: +63.8% -> +77.4%.
+- `MOMENTUM_WINDOW_SECS`: 2026-08-11, 60s -> 600s real-time. See §1e.
 - `SNIPE_PEAK_GIVEBACK_MIN_BID`: 2026-08-05, $0.10 won tuning (6.78) but
   ranked worst of the re-checked candidates on validation (5.24); $0.15 won
   validation (5.90) instead. Different winner per window — fails the bar.
@@ -132,7 +149,7 @@ counterfactual — see `stop_loss_counterfactual.py` and
 decision point and replay it forward against the real price path instead of
 letting the change cascade through 59 days of compounding.
 
-## 1d. RANGE_WIDTH is 250 in the backtest, but the real hourly band is 100 — open, high severity
+## 1d. RANGE_WIDTH was 250 in the backtest, real hourly band is 100 — FIXED 2026-08-07 (was high severity)
 
 Found 2026-08-07 while investigating why a snipe exit-tier bug that has now
 occurred twice in live trading never occurs once in the backtest.
@@ -192,6 +209,47 @@ ticks containing one, versus 1.05 on 100-only ticks — consistent with the
 hypothesis that Kalshi widens bands in fast markets. n is far too small to
 confirm. If band width really is vol-dependent, the correct fix is not a
 different constant but sourcing width from recorded/exchange data.
+
+## 1e. Regime momentum window measured different things in backtest vs live — fixed 2026-08-11
+
+`RegimeEngine` hardcoded `feed.momentum(60)`. On live 2-second ticks that is 60
+SECONDS. Against 212k recorded live ticks, `|mom|` clears `TREND_THRESHOLD` on
+0.5% of them — so live classified TRENDING 0.37% of the time and BREAKOUT **0
+times in 212,331 ticks**. Both branches, and the momentum drift they contribute
+to `true_prob`, were dead code in production.
+
+Meanwhile `SyntheticFeed.recent()` stretched every window by `TIME_SCALE`
+(150×), so the same constant meant 2.5 HOURS in the backtest:
+
+| regime | backtest | live |
+|---|---|---|
+| TRENDING | 42.7% | 0.37% |
+| BREAKOUT | 18.2% | 0.00% |
+| RANGING | 36.7% | 69.8% |
+| REVERTING | 2.4% | 29.8% |
+
+Third instrument-fidelity gap of the same family as §1d and the 5-minute-bar
+cooldown: nothing regime-dependent had ever been validly backtested.
+
+**Fix:** `MOMENTUM_WINDOW_SECS = 600` with `MOMENTUM_WINDOW_SCALED = False`, so
+both sides measure the same real elapsed time. The backtest now reproduces
+live's regime mix at a given window (30 min: 29.4% directional vs live 31.3%).
+Sweep (40d tune / 19d held out): 600s beat the baseline on both windows
+(tuning Sharpe 3.71 → 5.61, validation 9.99 → 15.30). Full 58d/$500:
++54.7% → +111.5%. Note it does **not** trade more — validation went 70 → 37
+trades; the gain is selection (WR 51.4% → 56.8%, PF 1.91 → 2.75).
+
+Two traps worth recording:
+- The first implementation used `from .config import MOMENTUM_WINDOW_SECS`,
+  which is frozen at import, so sweeps mutating config never reached the engine.
+  Every candidate then scored byte-identically — the same tell that exposed the
+  cooldown sweep. Fixed by reading `_C.MOMENTUM_WINDOW_SECS` at call time.
+- `zscore` looks like the same bug and is **not**. It is self-normalising, so
+  its distribution tracks sample COUNT, not elapsed time, and its tail is capped
+  at `|z|max = (n-1)/√n`. A 30-minute real-time window is six 5-min bars, capping
+  `|z|` at 2.04 and making `BOUNDARY_NO_ZSCORE_MIN = 2.5` unreachable — the
+  "fix" would have silently killed the strategy. The existing scaling already
+  matches live (p90 2.35 vs 2.28). Left alone deliberately.
 
 ## 1c. Convex/wider stop-loss for OTM contracts — tested and rejected, 2026-08-06
 

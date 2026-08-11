@@ -1,5 +1,8 @@
 # Strategy, Math & Audit — kalshi_btc_bot
 
+> **Figures below predate the 2026-08-07 `RANGE_WIDTH` correction (250 → 100) and the 2026-08-11 regime-window fix unless dated otherwise; treat any undated number here as void and see README.md for current results.**
+
+
 This document explains the bot end-to-end: the edge it exploits, the math behind every calculation, and an audit of whether the implementation is mathematically sound. Every claim is cross-referenced to the code (`file:line`).
 
 ---
@@ -372,8 +375,8 @@ can absorb. Return is now a function of capital scale, not a single number —
 
 | Capital | Return | Sharpe | Profit factor | Trades |
 |---|---|---|---|---|
-| $100 | +412% | 7.16 | 1.37 | 1,321 |
-| $500 | +307% | 6.52 | 1.30 | 1,287 |
+| $100 | +113% | 6.59 | 2.14 | 250 |
+| $500 | +112% | 6.44 | 2.06 | 248 |
 | $2,000 | +29% | 2.10 | 1.07 | 1,164 |
 | $10,000 | -60% | -7.43 | 0.66 | 858 |
 

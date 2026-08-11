@@ -4,71 +4,64 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 
 ---
 
-## Backtest Results (60-day walk-forward, run 2026-08-04, post depth-realism fixes)
+## Backtest Results (58-day walk-forward, run 2026-08-11)
 
-There is no single headline return — the strategy has a real, measured **capacity limit**, and which side of it you're on determines the sign of the result:
+There is no single headline return — the strategy has a measured **capacity limit**, and which side of it you're on determines the sign of the result:
 
-| Starting capital | Return | Sharpe | Profit factor | Trades |
-|---|---|---|---|---|
-| $100 | **+412%** | 7.16 | 1.37 | 1,321 |
-| $200 | +442% | 7.29 | 1.38 | 1,319 |
-| $500 | +307% | 6.52 | 1.30 | 1,287 |
-| $1,000 | +129% | 4.70 | 1.19 | 1,257 |
-| $2,000 | +29% | 2.10 | 1.07 | 1,164 |
-| $5,000 | -39% | -3.28 | 0.83 | 986 |
-| $10,000 | -60% | -7.43 | 0.66 | 858 |
+| Starting capital | Return | Sharpe | Profit factor | Win rate | Max DD | Trades |
+|---|---|---|---|---|---|---|
+| $100 | **+113%** | 6.59 | 2.14 | 46.8% | -11.8% | 250 |
+| $500 | +112% | 6.44 | 2.06 | 47.2% | -12.7% | 248 |
+| $1,000 | +84% | 5.83 | 1.82 | 47.2% | -13.0% | 248 |
+| $2,000 | +48% | 4.68 | 1.52 | 47.8% | -14.1% | 245 |
+| $5,000 | +5% | 1.16 | 1.07 | 45.9% | -15.1% | 246 |
+| $10,000 | **-10%** | -2.29 | 0.84 | 44.4% | -15.2% | 257 |
 
-At small size the edge is real and strong. Past roughly $2,000, Kelly sizing wants positions larger than Kalshi's real KXBTC order-book depth can absorb without severe exit slippage — the strategy doesn't scale, and profitability inverts smoothly and monotonically, not because of a bug but because the backtest now models that constraint instead of assuming infinite liquidity (`_size_impact_penalty()` / `_MAX_ENTRY_SIZE` in `kalshi_btc_backtest.py`, anchored to real recorded Kalshi book depth in `recordings/*.jsonl.gz`).
+Past roughly $2,000, Kelly sizing wants positions larger than Kalshi's real KXBTC book depth can absorb without severe exit slippage. Profitability degrades smoothly and monotonically — not a bug, but the backtest modelling that constraint instead of assuming infinite liquidity (`_size_impact_penalty()` / `_MAX_ENTRY_SIZE`, anchored to real recorded book depth in `recordings/`).
 
-These figures still move run to run — `--days 60` is a rolling window anchored to *now*, not fixed dates. Full methodology, known limitations, and the capacity-constraint finding in detail are in [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md).
+> **Earlier figures in this README were void and have been replaced.** Runs before 2026-08-07 simulated a 250-wide RANGE band; the real KXBTC hourly band is **100 wide**, confirmed against ~20,000 `floor_strike`/`cap_strike` observations from the exchange. The wider band made every simulated contract 2.3–4.7× likelier to pay, inflating returns roughly 4×. Details in [`docs/QUANT_STANDARDS_AUDIT.md`](docs/QUANT_STANDARDS_AUDIT.md) §1d.
 
-Backtest uses real BTC-USD 5-minute OHLCV from yfinance and applies five bias-elimination fixes to prevent inflated returns:
+**A backtest return is not a live forecast.** Read [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md) before quoting any number here — it documents what the simulation still cannot represent, including that `build_ladder` synthesises its own quotes rather than replaying a recorded book.
 
-1. **Fills execute at NEXT bar's open, not current bar's close** — removes the lookahead where a signal generated at bar close was also filled at that same close.
-2. **Expiry settlement uses bar OPEN (not close)** — expiry happens during the bar, so end-of-bar spot is a lookahead. Bar open is a defensible proxy for spot at the actual expiry moment.
-3. **Adverse-selection haircut on all model-derived exit bids** — near expiry, when `DistModel.true_prob` mechanically collapses toward 0/1, the exit bid is discounted (up to ~15%) to reflect the reality that Kalshi market-makers won't quote at fair value on "certain" contracts that could still whipsaw. Without this the backtest inflated ~4×.
-4. **Intrabar stop slippage** — stops fill 2¢ worse than the theoretical threshold (matches live `FORCE_EXIT_SLIPPAGE_CENTS`), not at exactly the stop price.
-5. **NO position exit markup** — mirror haircut on the counterparty side so NO exits don't fabricate settlement-certainty gains either.
+### Bias-elimination fixes applied
 
-Intrabar stop simulation uses bar High/Low to replicate live polling. `SESSION_STOP_PCT` peak-drawdown breaker resets each day to model the live workflow (bot restarted per session). As of 2026-08-04, both entries and exits are also **depth-aware**: exits carry a size-based impact penalty and entries are capped to what a real book could plausibly fill, calibrated conservatively against real recorded Kalshi order-book depth (`recordings/*.jsonl.gz`) rather than assuming any position size fills at the model price — this is what produces the capacity curve above.
-
-**Known limitation:** exit prices still come from the bot's own probability model plus a hand-tuned discount (now also size-adjusted), not a recorded Kalshi order book directly — see [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md) §3 for the full breakdown and current status. The only market-verified (non-simulated) result to date is the 2026-07-01–03 live run: 63 trades, profit factor 0.78. Paper trade before deploying real capital, and size to the capacity the table above shows, not the account balance you wish you had.
-
----
+1. **Fills execute at NEXT bar's open, not current bar's close** — removes the lookahead where a signal generated at bar close was also filled at that close.
+2. **Expiry settlement uses bar OPEN, not close** — expiry happens during the bar, so end-of-bar spot is a lookahead.
+3. **Adverse-selection haircut on model-derived exit bids** — near expiry `true_prob` collapses toward 0/1; the exit bid is discounted (up to ~15%) since market-makers won't quote fair value on "certain" contracts that can still whipsaw. Without this the backtest inflated ~4×.
+4. **Intrabar stop slippage** — stops fill 2¢ worse than the theoretical threshold, matching live `FORCE_EXIT_SLIPPAGE_CENTS`.
+5. **Depth-aware size penalty** — exit fills walk a √-law impact curve rather than clearing at the mark.
+6. **Correct 100-wide RANGE band** — see the note above.
+7. **Real-time regime windows** — momentum is measured over the same wall-clock window in backtest and live. Previously one constant meant 60 seconds live but 2.5 hours in the backtest, so the two reported near-opposite regime mixes and nothing regime-dependent was validly tested (§1e).
 
 ## Risk Profile — 10,000-path Monte Carlo (at $100)
 
-Return alone says nothing about what running this actually feels like. Bootstrapping the 1,321 trades from the **$100-capital** backtest run into 10,000 resampled equity paths (`python3 montecarlo.py results/backtest_20260804_0802.json --n 10000 --capital 100`):
+Return alone says nothing about what running this feels like. Bootstrapping the 250 trades from the $100 backtest into 10,000 resampled equity paths (`python3 montecarlo.py results/backtest_20260811_1820.json --n 10000 --capital 100`):
 
-| Percentile | Final equity | Return |
-|------------|--------------|--------|
-| worst path | $45 | -54.8% |
-| p5 | $329 | +228.8% |
-| p25 | $436 | +336.4% |
-| **p50 (median)** | **$511** | **+411.3%** |
-| p75 | $587 | +486.9% |
-| p95 | $699 | +599.3% |
-| best path | $954 | +853.6% |
+| Metric | Value |
+|---|---|
+| Actual final equity | $213 (+113.0%) |
+| **Median simulated** | **$213 (+112.8%)** |
+| 5th percentile | $164 |
+| 95th percentile | $265 |
 
-The actual backtest ($512) lands almost exactly on the median, so the historical trade *ordering* wasn't unusually lucky. The tail is meaningfully worse here than at smaller scale: doubling capital from $44 to $100 roughly doubles typical position size too, pushing more trades past the depth threshold where `_size_impact_penalty()` bites — the worst-path Monte Carlo result at $44 was -4.5%; at $100 it's -54.8%.
+The actual backtest lands on the median, so the historical trade *ordering* wasn't unusually lucky.
 
-### Drawdown is the thing to watch
+### Drawdown
 
 ```
-P(equity ever dips below start)    88.0%
-P(max DD > 20%)                    61.2%
-P(max DD > 30%)                    25.6%
-
-Max DD:  median -23%   p95 -48%   worst -131%
+Actual max DD:    -13.9%
+Median sim DD:     -6.7%
+P(DD > 20%):        0.3%
+P(DD > 30%):        0.0%
 ```
 
-The backtest's own -20.4% max drawdown sits close to the median path (-23%). Roughly 3 in 5 paths take a 20%+ drawdown and 1 in 4 take 30%+ — the edge being real at this scale doesn't mean the ride is smooth, and it's a noticeably rougher ride than at $44. A worst-case beyond -100% is not a typo: the bootstrap resamples fixed dollar P&Ls with no bankruptcy floor.
+The realised -13.9% sits well above the median path (-6.7%), so this particular ordering was on the rougher side. Tails are much tighter than earlier versions of this README reported, because the compression gate cut trade count roughly 5× — fewer, more selective trades.
 
 ### The Monte Carlo still understates risk in three ways
 
 1. **Fixed dollar P&L, no compounding.** The bootstrap resamples raw dollar amounts, but the live bot Kelly-sizes off *current* equity. Real paths compound, widening both tails.
-2. **IID resampling destroys loss clustering.** Losses correlate in reality — same regime, adjacent strikes, one BTC move busting several positions at once. Shuffling breaks that, so real drawdowns can run worse than the median suggests.
-3. **It inherits the model-pricing error.** Every path resamples trades whose exit price came from the bot's own model (now with a depth-aware size penalty, but still not a recorded book). The bootstrap treats those P&Ls as given.
+2. **IID resampling destroys loss clustering.** Losses correlate in reality — same regime, adjacent strikes, one BTC move busting several positions at once.
+3. **It inherits the model-pricing error.** Every path resamples trades whose exit price came from the bot's own model, not a recorded book.
 
 `SESSION_STOP_PCT` (3%) gates *new entries* only — it never closes open positions, so it does not floor these drawdowns.
 
@@ -133,7 +126,10 @@ kalshi_btc_backtest.py  — walk-forward backtest with intrabar stop simulation
 
 ## Signal Engine — Entry Logic
 
-Three parallel scans on each tick:
+Three parallel scans on each tick.
+
+> **`TRADE_ONLY_COMPRESSION` (default on):** `find_best` and `find_snipe` return `None` unless the market is in a vol-compression regime. Segmenting a corrected-instrument backtest showed the *entire* loss came from trading outside compression (normal vol: -47.3% per $ risked; compressed: +18.4%), and gating on it flipped the sign on both windows of a tune/validate split. `find_boundary_no` is deliberately **not** gated — it collects mean-reversion premium at z-score extremes, a different edge thesis that works in normal/high vol, which is also when the order book is actually populated.
+
 
 - **`find_best`** — probability-edge scan for the highest-edge contract. **RANGE-only in the RANGING regime**; TRENDING / REVERTING / BREAKOUT regimes also consider ABOVE / BELOW contracts, gated by the regime's direction (an ABOVE won't be bought during a confirmed downtrend, and vice-versa).
 - **`find_snipe`** — separate ROI-ranked scan for cheap deep-OTM lottery tickets that `find_best` would never surface (small raw-edge points but 30%+ ROI on a 10–25¢ ask).
@@ -148,7 +144,7 @@ Filters applied before every entry:
 | Min volume | Ladder rows below 50 contracts of volume are skipped |
 | OTM gate | RANGE: ≤ $50 OTM (normal vol), ≤ $150 OTM (vol compressed). ABOVE/BELOW: ≤ $100 OTM (`MAX_OTM_T`). All tighten dynamically as expiry approaches (≤ $60 OTM inside 30 min; ≤ $30 OTM inside 20 min) |
 | RANGE boundary buffer | Skip RANGE entries within $40 of *either* boundary (`MIN_RANGE_BOUNDARY_BUFFER`), all regimes, unless vol-compressed (structural mispricing exception) |
-| Spread filter | Skip if bid/ask spread > 5¢ or > 25% of ask, re-validated against a fresh single-ticker quote at order time |
+| Spread filter | Skip if bid/ask spread > 5¢ or > 25% of ask, re-validated against a fresh single-ticker quote at order time (retried 3× — a single dropped request used to discard a valid signal silently). **Known limitation:** the 5¢ absolute gate is calibrated for 10–45¢ YES contracts and is applied unchanged to NO entries costing 55–90¢, where the same spread is proportionally far smaller. |
 | Min edge | `raw_edge = true_prob − kalshi_ask ≥ 1.5%` (drops to **1.0%** during vol compression) |
 | Strike clustering | Skip if the strike is within $150 of an existing open position's strike in the same expiry window |
 | Time-exit collision | Skip if the entry would immediately land inside the `TIME_EXIT_MINS` OTM force-close window |
@@ -170,7 +166,7 @@ Edge calculation uses a lognormal GBM pricer with regime-conditional drift. Vol 
 | Tier | Trigger | Reason |
 |------|---------|--------|
 | 0.5 | Up ≥15% + true\_prob fading 2 consecutive ticks + high dollar-gamma (≥40,000) + bid ≥ 35¢ | Gamma-aware convexity lock |
-| 0.75 | Peak unrealized gain ≥25% and current gain has faded to ≤75% of that peak + bid ≥ 20¢ | Peak giveback |
+| 0.75 | Peak unrealized gain ≥25% and current gain has faded to ≤75% of that peak + bid ≥ `min($0.20, 1.30 × entry)` | Peak giveback — the floor is relative because a flat 20¢ gate could sit *above* the tier's own trigger price on cheap entries, making it mathematically unable to fire (19% of positions in a 40-day window) |
 | 1 | Up 40% + < 15 min left + bid ≥ 30¢ | Scalp lock |
 | 2 | Up 100% + < 9 min left | Momentum lock |
 | 3 | Up 150% + < 15 min left | Strong profit |
@@ -257,7 +253,7 @@ python3 montecarlo.py --n 10000 --capital 100                          # bootstr
 cp .env.example .env
 # fill in KALSHI_API_KEY_ID and KALSHI_PRIVATE_KEY_PATH
 
-# Paper mode (no real orders, simulated $10,000 capital): set PAPER_TRADING = True
+# Paper mode (no real orders, simulated $500 capital — PAPER_CAPITAL): PAPER_TRADING = True
 # in kalshi_btc_bot/config.py (this is the default)
 python3 -m kalshi_btc_bot
 

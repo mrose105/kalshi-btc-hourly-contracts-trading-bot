@@ -1,5 +1,11 @@
 # Backtest Integrity — what breaks a number, and how to check
 
+> **Reading order:** figures in this document are dated. Anything predating
+> 2026-08-07 was computed on a 250-wide RANGE band that does not trade (§4), and
+> anything predating 2026-08-11 used a regime momentum window that meant 2.5
+> hours in the backtest but 60 seconds live (`QUANT_STANDARDS_AUDIT.md` §1e).
+> Current headline results live in [`../README.md`](../README.md).
+
 This document exists because the backtest's headline return has been wrong, by
 large factors, more than once — and each time it looked entirely plausible until
 someone measured it. It catalogues every class of defect found so far, the
@@ -128,12 +134,28 @@ The simulated contract was not the contract that trades.
   `is_in_money` ~$125 off, which silently broke every distance gate
   (`MIN_RANGE_BOUNDARY_BUFFER`, `BOUNDARY_RISK_DIST`, `TIME_EXIT_NEAR_DIST`).
 
-- **Backtest**: `RANGE_WIDTH = 100` built the same wrong instrument
-  synthetically. Correcting it to 250 moved the 60-day run **+185% → +402%** and
-  win rate **36.6% → 54.0%** — wider bands contain spot more often.
+- **Backtest**: `RANGE_WIDTH` was changed 100 → 250 on 2026-07-28, which moved
+  the 60-day run **+185% → +402%** and win rate **36.6% → 54.0%**.
 
-**Lesson:** the exchange publishes the authoritative geometry. Never infer it
-from a ticker string.
+> **⚠️ That change was WRONG and has been reverted (2026-08-07).** The real
+> KXBTC hourly band is **100 wide**, confirmed against ~20,000
+> `floor_strike`/`cap_strike` observations recorded from the exchange itself
+> (`recordings/quotes_*`); the only 250-wide observation in the entire set is
+> from the single day the change was made. A 250-wide band is 2.3–4.7× likelier
+> to contain spot at settlement, so every simulated contract was systematically
+> overpriced — backtest snipe entries ran a median $0.218 against $0.120 in
+> live fills. Reverting moved the same window from +229% to -71%, i.e. the
+> profitability that this section originally credited to the "fix" was the bug.
+> Full detail in [`QUANT_STANDARDS_AUDIT.md`](QUANT_STANDARDS_AUDIT.md) §1d.
+
+**Lesson (updated):** the exchange publishes the authoritative geometry — never
+infer it from a ticker string, and never accept a change that *improves* the
+backtest without the same scrutiny you'd give one that hurts it. This one
+survived 10 days and 35 commits precisely because it made the number go up. The
+check that would have caught it in one line: compare the backtest's entry-price
+distribution against real fills in `trades.csv`. They now match (p25/median/p75
+0.137/0.168/0.222 vs live 0.130/0.170/0.230); before the revert the backtest was
+~10¢ rich.
 
 ---
 
