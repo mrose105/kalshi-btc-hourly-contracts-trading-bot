@@ -37,7 +37,7 @@ MIN_CASH_FLOOR      = 0.25       # never trade with less than $0.25
 UNTRACKED_EXPOSURE_LIMIT = 0.25  # block new trades if live exposure exceeds tracked exposure by this much
 EXIT_RETRY_COOLDOWN = 10         # seconds to wait before retrying an unfilled live exit
 STOP_COOLDOWN_SECS  = 300        # block re-entry on same ticker for 5 min after stop loss
-EXIT_COOLDOWN_SECS  = 0          # block re-entry on same ticker after a *profitable* exit.
+EXIT_COOLDOWN_SECS  = 300        # block re-entry on same ticker after a *profitable* exit.
                                   # 2026-07-28: added at 120s after snipe_lock exited B63550 at
                                   # $0.27 and the bot re-bought the same ticker 47s later at
                                   # $0.34 (+26%), losing $64.02 — a real, single-incident cost.
@@ -54,6 +54,39 @@ EXIT_COOLDOWN_SECS  = 0          # block re-entry on same ticker after a *profit
                                   # occasional worse-price re-chase. STOP_COOLDOWN_SECS (loss
                                   # cooldown) is untouched — this only removed the brake on
                                   # re-entries the exit itself already proved were profitable.
+                                  #
+                                  # 2026-08-11: REVERTED to 300. Two independent reasons.
+                                  #
+                                  # (1) That sweep could not test what it appeared to. Backtest
+                                  # bars are BAR_MINUTES=5 (300s) and fills queue to the NEXT
+                                  # bar's open, so "0s" means a ~5-MINUTE effective gap, not
+                                  # zero; 15s-300s all push the signal one further bar (~10 min),
+                                  # which is exactly why they were byte-identical. The sweep's
+                                  # real finding is "~5 min beats ~10 min". Live polls every
+                                  # PRICE_FETCH=2s, so live 0s permits re-entry 150x faster than
+                                  # the fastest case ever simulated. That regime was untested.
+                                  # (Re-ran on the corrected RANGE_WIDTH=100 instrument: 0s still
+                                  # "wins" both windows, and still means ~5 min.)
+                                  #
+                                  # (2) Real fills say the fast re-chase is the toxic one. FIFO
+                                  # round trips over all paper history, split by how the PRIOR
+                                  # trade on that same contract ended:
+                                  #     after a WINNING exit  n=27  WR 44.4%  -24.1% per $ risked
+                                  #                                 median gap 132s
+                                  #     after a LOSING  exit  n=17  WR 41.2%  +11.8% per $ risked
+                                  #                                 median gap 419s
+                                  # Re-entry after a win LOSES; after a loss it gains — and the
+                                  # only structural difference is that losses already carry
+                                  # STOP_COOLDOWN_SECS=300 while wins carried none. A winning
+                                  # exit fires precisely BECAUSE the move is over (scalp_lock,
+                                  # peak_giveback), so re-entering two minutes later buys the
+                                  # fade. Observed again live 2026-08-10 B63850: +$1.60 win,
+                                  # re-entered 51s later, -$6.72.
+                                  #
+                                  # 300 chosen to match the ~5-minute gap the backtest actually
+                                  # endorses. It is the floor of what has been tested, not a
+                                  # tuned optimum — the backtest cannot resolve anything shorter,
+                                  # so revisit as more live re-entry data accrues.
 FORCE_EXIT_SLIPPAGE_CENTS = 2    # cross stale bids by this many cents on urgent exits
 
 # Entry filters (YES signals)

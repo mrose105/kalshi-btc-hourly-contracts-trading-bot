@@ -26,8 +26,8 @@ sys.path.insert(0, str(Path(__file__).parent))
 from kalshi_btc_bot import config as C
 from kalshi_btc_backtest import run_backtest
 
-TUNE_START,  TUNE_END  = "2026-06-07", "2026-07-17"
-VALID_START, VALID_END = "2026-07-17", "2026-08-05"
+TUNE_START,  TUNE_END  = "2026-06-14", "2026-07-23"
+VALID_START, VALID_END = "2026-07-23", "2026-08-11"
 
 
 def run_grid(grid: list[int], capital: float, start: str, end: str) -> list[dict]:
