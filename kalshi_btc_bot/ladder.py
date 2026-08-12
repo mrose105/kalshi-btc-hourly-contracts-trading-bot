@@ -5,6 +5,7 @@ from .config import (
     LADDER_CACHE_SECONDS, MAX_ASK, MAX_HOURS, MAX_SPREAD, MAX_SPREAD_PCT,
     MIN_HOURS, MIN_VOLUME,
 )
+from . import recorder
 from .contracts import is_in_money, otm_distance, parse_contract
 
 # ─────────────────────────────────────────────
@@ -52,10 +53,15 @@ class Ladder:
             data = self.client._request("GET", "/markets",
                      params={"limit": 200, "series_ticker": "KXBTC",
                              "status": "open"}, timeout=10)
+            # Capture the raw window BEFORE any entry filter — see
+            # recorder.record_universe for why the filtered `quotes` stream
+            # cannot be used to evaluate the filters themselves.
+            _win_markets = [m for m in data.get("markets", [])
+                            if self._window in m.get("ticker", "")]
+            recorder.record_universe(spot, self._window, _win_markets)
+
             ladder = []
-            for m in data.get("markets", []):
-                if self._window not in m.get("ticker", ""):
-                    continue
+            for m in _win_markets:
                 ya  = float(m.get("yes_ask_dollars") or 0)
                 yb  = float(m.get("yes_bid_dollars") or 0)
                 vol = float(m.get("volume_fp") or 0)

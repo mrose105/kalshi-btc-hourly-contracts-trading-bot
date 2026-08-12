@@ -59,7 +59,8 @@ _lock = threading.Lock()
 # standalone poller, so the default (50) would leave hours of irreplaceable
 # data unflushed — and unlike quotes it can never be re-fetched, since Deribit
 # publishes no historical open interest.
-_FLUSH_EVERY = {"orders": 1, "walls": 1, "marks": 5, "books": 50, "quotes": 200}
+_FLUSH_EVERY = {"orders": 1, "walls": 1, "marks": 5, "books": 50,
+                "quotes": 200, "universe": 20}
 _counts: dict[str, int] = {}
 
 dropped = 0
@@ -242,6 +243,42 @@ def record_book(ticker: str, book: dict, bid: float, ask: float,
         "held": held,
         "yes":  (book or {}).get("yes") or [],
         "no":   (book or {}).get("no") or [],
+    })
+
+
+def record_universe(spot: float, window: str, markets: list) -> None:
+    """Every market in the active expiry window, BEFORE any entry filter.
+
+    The `quotes` stream records the ladder the bot decided to look at — i.e.
+    only rows that already survived MAX_ASK, MIN_VOLUME, MAX_SPREAD and the
+    rest. That makes it useless for evaluating those filters: asking "should
+    MAX_ASK be higher?" against a dataset where every row has ask <= MAX_ASK
+    returns 0% blocked by construction. The same censoring killed two separate
+    analyses on 2026-08-11 (the NO-side spread gate, and whether buying the
+    band containing spot is profitable at 50-85c).
+
+    This stream captures the raw exchange rows for the active window so any
+    gate can be re-evaluated against prices the bot never traded. Written on
+    the ladder's own cadence, one record per refresh.
+    """
+    if not ENABLED:
+        return
+    _emit("universe", {
+        "t": _now(),
+        "spot": round(spot, 2),
+        "win": window,
+        "m": [
+            {
+                "tk": m.get("ticker"),
+                "a":  float(m.get("yes_ask_dollars") or 0),
+                "b":  float(m.get("yes_bid_dollars") or 0),
+                "v":  float(m.get("volume_fp") or 0),
+                "lo": m.get("floor_strike"),
+                "hi": m.get("cap_strike"),
+                "ct": m.get("close_time"),
+            }
+            for m in markets
+        ],
     })
 
 
