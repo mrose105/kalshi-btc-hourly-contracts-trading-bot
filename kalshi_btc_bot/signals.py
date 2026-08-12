@@ -236,7 +236,11 @@ class SignalEngine:
                     "true_prob":         true_p,
                     "overpricing_ratio": ratio,
                     "edge_pct":          edge_pct,
-                    "no_cost":           1.0 - yes_ask,
+                    # Cost of BUYING no is 1 - yes_bid (lifting a resting YES bid),
+                    # not 1 - yes_ask, which is the NO bid. Reporting the bid
+                    # understated every BOUNDARY_NO/MISPRICE_NO entry by the
+                    # full spread. See Portfolio.buy_no.
+                    "no_cost":           1.0 - c.get("bid", yes_ask),
                 }
 
         return best
@@ -310,7 +314,11 @@ class SignalEngine:
                     "true_prob":         true_p,
                     "overpricing_ratio": ratio,
                     "edge_pct":          (yes_ask - true_p) / true_p * 100,
-                    "no_cost":           1.0 - yes_ask,
+                    # Cost of BUYING no is 1 - yes_bid (lifting a resting YES bid),
+                    # not 1 - yes_ask, which is the NO bid. Reporting the bid
+                    # understated every BOUNDARY_NO/MISPRICE_NO entry by the
+                    # full spread. See Portfolio.buy_no.
+                    "no_cost":           1.0 - c.get("bid", yes_ask),
                     "zscore":            zscore,
                 }
 

@@ -613,7 +613,15 @@ class Portfolio:
                                      f"on the fresh quote (ask ${yes_ask:.3f})")
             return False
 
-        no_cost = 1.0 - yes_ask
+        # Buying NO means lifting a resting YES BID, so what you PAY is
+        # 1 - yes_bid (the NO ask). 1 - yes_ask is the NO *bid* — the price you
+        # would RECEIVE selling NO — and using it as a buy limit is short by the
+        # whole spread, so the order can only fill on a crossed book. That is
+        # why zero NO buys ever executed in paper mode. Observed 2026-08-12:
+        # yes_bid 33c / yes_ask 39c meant the cheapest NO available was $0.67
+        # while the limit went out at $0.61, rejected identically on every retry.
+        no_cost = 1.0 - bid                      # NO ask — what a buy actually costs
+        no_bid  = 1.0 - yes_ask                  # NO bid — for reference/logging
 
         yes_levels = self._orderbook(ticker)["yes"] if PAPER_TRADING else []
 
