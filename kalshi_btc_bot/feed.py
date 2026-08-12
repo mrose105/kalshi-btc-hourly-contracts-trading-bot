@@ -253,8 +253,26 @@ class BTCFeed:
         return (r[-1] - mean) / std if std > 0 else 0.0
 
     def consecutive(self) -> tuple:
-        if len(self.prices) < 4: return 0, "FLAT"
-        recent = [p for _, p in self.prices[-10:]]
+        """Consecutive same-direction moves, measured on 5-MINUTE BARS.
+
+        This read self.prices[-10:] — the last 10 raw ticks. At PRICE_FETCH=2s
+        that is a 20-SECOND window, and the 0.0001 direction threshold is ~$6 on
+        BTC, which a 2-second move almost never clears. Measured over 218k
+        recorded live ticks: 89.9% classified FLAT, only 10.1% directional at
+        all, so P(3 consecutive same-direction) ~ 0.03% and TREND_BARS=3 was
+        effectively unreachable — TRENDING sat at 0.29% of ticks even after the
+        momentum window was corrected (a576b80).
+
+        The backtest's `prices` ARE 5-minute bars, so the same code meant 50
+        MINUTES there — the same sample-count-vs-wall-clock divergence as the
+        momentum window. Reading bars_5min (already maintained for the SMA vol,
+        298 bars deep and bootstrapped at startup) makes both sides measure
+        identical 5-minute steps, and applies the 0.0001 threshold to a 5-minute
+        move (median 0.00032) rather than a 2-second one.
+        """
+        src = [p for _, p in list(self.bars_5min)[-10:]]
+        if len(src) < 4: return 0, "FLAT"
+        recent = src
         dirs = []
         for i in range(1, len(recent)):
             chg = (recent[i] - recent[i-1]) / recent[i-1]
