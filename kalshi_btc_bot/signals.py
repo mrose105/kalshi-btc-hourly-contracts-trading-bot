@@ -305,11 +305,21 @@ class SignalEngine:
             if true_p <= 0 or true_p >= NO_TRUE_PROB_MAX:
                 continue
 
-            ratio = yes_ask / true_p
-            # Absolute edge on the side we actually buy. The ratio test above is
+            # Overpricing must be measured at the price we TRANSACT at. Buying
+            # NO at 1-yes_bid is economically SELLING YES at the bid, so the
+            # edge is yes_bid vs true_prob — not yes_ask, which is what a YES
+            # BUYER would pay and we never do. Using the ask flatters the ratio
+            # by exactly ask/bid (~1.18x at a 3c spread on a 20c contract), and
+            # at the margin it inverts the signal: ask 0.20 / bid 0.17 sitting
+            # exactly on the 1.15 gate is really 0.98x — selling YES for LESS
+            # than the model says it is worth. Same class of error as pricing
+            # no_cost off the ask (fixed 731be85).
+            yes_bid = c.get("bid", yes_ask)
+            ratio = yes_bid / true_p
+            # Absolute edge on the side we actually buy. The ratio test is
             # scale-free, so a big ratio on a tiny true_prob still leaves almost
             # no edge once you pay 90c for the NO. See config.
-            no_cost  = 1.0 - c.get("bid", yes_ask)
+            no_cost  = 1.0 - yes_bid
             net_edge = (1.0 - true_p) - no_cost
             if net_edge < _C.BOUNDARY_NO_MIN_NET_EDGE:
                 continue

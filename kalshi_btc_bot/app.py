@@ -10,7 +10,8 @@ from kalshi_es_analysis import KalshiClient
 
 from .config import (
     MAX_EXPOSURE_PCT, MAX_TRADE_PCT, NO_TRADE_PCT,
-    ENABLE_BOUNDARY_NO, ENABLE_MISPRICE_NO, PAPER_TRADING,
+    ENABLE_BOUNDARY_NO, ENABLE_MISPRICE_NO, NO_EXEMPT_FROM_COOLDOWN,
+    PAPER_TRADING,
     POSITION_CHECK, PRICE_FETCH, SCAN_INTERVAL, SYNC_INTERVAL,
     RECORD_BOOK_INTERVAL,
 )
@@ -182,8 +183,11 @@ def main():
             # NO scalp signal
             no_sig = None
             if ENABLE_MISPRICE_NO:
+                # NO scans may see cooled-off tickers — see
+                # config.NO_EXEMPT_FROM_COOLDOWN.
+                _no_ladder = ladder if NO_EXEMPT_FROM_COOLDOWN else _ladder
                 no_sig = signal_e.find_no_scalp(
-                    spot, vol, regime, _ladder, portfolio.positions,
+                    spot, vol, regime, _no_ladder, portfolio.positions,
                     portfolio.real_cash, portfolio.start_total)
             if no_sig:
                 if live_view.ENABLED:
@@ -205,7 +209,9 @@ def main():
             bno_sig = None
             if ENABLE_BOUNDARY_NO:
                 bno_sig = signal_e.find_boundary_no(
-                    spot, vol, regime, _ladder, portfolio.positions,
+                    spot, vol, regime,
+                    ladder if NO_EXEMPT_FROM_COOLDOWN else _ladder,
+                    portfolio.positions,
                     portfolio.real_cash, portfolio.start_total)
             if bno_sig:
                 if live_view.ENABLED:

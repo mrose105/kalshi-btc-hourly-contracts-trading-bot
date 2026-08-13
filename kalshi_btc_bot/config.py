@@ -365,6 +365,27 @@ BOUNDARY_NO_ZSCORE_MIN      = 2.5    # |z| must exceed this to count as a range 
 BOUNDARY_NO_OTM_MIN         = -250   # don't go deeper than 250 OTM (premium too thin)
 BOUNDARY_NO_OTM_MAX         = -10    # small buffer — not right at the current boundary
 BOUNDARY_NO_OVERPRICING_MIN = 1.15   # lower than MISPRICE_NO — z-score adds independent conviction
+NO_EXEMPT_FROM_COOLDOWN     = True   # let NO scans see cooled-off tickers.
+                                  # The re-entry cooldown exists to stop MOMENTUM
+                                  # chasing: a YES position exits on scalp_lock /
+                                  # peak_giveback, which are PRICE-based, so the move
+                                  # is over and re-entering buys the fade — measured
+                                  # at -24.1% per $ risked over 27 round trips.
+                                  # NO exits are EDGE-based (edge_gone: the
+                                  # overpricing corrected), and a NO re-entry cannot
+                                  # happen unless |z| >= BOUNDARY_NO_ZSCORE_MIN, the
+                                  # overpricing ratio clears, AND net edge clears
+                                  # BOUNDARY_NO_MIN_NET_EDGE — all on current prices.
+                                  # The cooldown was guarding against something those
+                                  # gates already prevent, while blocking re-entry
+                                  # into a mispricing that had genuinely returned.
+                                  # Evidence is thin (1 observed NO re-entry: bought
+                                  # 0.78 at +14.5% edge, exited +$1.44, re-entered
+                                  # 0.87 at +4.8% edge, exited +$0.22 — smaller edge,
+                                  # smaller profit, still positive). Note that
+                                  # re-entry would now be blocked anyway by the 5%
+                                  # net-edge floor, so this mainly frees genuinely
+                                  # strong repeat signals. Set False to restore.
 BOUNDARY_NO_MIN_NET_EDGE    = 0.05   # minimum ABSOLUTE edge on the NO side:
                                   #     (1 - true_prob) - no_cost  >=  this
                                   # The overpricing gate above is a RATIO, which is
