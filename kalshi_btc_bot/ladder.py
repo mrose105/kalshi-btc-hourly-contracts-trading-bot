@@ -17,6 +17,31 @@ class Ladder:
         self._cache   = []
         self._cache_t = 0
         self._window  = ""
+        self._quotes: dict = {}   # ticker -> (bid, ask, close_time, status)
+        self._quotes_t = 0.0      # when _quotes was last refreshed
+        self._window_t = 0.0      # when the expiry window was last resolved
+
+    @staticmethod
+    def _window_from(markets: list) -> str:
+        """Nearest expiry window inside [MIN_HOURS, MAX_HOURS] from a payload
+        that has ALREADY been fetched. Split out so get() can derive the window
+        from its own /markets response instead of issuing a second identical
+        request — find_window() and get() were calling the same endpoint with
+        the same params back-to-back every 120s."""
+        now = datetime.datetime.now(datetime.timezone.utc)
+        best_t, best_w = None, ""
+        for m in markets:
+            close = m.get("close_time", "")
+            try:
+                ct = datetime.datetime.fromisoformat(close.replace("Z", "+00:00"))
+                h  = (ct - now).total_seconds() / 3600
+                if MIN_HOURS <= h <= MAX_HOURS:
+                    if best_t is None or h < best_t:
+                        best_t = h
+                        best_w = m["ticker"].split("-")[1]
+            except Exception:
+                pass
+        return best_w
 
     def find_window(self) -> str:
         try:
@@ -44,21 +69,43 @@ class Ladder:
         now = time.time()
         if not force and now - self._cache_t < LADDER_CACHE_SECONDS:
             return self._cache
-        if not self._window or now - self._cache_t > 120:
-            self._window = self.find_window()
-        if not self._window:
-            print(f"  ⏳ No active window (no open KXBTC markets in {MIN_HOURS:.2f}–{MAX_HOURS:.1f}h range)")
-            return []
         try:
             data = self.client._request("GET", "/markets",
                      params={"limit": 200, "series_ticker": "KXBTC",
                              "status": "open"}, timeout=10)
+            # Derive the window from THIS payload rather than a second
+            # identical request (see _window_from).
+            if not self._window or now - self._window_t > 120:
+                self._window   = self._window_from(data.get("markets", []))
+                self._window_t = now
+            if not self._window:
+                print(f"  ⏳ No active window (no open KXBTC markets in "
+                      f"{MIN_HOURS:.2f}–{MAX_HOURS:.1f}h range)")
+                return []
             # Capture the raw window BEFORE any entry filter — see
             # recorder.record_universe for why the filtered `quotes` stream
             # cannot be used to evaluate the filters themselves.
             _win_markets = [m for m in data.get("markets", [])
                             if self._window in m.get("ticker", "")]
             recorder.record_universe(spot, self._window, _win_markets)
+
+            # Publish the raw window so PositionManager can price open positions
+            # from this one bulk response instead of a single-ticker fetch each.
+            # Measured 2026-08-13: /markets?limit=200 is 28ms for ALL markets,
+            # while /markets/<ticker> is 83ms for one — so N positions cost
+            # N*83ms of avoidable latency inside a 2s cycle, plus 30*N calls a
+            # minute of rate-limit budget. Keyed by ticker, with the fetch time
+            # so a stale snapshot can be rejected rather than silently trusted.
+            self._quotes = {
+                m.get("ticker"): (
+                    float(m.get("yes_bid_dollars") or 0),
+                    float(m.get("yes_ask_dollars") or 0),
+                    m.get("close_time", ""),
+                    m.get("status", ""),
+                )
+                for m in data.get("markets", [])
+            }
+            self._quotes_t = now
 
             ladder = []
             for m in _win_markets:

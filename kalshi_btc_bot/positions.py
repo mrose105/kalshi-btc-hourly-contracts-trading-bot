@@ -1,4 +1,5 @@
 import datetime
+import time
 
 def _hours_from(close_time: str) -> float:
     """Hours until (positive) or since (negative) close_time."""
@@ -29,13 +30,41 @@ from . import recorder
 # POSITION MANAGER — exits NEVER blocked
 # ─────────────────────────────────────────────
 class PositionManager:
-    def __init__(self, client, portfolio, dist, feed):
+    # A position quote older than this falls back to a direct fetch. One scan
+    # cycle is SCAN_INTERVAL (2s); 3s tolerates a single slow refresh without
+    # ever letting an exit decide on a materially stale price.
+    QUOTE_MAX_AGE = 3.0
+
+    def __init__(self, client, portfolio, dist, feed, ladder=None):
         self.client    = client
         self.portfolio = portfolio
         self.dist      = dist
         self.feed      = feed
+        self.ladder    = ladder     # optional: bulk quote source, see get_price
 
     def get_price(self, ticker):
+        """Live (bid, ask, close_time, status) for one position.
+
+        Prefers the bulk /markets response the Ladder already fetches every
+        SCAN_INTERVAL. Measured 2026-08-13: /markets?limit=200 returns ALL
+        markets in 28ms, while /markets/<ticker> returns one in 83ms — so
+        pricing N positions individually cost N*83ms of avoidable latency
+        inside a 2s cycle and 30*N API calls a minute.
+
+        Falls back to the direct fetch whenever the bulk snapshot is missing
+        the ticker or is older than QUOTE_MAX_AGE. That matters: a held
+        position can be absent from the ladder's FILTERED rows (its ask may
+        drift past MAX_ASK), which is why this reads the ladder's raw quote map
+        rather than its ladder list. Exits are never blocked, so a miss must
+        degrade to the old path, not to no price.
+        """
+        lad = self.ladder
+        if lad is not None:
+            q = getattr(lad, "_quotes", None)
+            if q:
+                hit = q.get(ticker)
+                if hit and (time.time() - getattr(lad, "_quotes_t", 0)) <= self.QUOTE_MAX_AGE:
+                    return hit
         try:
             m   = self.client._request("GET", f"/markets/{ticker}", timeout=8)
             mkt = m.get("market", m)

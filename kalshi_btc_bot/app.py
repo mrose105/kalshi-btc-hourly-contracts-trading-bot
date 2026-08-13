@@ -59,7 +59,7 @@ def main():
     ladder_e  = Ladder(client)
     portfolio = Portfolio(client)
     signal_e  = SignalEngine(dist)
-    pos_mgr   = PositionManager(client, portfolio, dist, feed)
+    pos_mgr   = PositionManager(client, portfolio, dist, feed, ladder=ladder_e)
 
     print("  Bootstrapping 24h of 5-min bars for vol_ratio parity...")
     n_bars = feed.bootstrap_history(hours=24)
