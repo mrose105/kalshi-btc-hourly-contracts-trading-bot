@@ -365,6 +365,28 @@ BOUNDARY_NO_ZSCORE_MIN      = 2.5    # |z| must exceed this to count as a range 
 BOUNDARY_NO_OTM_MIN         = -250   # don't go deeper than 250 OTM (premium too thin)
 BOUNDARY_NO_OTM_MAX         = -10    # small buffer — not right at the current boundary
 BOUNDARY_NO_OVERPRICING_MIN = 1.15   # lower than MISPRICE_NO — z-score adds independent conviction
+BOUNDARY_NO_MIN_NET_EDGE    = 0.05   # minimum ABSOLUTE edge on the NO side:
+                                  #     (1 - true_prob) - no_cost  >=  this
+                                  # The overpricing gate above is a RATIO, which is
+                                  # scale-free and therefore blind to what the position
+                                  # costs. At true_prob=0.066 / yes_ask=0.10 the ratio is
+                                  # 1.52 — sails through — while the absolute edge is
+                                  # 3.4pp on a 92c position.
+                                  # 2026-08-13, the eight BOUNDARY_NO entries taken so far,
+                                  # by NO cost: risk/reward and edge degrade together.
+                                  #   cost 0.65  R:R 1.9:1  edge +18.8%
+                                  #   cost 0.78  R:R 3.5:1  edge +14.5%
+                                  #   cost 0.82  R:R 4.6:1  edge  +5.6%
+                                  #   cost 0.86  R:R 6.1:1  edge  +3.2%
+                                  #   cost 0.92  R:R 11.5:1 edge  +1.4%   <- +$0.10 realised
+                                  # A 92c NO risks 92c to win 8c: one loss erases eleven
+                                  # wins. Worse, 1.4pp sits INSIDE our own model error —
+                                  # calibration_check.py measured true_prob predicting
+                                  # 13.6% where 18.3% occurred, a ~4.7pp miss. An edge
+                                  # smaller than the model's known error is noise with a
+                                  # sign, not edge. 0.05 is set at roughly that error
+                                  # floor; it would have kept the +18.8% and +14.5%
+                                  # entries and rejected the four thinnest.
 BOUNDARY_NO_HOURS_MIN       = 0.08
 BOUNDARY_NO_HOURS_MAX       = 0.50   # wider window than plain NO — more time decay to harvest
 BOUNDARY_NO_YES_ASK_MIN     = 0.10
@@ -404,6 +426,23 @@ TREND_BARS          = 3
 TREND_THRESHOLD     = 0.0015
 REVERT_ZSCORE       = 1.5
 BREAKOUT_ACCEL      = 0.004
+BREAKOUT_MOM_MULT   = 2.0        # BREAKOUT needs |mom| > TREND_THRESHOLD * this.
+                                  # Was hardcoded 2 in regime.py, which coupled it to
+                                  # TRENDING's threshold — you could not calibrate one
+                                  # without moving the other. Split out so BREAKOUT can
+                                  # be tuned while TRENDING (now firing 20.8% of ticks
+                                  # after the 2026-08-11 window fixes) stays put.
+                                  # 2026-08-13, measured on 38,257 paired live
+                                  # observations at MOMENTUM_WINDOW_SECS=600, the JOINT
+                                  # probability of both BREAKOUT gates clearing:
+                                  #   accel 0.0040 / mom 0.0030 -> 0.144%  (current)
+                                  #   accel 0.0025 / mom 0.0020 -> 1.012%
+                                  #   accel 0.0017 / mom 0.0015 -> 3.550%
+                                  #   accel 0.0013 / mom 0.0015 -> 5.617%
+                                  #   accel 0.0013 / mom 0.0010 -> 7.227%
+                                  # |accel| p99 is 0.00267, so the 0.004 gate sits near
+                                  # the 99.8th percentile — BREAKOUT has never once
+                                  # fired in 267,868 recorded live ticks.
 
 # Kelly position sizing
 KELLY_FRACTION      = 0.25    # quarter-Kelly multiplier

@@ -25,7 +25,8 @@ class RegimeEngine:
         z     = feed.zscore(300)
         cn, cd= feed.consecutive()
 
-        if abs(accel) > BREAKOUT_ACCEL and abs(mom) > TREND_THRESHOLD * 2:
+        if (abs(accel) > _C.BREAKOUT_ACCEL
+                and abs(mom) > TREND_THRESHOLD * _C.BREAKOUT_MOM_MULT):
             regime    = "BREAKOUT"
             direction = "UP" if accel > 0 else "DN"
             conf      = min(0.90, abs(accel) / BREAKOUT_ACCEL * 0.5)

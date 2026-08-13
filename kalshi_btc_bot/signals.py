@@ -306,11 +306,19 @@ class SignalEngine:
                 continue
 
             ratio = yes_ask / true_p
+            # Absolute edge on the side we actually buy. The ratio test above is
+            # scale-free, so a big ratio on a tiny true_prob still leaves almost
+            # no edge once you pay 90c for the NO. See config.
+            no_cost  = 1.0 - c.get("bid", yes_ask)
+            net_edge = (1.0 - true_p) - no_cost
+            if net_edge < _C.BOUNDARY_NO_MIN_NET_EDGE:
+                continue
             if ratio > best_ratio:
                 best_ratio = ratio
                 best = {
                     **c,
                     "signal":            "BOUNDARY_NO",
+                    "net_edge":          net_edge,
                     "true_prob":         true_p,
                     "overpricing_ratio": ratio,
                     "edge_pct":          (yes_ask - true_p) / true_p * 100,
