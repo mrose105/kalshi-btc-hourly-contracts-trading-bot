@@ -98,9 +98,13 @@ def main():
                               "no": L["no"]})
 
     # trades.csv timestamps are NAIVE LOCAL; recordings are tz-aware UTC.
-    # Convert once here rather than comparing mixed-awareness datetimes.
+    # Resolve the offset from the machine rather than hardcoding one: a fixed
+    # +4h silently corrupts every comparison the moment the clock is not EDT —
+    # travelling, or simply DST ending. astimezone() on a naive datetime applies
+    # the local zone AT THAT DATE, so it also handles trades that straddle a DST
+    # boundary correctly, which a single constant cannot.
     def to_utc(naive):
-        return naive.replace(tzinfo=dt.timezone.utc) + dt.timedelta(hours=4)
+        return naive.astimezone(dt.timezone.utc)
 
     out = collections.defaultdict(list)
     for tp in trips:

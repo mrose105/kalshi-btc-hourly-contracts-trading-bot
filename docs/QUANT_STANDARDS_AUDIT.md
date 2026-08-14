@@ -251,6 +251,40 @@ Two traps worth recording:
   "fix" would have silently killed the strategy. The existing scaling already
   matches live (p90 2.35 vs 2.28). Left alone deliberately.
 
+## 1f. 21% of recorded data is missing to macOS sleep — found 2026-08-14
+
+The recorder loses roughly a fifth of wall-clock time, and it was previously
+misattributed to bot restarts (see missed_trades.py, which dropped 1,048 of
+1,960 contracts for unresolvable settlement).
+
+Measured across all `quotes` recordings: **68 gaps over 5 minutes, totalling
+43.8 hours against 207.3 hours of nominal span — 21%.** Almost every gap is
+*exactly* 2.0 hours, and they cluster between 01:00 and 09:00 UTC.
+
+Cause is macOS `Maintenance Sleep`, confirmed in `pmset -g log`:
+
+    01:09:04  Entering Sleep  Using Batt (Charge:74%)  7202 secs
+    03:09:14  Entering Sleep  Using Batt (Charge:72%)  3953 secs
+    04:15:15  Entering Sleep  Using Batt (Charge:71%)  1764 secs
+    05:03:02  Entering Sleep  Using Batt (Charge:69%)  7208 secs
+
+The bot runs under `caffeinate -dimsu`, but `-s` prevents system sleep **only on
+AC power** — a documented limitation. On battery the machine sleeps regardless;
+`caffeinate` holds only `PreventUserIdleSystemSleep`, which does not cover
+maintenance sleep. The process stays alive the whole time and simply receives
+no ticks, so nothing looks broken from inside.
+
+Consequences:
+- Every dataset here is ~21% short, and NON-RANDOMLY so: gaps land overnight,
+  biasing all recorded-data studies toward US-session conditions.
+- Settlement resolution suffers disproportionately — a 2h gap swallows two
+  entire hourly expiries, which is why over half of all contracts were
+  unresolvable.
+- The bot is not trading during those windows either. Idle stretches previously
+  read as "no opportunity" were partly "no data".
+
+Fix: keep the machine on AC, and/or `sudo pmset -b sleep 0 disablesleep 1`.
+
 ## 1c. Convex/wider stop-loss for OTM contracts — tested and rejected, 2026-08-06
 
 Hypothesis (user-proposed, from a real trade that stopped out then would

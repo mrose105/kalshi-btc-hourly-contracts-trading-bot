@@ -24,7 +24,16 @@ Honest limits, stated rather than buried:
     literally have earned.
   * Holding to settlement is not what the bot does — it exits on tiers.
   * Settlement resolves from recorded spot nearest the close time, so contracts
-    whose expiry falls outside the recording window are dropped.
+    whose expiry falls outside the recording window are dropped. On the first
+    run that dropped 1,048 of 1,960 contracts, which was ATTRIBUTED TO BOT
+    RESTARTS. That was wrong. Measured 2026-08-14: 68 gaps >5min totalling
+    43.8h — 21% of the whole recording window — almost all exactly 2.0h and
+    clustered 01:00-09:00 UTC. They are macOS Maintenance Sleep cycles. The bot
+    runs under `caffeinate -dimsu`, but -s only prevents system sleep ON AC
+    POWER; on battery the machine sleeps anyway and the process stays alive
+    receiving nothing. Fix is AC power, or `sudo pmset -b sleep 0 disablesleep 1`.
+    The gaps are also non-random — they concentrate overnight, biasing every
+    study here toward US-session conditions.
   * Independent unit is the contract, not the observation.
 
 Usage:
