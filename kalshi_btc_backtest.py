@@ -48,6 +48,21 @@ from kalshi_btc_bot             import config as C
 # ─────────────────────────────────────────────
 # CONSTANTS
 # ─────────────────────────────────────────────
+# REPRODUCIBILITY, measured 2026-08-14. Within one fetch the simulation is
+# exactly deterministic — three consecutive runs on 2026-06-18..2026-07-27 all
+# returned +88.92% / Sharpe 6.390 / 213 trades, to the digit. ACROSS fetches it
+# is not: the same fixed window returned +88.92% and +87.00% on two runs hours
+# apart with identical code, because yfinance re-serves 5-minute history that
+# shifts slightly (its ~60-day intraday limit also trims the start as the
+# boundary rolls forward daily).
+#
+# The practical consequence for tuning: a Sharpe difference of ~0.1, or a
+# return difference of ~2pp, between two sweep candidates is INSIDE the noise
+# floor of the data source and is not evidence of anything. Only differences
+# that survive re-running, or that show up as the same value winning both
+# windows, should be acted on. This is also why a rolling --days N baseline
+# drifts between sessions (230 trades/+122.63% -> 226/+124.86% over one
+# afternoon) with no code change at all.
 BAR_MINUTES   = 5
 BARS_PER_HOUR = 60 // BAR_MINUTES
 
@@ -444,6 +459,11 @@ class BacktestPortfolio:
         self.realized   = 0.0
         self.peak_total = capital
         self.trade_count = 0
+        # Dollars deployed on the last entry in each ticker. Deliberately NOT
+        # cleared when the position closes — the whole point is to remember a
+        # contract that already stopped us out. Tickers are unique per
+        # expiry+strike, so this is naturally scoped to one contract's life.
+        self.prior_entry_cost = {}
         self._session_day = None
 
     # Live bot is restarted each session, so SESSION_STOP_PCT resets daily.
@@ -506,6 +526,15 @@ class BacktestPortfolio:
         exposure_room = t * C.MAX_EXPOSURE_PCT - self.exposure()
         return max(0, min(max_trade, self.cash, exposure_room))
 
+    def _reentry_cap(self, ticker: str, budget: float) -> float:
+        """Stop size escalating across repeat attempts on one contract."""
+        if C.REENTRY_SIZE_DECAY <= 0:
+            return budget
+        prior = self.prior_entry_cost.get(ticker)
+        if prior is None:
+            return budget
+        return min(budget, prior * C.REENTRY_SIZE_DECAY)
+
     def buy(self, contract: dict, true_prob: float, bar_ts: datetime,
             is_snipe: bool = False) -> bool:
         ticker = contract["ticker"]
@@ -513,6 +542,7 @@ class BacktestPortfolio:
         if ticker in self.positions:
             return False
         budget = self._budget(ask, true_prob, is_snipe=is_snipe)
+        budget = self._reentry_cap(ticker, budget)
         count  = int(budget / ask) if ask > 0 else 0
         # Depth realism — see _MAX_ENTRY_SIZE docstring. Cap fill size only;
         # deliberately NOT also charging an entry-side price penalty. The one
@@ -527,6 +557,7 @@ class BacktestPortfolio:
         if count <= 0 or cost > self.cash:
             return False
         self.cash -= cost
+        self.prior_entry_cost[ticker] = cost
         self.trade_count += 1
         self.positions[ticker] = {
             "count":          count,
@@ -726,6 +757,13 @@ class BacktestPortfolio:
 
             pnl_pct      = (bid - entry) / entry if entry > 0 else 0
             peak_pnl_pct = (peak - entry) / entry if entry > 0 else 0
+            # Shadow instrumentation only — never gates an exit. Records whether
+            # the position had shown ANY gain by each age, so we can ask what a
+            # cut at that age would have thrown away. Set once, at the bar the
+            # age is reached, so it reflects knowledge available at that moment.
+            for _b in (1, 2, 3, 4, 6):
+                if pos["bars_held"] == _b and f"green_by_{_b}" not in pos:
+                    pos[f"green_by_{_b}"] = peak_pnl_pct > 0
             drop_peak    = (peak - bid)  / peak   if peak  > 0 else 0
             tp_prev  = pos.get("true_prob_prev", 0.0)
             tp_curr  = pos.get("true_prob_curr", 0.0)
@@ -797,6 +835,14 @@ class BacktestPortfolio:
                     and abs(dist_val) <= C.BOUNDARY_RISK_DIST
                     and (tp_curr < tp_prev or pnl_pct <= C.BOUNDARY_RISK_HARD_STOP)):
                 reason = "boundary_risk"
+            # TIER 5.5 — never-green cut. A position that has never traded above
+            # its entry is not giving back a gain and has not necessarily moved
+            # enough to stop out; it was simply wrong from the start. Uses
+            # bars_held (5-min bars) for age.
+            elif (C.CUT_NEVER_GREEN_MINS > 0
+                    and pos["bars_held"] * BAR_MINUTES >= C.CUT_NEVER_GREEN_MINS
+                    and peak_pnl_pct <= 0):
+                reason = "never_green"
             # TIER 6 — stop loss. never_covered uses the wider STOP_UNCOVERED_PCT
             # catastrophe floor, not the tighter STOP_LOSS_PCT/time_urgency stop —
             # matches positions.py's stop_thr/stop_ok branch (previously this
@@ -879,6 +925,7 @@ class BacktestPortfolio:
             "peak_pnl_pct":    round((pos["peak"] - pos["entry"]) / pos["entry"] * 100, 1)
                                 if pos["entry"] > 0 else 0.0,
             "is_snipe":        pos.get("is_snipe", False),
+            **{f"green_by_{_b}": pos.get(f"green_by_{_b}") for _b in (1, 2, 3, 4, 6)},
         })
 
 

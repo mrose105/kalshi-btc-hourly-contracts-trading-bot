@@ -56,14 +56,25 @@ def _ensure_log_schema() -> None:
     print(f"  🗃  trades.csv migrated to current schema "
           f"({len(migrated)} rows, backup: {backup.name})")
 
-from .config import (
-    MAX_EXPOSURE_PCT, MAX_POSITIONS, MAX_TRADE_PCT, MIN_CASH_FLOOR,
-    NO_TRADE_PCT, PAPER_CAPITAL, PAPER_TRADING,
-    EXIT_RETRY_COOLDOWN, FORCE_EXIT_SLIPPAGE_CENTS, SESSION_STOP_PCT,
-    UNTRACKED_EXPOSURE_LIMIT, MAX_ASK, MAX_SPREAD, MAX_SPREAD_PCT,
-    KELLY_FRACTION, KELLY_CAP, STOP_COOLDOWN_SECS, EXIT_COOLDOWN_SECS, SNIPE_TRADE_PCT,
-    MIN_EDGE, NO_OVERPRICING_MIN, BOUNDARY_NO_OVERPRICING_MIN,
-)
+# Only true process-mode flags are bound at import. Every TUNABLE constant is
+# read module-qualified as _C.X at call time instead.
+#
+# WHY THIS MATTERS: `from .config import X` snapshots the value once, at import.
+# A sweep that does `config.X = v` then rebinds nothing here, so the sweep runs
+# the ORIGINAL value for every candidate and reports a flat/byte-identical
+# curve — which reads as "this parameter does not matter" when it was never
+# actually varied. That exact bug has now been found three times in this
+# codebase (regime.py MOMENTUM_WINDOW_SECS, signals.py, and here). Live
+# behaviour was never wrong; the TOOLING silently lied, which is worse, because
+# a no-op sweep looks like a finished experiment.
+#
+# SCOPE, checked rather than assumed: no PAST result is void. Every existing
+# sweep drives run_backtest(), and the backtest reads C.X module-qualified
+# already (kalshi_btc_backtest.py:885 for the cooldowns), so cooldown_sweep.py
+# and friends did vary what they claimed to vary. This closes a latent trap for
+# anything that sweeps against the LIVE portfolio, which nothing does yet.
+from . import config as _C
+from .config import PAPER_CAPITAL, PAPER_TRADING
 from . import live_view
 from . import recorder
 
@@ -174,25 +185,25 @@ class Portfolio:
         total = self.total_value()
         if self.peak_total > 0:
             loss_pct = 1 - total / self.peak_total
-            if loss_pct > SESSION_STOP_PCT:
+            if loss_pct > _C.SESSION_STOP_PCT:
                 print(f"  🛑 Session stop ({loss_pct:.0%} down, ${total:.2f} vs peak ${self.peak_total:.2f})")
                 return False
-        if len(self.positions) >= MAX_POSITIONS:
-            print(f"  🛑 Max positions ({MAX_POSITIONS})")
+        if len(self.positions) >= _C.MAX_POSITIONS:
+            print(f"  🛑 Max positions ({_C.MAX_POSITIONS})")
             return False
-        if self.real_cash < MIN_CASH_FLOOR:
+        if self.real_cash < _C.MIN_CASH_FLOOR:
             print(f"  🛑 Cash floor (${self.real_cash:.2f})")
             return False
         if (
             not PAPER_TRADING
             and not self.positions
-            and self.real_port > UNTRACKED_EXPOSURE_LIMIT
+            and self.real_port > _C.UNTRACKED_EXPOSURE_LIMIT
         ):
             print(f"  🛑 Untracked live exposure (${self.real_port:.2f}); reconcile before new entries")
             return False
         exposure = self.current_exposure()
-        if exposure >= total * MAX_EXPOSURE_PCT:
-            print(f"  🛑 Max exposure (${exposure:.2f} / ${total * MAX_EXPOSURE_PCT:.2f})")
+        if exposure >= total * _C.MAX_EXPOSURE_PCT:
+            print(f"  🛑 Max exposure (${exposure:.2f} / ${total * _C.MAX_EXPOSURE_PCT:.2f})")
             return False
         # MIN_CASH_PCT reserve check was here — redundant. MAX_EXPOSURE_PCT
         # already caps positions at 18% of total → cash floor is implicitly
@@ -214,12 +225,12 @@ class Portfolio:
             return 0.0
         edge   = true_prob - ask
         f_star = edge / (1.0 - ask)
-        return min(KELLY_CAP, max(0.005, f_star * KELLY_FRACTION))
+        return min(_C.KELLY_CAP, max(0.005, f_star * _C.KELLY_FRACTION))
 
-    def budget(self, trade_pct: float = MAX_TRADE_PCT) -> float:
+    def budget(self, trade_pct: float = _C.MAX_TRADE_PCT) -> float:
         total         = self.total_value()
         max_trade     = total * trade_pct
-        exposure_room = total * MAX_EXPOSURE_PCT - self.current_exposure()
+        exposure_room = total * _C.MAX_EXPOSURE_PCT - self.current_exposure()
         # MIN_CASH_PCT reserve removed — MAX_EXPOSURE_PCT already caps cash
         # deployment at 82% of total (18% max in positions).
         return max(0, min(max_trade, self.real_cash, exposure_room))
@@ -464,12 +475,12 @@ class Portfolio:
         let it drive size on a lottery-ticket bet."""
         ticker    = contract["ticker"]
         bid, ask  = self._fresh_quote(ticker)
-        if ask <= 0 or bid <= 0 or ask <= bid or ask > MAX_ASK:
+        if ask <= 0 or bid <= 0 or ask <= bid or ask > _C.MAX_ASK:
             return False
         spread = ask - bid
-        if spread > MAX_SPREAD or spread / ask > MAX_SPREAD_PCT:
+        if spread > _C.MAX_SPREAD or spread / ask > _C.MAX_SPREAD_PCT:
             return False
-        if true_prob - ask < MIN_EDGE:
+        if true_prob - ask < _C.MIN_EDGE:
             return False
         limit = ask
 
@@ -481,15 +492,15 @@ class Portfolio:
             # Re-check under lock: can_trade() runs once per scan tick, but up
             # to 4 signals (YES/NO/BOUNDARY_NO/SNIPE) can each call buy in that
             # tick — without this, MAX_POSITIONS could be exceeded by 3.
-            if len(self.positions) >= MAX_POSITIONS:
+            if len(self.positions) >= _C.MAX_POSITIONS:
                 return False
-            kelly_pct = SNIPE_TRADE_PCT if is_snipe else Portfolio.kelly_fraction(true_prob, ask)
+            kelly_pct = _C.SNIPE_TRADE_PCT if is_snipe else Portfolio.kelly_fraction(true_prob, ask)
             budget    = self.budget(trade_pct=kelly_pct)
             count     = int(budget / limit) if limit > 0 else 0
 
             # Kelly rounds to 0 — fall back to 1 contract within MAX_TRADE_PCT
             if count <= 0:
-                fallback_pct = SNIPE_TRADE_PCT if is_snipe else MAX_TRADE_PCT
+                fallback_pct = _C.SNIPE_TRADE_PCT if is_snipe else _C.MAX_TRADE_PCT
                 budget = self.budget(trade_pct=fallback_pct)
                 count  = int(budget / limit) if limit > 0 else 0
 
@@ -590,9 +601,9 @@ class Portfolio:
             # _fresh_quote already logged the failure reason
             return False
         spread = yes_ask - bid
-        if spread > MAX_SPREAD or spread / yes_ask > MAX_SPREAD_PCT:
+        if spread > _C.MAX_SPREAD or spread / yes_ask > _C.MAX_SPREAD_PCT:
             self._log_reject(ticker, f"spread ${spread:.3f} ({spread/yes_ask:.0%}) "
-                                     f"over MAX_SPREAD ${MAX_SPREAD:.2f}/{MAX_SPREAD_PCT:.0%}")
+                                     f"over MAX_SPREAD ${_C.MAX_SPREAD:.2f}/{_C.MAX_SPREAD_PCT:.0%}")
             return False
 
         # Re-validate the mispricing against the fresh quote before committing.
@@ -604,9 +615,9 @@ class Portfolio:
         # overpricing that justified the fade could be entirely gone and the NO
         # was bought anyway. BOUNDARY_NO carries its own (lower) bar because
         # the z-score extreme supplies independent conviction.
-        min_ratio = (BOUNDARY_NO_OVERPRICING_MIN
+        min_ratio = (_C.BOUNDARY_NO_OVERPRICING_MIN
                      if contract.get("signal") == "BOUNDARY_NO"
-                     else NO_OVERPRICING_MIN)
+                     else _C.NO_OVERPRICING_MIN)
         if true_prob <= 0 or yes_ask / true_prob < min_ratio:
             _r = (yes_ask / true_prob) if true_prob > 0 else 0
             self._log_reject(ticker, f"overpricing {_r:.2f}x fell under {min_ratio:.2f}x "
@@ -629,14 +640,14 @@ class Portfolio:
             if ticker in self.positions:
                 self._log_reject(ticker, "already holding this contract")
                 return False
-            if len(self.positions) >= MAX_POSITIONS:
-                self._log_reject(ticker, f"MAX_POSITIONS {MAX_POSITIONS} already open")
+            if len(self.positions) >= _C.MAX_POSITIONS:
+                self._log_reject(ticker, f"MAX_POSITIONS {_C.MAX_POSITIONS} already open")
                 return False
             if no_cost <= 0 or no_cost >= 1.0:
                 self._log_reject(ticker, f"no_cost ${no_cost:.3f} out of range")
                 return False
 
-            budget = self.budget(NO_TRADE_PCT)
+            budget = self.budget(_C.NO_TRADE_PCT)
             count  = int(budget / no_cost) if no_cost > 0 else 0
             cost   = no_cost * count
 
@@ -768,7 +779,7 @@ class Portfolio:
             if not PAPER_TRADING:
                 now = time.time()
                 last_attempt = pos.get("last_exit_attempt", 0)
-                if now - last_attempt < EXIT_RETRY_COOLDOWN:
+                if now - last_attempt < _C.EXIT_RETRY_COOLDOWN:
                     return False
                 self.positions[ticker]["last_exit_attempt"] = now
 
@@ -801,7 +812,7 @@ class Portfolio:
             ))
             order_bid = bid
             if urgent:
-                order_bid = max(0.01, bid - FORCE_EXIT_SLIPPAGE_CENTS / 100)
+                order_bid = max(0.01, bid - _C.FORCE_EXIT_SLIPPAGE_CENTS / 100)
             try:
                 result = self.client._request(
                     "POST",
@@ -932,12 +943,12 @@ class Portfolio:
                 # profit-lock previously left the ticker immediately re-buyable,
                 # so the bot re-chased the contract it had just sold at a worse
                 # price. Loss-cuts still get the longer block.
-                cooldown = STOP_COOLDOWN_SECS if is_loss_cut else EXIT_COOLDOWN_SECS
+                cooldown = _C.STOP_COOLDOWN_SECS if is_loss_cut else _C.EXIT_COOLDOWN_SECS
                 self.stop_cooldowns[ticker] = time.time() + cooldown
         if done:
             live_view.drop_position(ticker)
         if done:
-            _secs = STOP_COOLDOWN_SECS if is_loss_cut else EXIT_COOLDOWN_SECS
+            _secs = _C.STOP_COOLDOWN_SECS if is_loss_cut else _C.EXIT_COOLDOWN_SECS
             _kind = "Stop" if is_loss_cut else "Re-entry"
             if live_view.ENABLED:
                 live_view.log_event(f"🚫 {_kind} cooldown {ticker[-18:]} ({_secs//60}m)")

@@ -251,6 +251,83 @@ STOP_UNCOVERED_PCT  = 0.65       # TIER 6 floor for positions OPENED inside STOP
                                   # cannot cut a winner, only a position already most of the way
                                   # to a total loss. Same number the user chose for
                                   # BOUNDARY_RISK_HARD_STOP, for the same reason.
+CUT_NEVER_GREEN_MINS = 0         # REJECTED BY EVIDENCE — kept at 0, do not enable.
+                                  # The premise looked strong: 58 of 313 backtest
+                                  # trades never traded above entry and lost
+                                  # -$324.47, only 7 recovering. But "never green
+                                  # YET" at 5 minutes is a completely different
+                                  # population from "never green EVER", and the
+                                  # difference is the whole trade.
+                                  # Measured by shadow instrumentation (green_by_N,
+                                  # which records status at each age without acting
+                                  # on it), of positions still red at 5 minutes:
+                                  #     67% went green later
+                                  #     39% ended winners
+                                  #     net P&L +$251.59, not negative
+                                  # Their winners average +$16.20 against losers at
+                                  # -$4.32 — a 3.75:1 payoff living entirely inside
+                                  # the cohort this rule would have killed. That is
+                                  # structural, not a fluke: a cheap OTM binary is
+                                  # SUPPOSED to sit underwater while spot works
+                                  # toward the strike. Being red early is the normal
+                                  # state of the eventual winner.
+                                  # never_green_sweep.py confirms: every value on
+                                  # 0/5/10/15/20/30 loses to OFF on BOTH windows,
+                                  # monotonically worse the tighter the cut
+                                  # (tuning +88.9% -> +69.7% at 5 min).
+REENTRY_SIZE_DECAY  = 0.0        # 0 = disabled. If > 0, any entry on a ticker
+                                  # already traded this expiry is capped at
+                                  # DECAY x the dollars deployed on the previous
+                                  # entry in that same ticker. 1.0 = "never bigger
+                                  # than last time", 0.5 = each attempt half the
+                                  # last.
+                                  #
+                                  # WHY: Kelly sizes UP as a contract collapses.
+                                  # f* = (true_prob - ask)/(1 - ask), so with the
+                                  # MODEL UNCHANGED at true_prob=0.20, an ask
+                                  # falling 0.21 -> 0.09 takes f* from 0 to 0.121
+                                  # while each dollar also buys 2.3x more
+                                  # contracts. The model does not have to be wrong
+                                  # for size to explode — it only has to stay the
+                                  # same while the market disagrees harder.
+                                  #
+                                  # Observed live, B63625 on 2026-08-13:
+                                  #   16:10  19 @ $0.21 ($3.99)  -> stop  -$1.90
+                                  #   16:16  33 @ $0.15 ($4.95)  -> stop  -$2.31
+                                  #   16:29 138 @ $0.09 ($12.42) -> stop  -$6.90
+                                  # 7x the contracts on the third attempt, and the
+                                  # single worst loss of the session. STOP_COOLDOWN
+                                  # did not stop it: the re-entries landed at 5:01
+                                  # and 5:02 after each stop, just past the 300s
+                                  # timer. The cooldown is a timer with no memory —
+                                  # it never learns that this contract already beat
+                                  # us. This is the memory.
+                                  #
+                                  # TESTED, AND NOT ENABLED. The mechanism above
+                                  # is real, but neither test supports acting:
+                                  #   * Backtest VALIDATION window: 28 trades, 28
+                                  #     distinct tickers — ZERO re-entries. The cap
+                                  #     cannot bind, so all values return
+                                  #     byte-identical results. The window carries
+                                  #     no information about this parameter.
+                                  #   * Backtest TUNING window: only 14 re-entries
+                                  #     in 213 trades. DECAY=0.75 gives return
+                                  #     +88.9% -> +76.4%, maxDD -12.2% -> -11.1%,
+                                  #     Sharpe 6.39 -> 6.48. Underpowered either
+                                  #     way.
+                                  #   * Live-book counterfactual (same fills, fewer
+                                  #     contracts) is the decisive one and it says
+                                  #     NO: return on deployed capital goes -12.3%
+                                  #     (off) -> -17.4% (0.75/0.5). The re-entries
+                                  #     were better per dollar than the first
+                                  #     entries, matching the by-attempt split
+                                  #     where attempt 3+ averages +$21.11 (n=17).
+                                  # The backtest structurally UNDER-REPRESENTS
+                                  # re-entry — 5-min bars leave far less room to
+                                  # re-enter inside a contract's life than 2s live
+                                  # ticks, which is why live shows 53 re-entries
+                                  # against the backtest's 14. Treat any future
+                                  # re-entry rule as untestable on bars.
 STOP_MIN_HOURS      = 0.30       # TIER 6 gate: stop only fires if > 18 min left.
                                   # Below this, TIME_EXIT_MINS handles OTM exits and
                                   # expiry_settle captures ITM wins — don't stop binary
