@@ -259,7 +259,27 @@ python3 -m kalshi_btc_bot
 
 # Live mode: set PAPER_TRADING = False
 caffeinate -dimsu python3 -m kalshi_btc_bot   # caffeinate keeps Mac awake
+
+# Live dashboard (full-screen TUI: open positions, signals, exits as they fire)
+KALSHI_LIVE_VIEW=1 caffeinate -dimsu python3 -m kalshi_btc_bot 2>&1 | tee -a bot_session.log
 ```
+
+`KALSHI_LIVE_VIEW=1` switches output from the scrolling log to the dashboard in
+`live_view.py`. Anything other than exactly `1` leaves it off, so
+`KALSHI_LIVE_VIEW=true` silently does nothing.
+
+**Keep the Mac on AC power, or run this first:**
+
+```bash
+sudo pmset -b sleep 0 disablesleep 1
+```
+
+`caffeinate -s` only prevents system sleep **on AC power**. On battery the
+machine sleeps anyway, the process stays alive, and it receives nothing — this
+cost 21% of all recorded data (68 gaps totalling 43.8h, almost all exactly 2.0h
+and clustered 01:00–09:00 UTC). The gaps are non-random: they concentrate
+overnight, which biases every recording-based study toward US-session
+conditions.
 
 ### API key setup
 
