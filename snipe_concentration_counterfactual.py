@@ -20,8 +20,35 @@ compare its eventual P&L to whatever the real run actually did in its place
 (a different ticker, or nothing). Sum the differences -- that sum is the
 filter's real, uncontaminated effect.
 
+RESOLVED 2026-08-17 -- the filter is redundant; do not ship it.
+Run over the full continuous span available from yfinance 5m data
+(2026-06-19 -> 2026-08-16, 232 trades), the filter blocks exactly ONE
+decision, and that one decision cost $1.50. It is a no-op.
+
+The 39 diversions the tuning window once showed were an artifact of a
+mis-specified instrument, not a real effect. _clustered() already rejects a
+new entry whose strike is within STRIKE_CLUSTER_DIST (150) of an open
+position *in the same expiry window* -- so on the real ladder, whose strikes
+are RANGE_WIDTH (100) apart, the cluster filter already blocks the adjacent
+same-expiry strike and this filter has almost nothing left to catch. Back
+when the backtest ladder was still built at the wrong RANGE_WIDTH=250,
+strike spacing (250) exceeded STRIKE_CLUSTER_DIST (150), _clustered could
+never fire within an expiry, and this filter appeared to do real work.
+Re-running the same span with RANGE_WIDTH forced back to 250 reproduces the
+artifact exactly: 26 diversions, net +$8.37 (filter "helps"). At the correct
+RANGE_WIDTH=100: 1 diversion, net -$1.50. The apparent edge was the bug.
+
+Caveat on the dollar figures (does not change the conclusion): each shadow
+runs at fixed $capital while the root portfolio compounds, so blocked-vs-
+actual P&L are not on the same capital base. The conclusion rests on the
+diversion COUNT (1 in 58 days), which sizing cannot affect.
+
+If the mutual-exclusivity thesis is ever revisited, the principled lever is
+STRIKE_CLUSTER_DIST (widen it toward a full expiry), not a second parallel
+filter -- but nothing here is evidence that it would pay.
+
 Usage:
-    python3 snipe_concentration_counterfactual.py --start 2026-06-08 --end 2026-07-18
+    python3 snipe_concentration_counterfactual.py --start 2026-06-19 --end 2026-08-16
 """
 import argparse
 import sys

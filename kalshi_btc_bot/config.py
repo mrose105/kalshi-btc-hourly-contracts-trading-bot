@@ -32,6 +32,13 @@ STRIKE_CLUSTER_DIST = 150        # skip a new entry if its strike is within this
                                   # adjacent strikes (62550-62850), then one BTC breakout
                                   # busted all 4 simultaneously and filled every slot with
                                   # dead positions, locking out a genuinely better ATM entry.
+                                  # 2026-08-17: note 150 > RANGE_WIDTH (100), so this already
+                                  # blocks the ADJACENT same-expiry strike. That makes a
+                                  # separate "one snipe per expiry" filter redundant — it was
+                                  # measured at 1 blocked decision in 58 days, worth -$1.50,
+                                  # and rejected. See snipe_concentration_counterfactual.py.
+                                  # If per-expiry concentration ever needs tightening, widen
+                                  # THIS number rather than adding a parallel filter.
 SESSION_STOP_PCT    = 0.03       # stop NEW entries if down 3% (was 0.05)
 MIN_CASH_FLOOR      = 0.25       # never trade with less than $0.25
 UNTRACKED_EXPOSURE_LIMIT = 0.25  # block new trades if live exposure exceeds tracked exposure by this much
