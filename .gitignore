@@ -91,3 +91,6 @@ peak_giveback_sweep.py
 /signals.py
 live_pnl.png
 montecarlo.png
+
+# Claude Code local state (worktrees, session scratch)
+.claude/worktrees/
