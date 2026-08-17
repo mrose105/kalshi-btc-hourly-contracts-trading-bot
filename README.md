@@ -260,13 +260,27 @@ python3 -m kalshi_btc_bot
 # Live mode: set PAPER_TRADING = False
 caffeinate -dimsu python3 -m kalshi_btc_bot   # caffeinate keeps Mac awake
 
-# Live dashboard (full-screen TUI: open positions, signals, exits as they fire)
-KALSHI_LIVE_VIEW=1 caffeinate -dimsu python3 -m kalshi_btc_bot 2>&1 | tee -a bot_session.log
+# Live dashboard + recording — THIS IS THE NORMAL WAY TO RUN IT
+KALSHI_RECORD=1 KALSHI_LIVE_VIEW=1 caffeinate -dimsu python3 -m kalshi_btc_bot 2>&1 | tee -a bot_session.log
 ```
 
-`KALSHI_LIVE_VIEW=1` switches output from the scrolling log to the dashboard in
-`live_view.py`. Anything other than exactly `1` leaves it off, so
-`KALSHI_LIVE_VIEW=true` silently does nothing.
+Two independent env vars, both gated on the string being **exactly** `1`
+(`os.getenv(...) == "1"`), so `KALSHI_RECORD=true` silently does nothing:
+
+| var | effect if unset |
+|---|---|
+| `KALSHI_RECORD=1` | **no market data is captured at all** — `recordings/` gets no file for the session |
+| `KALSHI_LIVE_VIEW=1` | falls back to the scrolling log instead of the `live_view.py` dashboard |
+
+`KALSHI_RECORD` is the one that matters and the easy one to forget, because the
+bot trades perfectly normally without it and says nothing. A session run without
+it on 2026-08-15 traded for 1h35m and left zero recordings, which silently costs
+every downstream tool (`missed_trades.py`, `exit_timing_study.py`,
+`real_price_edge_test.py`) its only input. Check after starting:
+
+```bash
+ls -lt recordings/ | head -3    # newest files should carry today's UTC date
+```
 
 **Keep the Mac on AC power, or run this first:**
 

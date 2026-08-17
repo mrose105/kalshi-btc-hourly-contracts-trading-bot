@@ -100,6 +100,10 @@ class Portfolio:
         self.real_cash    = 0.0
         self.real_port    = 0.0
         self.stop_cooldowns: dict = {}   # ticker → expiry timestamp after stop loss
+        self._session_day = None         # UTC date of the current session — see
+                                         # _roll_session(). Without this the
+                                         # SESSION_STOP_PCT breaker latches for
+                                         # the life of the process.
 
         # Guards real_cash/real_port/positions/stop_cooldowns mutation now that
         # entry scanning and position management run on independent threads.
@@ -127,6 +131,44 @@ class Portfolio:
         with open(_LOG_PATH, "a", newline="") as f:
             csv.DictWriter(f, fieldnames=_LOG_FIELDS).writerow(row)
 
+    def _roll_session(self) -> None:
+        """Re-baseline the SESSION_STOP_PCT high-water mark on a new UTC day.
+
+        WHY THIS EXISTS. can_trade() halts trading when total_value() is
+        SESSION_STOP_PCT below peak_total, and peak_total only ever ratchets UP
+        (sync() takes a max against it). Nothing lowered it, so the breaker had
+        no way to un-trip: once tripped it stayed tripped for the life of the
+        process.
+
+        Observed 2026-08-15. Four consecutive stop_35% exits took the paper book
+        to -$17.79 on $500 — past the 3% / $15.00 threshold — at 16:39. The
+        process then sat alive and halted for 1 day 18 hours, scanning and
+        refusing every signal, until it was noticed.
+
+        The backtest never showed this because BacktestPortfolio._roll_session
+        (kalshi_btc_backtest.py:467) re-baselines every simulated day, on the
+        stated assumption that "the live bot is restarted each session". That
+        assumption is what actually broke: the bot is now left up for days, so
+        the backtest was modelling a daily reset the live path did not have —
+        the same class of backtest/live divergence as RANGE_WIDTH and the
+        momentum window, and it made SESSION_STOP_PCT untestable in the only
+        place it was ever validated.
+
+        Re-baselining to CURRENT equity rather than to start_total is
+        deliberate: it keeps the breaker a real drawdown guard on the day's
+        capital instead of resurrecting a stale day-one number, matching the
+        reasoning already recorded on peak_total in __init__.
+        """
+        day = datetime.datetime.now(datetime.timezone.utc).date()
+        if self._session_day is None:
+            self._session_day = day
+            return
+        if day != self._session_day:
+            self._session_day = day
+            prev, self.peak_total = self.peak_total, self.total_value()
+            print(f"  🔄 New session day ({day}) — drawdown baseline "
+                  f"${prev:.2f} → ${self.peak_total:.2f}")
+
     def sync(self):
         if PAPER_TRADING:
             with self.lock:
@@ -137,6 +179,7 @@ class Portfolio:
                     self.peak_total  = PAPER_CAPITAL
                     print(f"  📊 [PAPER] Session baseline: ${self.start_total:.2f}")
                 else:
+                    self._roll_session()
                     self.peak_total = max(self.peak_total, self.total_value())
             return
         try:
@@ -149,6 +192,7 @@ class Portfolio:
                     self.peak_total  = self.start_total
                     print(f"  📊 Session baseline: ${self.start_total:.2f}")
                 else:
+                    self._roll_session()
                     self.peak_total = max(self.peak_total, self.total_value())
         except Exception as e:
             print(f"  ⚠️  Sync failed: {e}")
