@@ -7,19 +7,36 @@ from .config import (
 )
 from . import recorder
 from .contracts import is_in_money, otm_distance, parse_contract
+from .instrument import ACTIVE as _INSTRUMENT
 
 # ─────────────────────────────────────────────
 # KALSHI LADDER
 # ─────────────────────────────────────────────
 class Ladder:
+    """Scans the active instrument's series and returns tradeable contracts.
+
+    An instrument may list more than one series (SPX uses KXINXU for hourly
+    above/below digitals and KXINX for daily ranges). Kalshi's /markets endpoint
+    accepts a single series_ticker, and each series runs its own expiry
+    schedule, so the nearest window is resolved PER SERIES and the results are
+    unioned. With a single-series instrument like BTC this reduces to exactly
+    the previous single-request behavior.
+    """
+
     def __init__(self, client):
         self.client   = client
         self._cache   = []
         self._cache_t = 0
-        self._window  = ""
+        # series ticker -> nearest expiry window string
+        self._windows: dict[str, str] = {}
         self._quotes: dict = {}   # ticker -> (bid, ask, close_time, status)
         self._quotes_t = 0.0      # when _quotes was last refreshed
-        self._window_t = 0.0      # when the expiry window was last resolved
+        self._window_t = 0.0      # when the expiry windows were last resolved
+
+    @property
+    def _window(self) -> str:
+        """Combined window label, for display and the recorder's `win` field."""
+        return "+".join(w for w in self._windows.values() if w)
 
     @staticmethod
     def _window_from(markets: list) -> str:
@@ -43,26 +60,21 @@ class Ladder:
                 pass
         return best_w
 
+    def _fetch_series(self, series: str) -> list:
+        data = self.client._request("GET", "/markets",
+                 params={"limit": 200, "series_ticker": series,
+                         "status": "open"}, timeout=10)
+        return data.get("markets", [])
+
     def find_window(self) -> str:
         try:
-            data = self.client._request("GET", "/markets",
-                     params={"limit": 200, "series_ticker": "KXBTC",
-                             "status": "open"}, timeout=10)
-            now  = datetime.datetime.now(datetime.timezone.utc)
-            best_t, best_w = None, ""
-            for m in data.get("markets", []):
-                close = m.get("close_time", "")
-                try:
-                    ct = datetime.datetime.fromisoformat(close.replace("Z","+00:00"))
-                    h  = (ct - now).total_seconds() / 3600
-                    if MIN_HOURS <= h <= MAX_HOURS:
-                        if best_t is None or h < best_t:
-                            best_t = h
-                            best_w = m["ticker"].split("-")[1]
-                except:
-                    pass
-            return best_w
-        except:
+            windows = []
+            for series in _INSTRUMENT.series:
+                w = self._window_from(self._fetch_series(series))
+                if w:
+                    windows.append(w)
+            return "+".join(windows)
+        except Exception:
             return ""
 
     def get(self, spot: float, force: bool = False) -> list:
@@ -70,24 +82,34 @@ class Ladder:
         if not force and now - self._cache_t < LADDER_CACHE_SECONDS:
             return self._cache
         try:
-            data = self.client._request("GET", "/markets",
-                     params={"limit": 200, "series_ticker": "KXBTC",
-                             "status": "open"}, timeout=10)
-            # Derive the window from THIS payload rather than a second
-            # identical request (see _window_from).
-            if not self._window or now - self._window_t > 120:
-                self._window   = self._window_from(data.get("markets", []))
+            resolve_windows = not self._windows or now - self._window_t > 120
+
+            all_markets: list = []
+            win_markets: list = []
+            for series in _INSTRUMENT.series:
+                markets = self._fetch_series(series)
+                all_markets.extend(markets)
+                # Derive each series' window from THIS payload rather than a
+                # second identical request (see _window_from).
+                if resolve_windows:
+                    self._windows[series] = self._window_from(markets)
+                window = self._windows.get(series, "")
+                if not window:
+                    continue
+                # Capture the raw window BEFORE any entry filter — see
+                # recorder.record_universe for why the filtered `quotes` stream
+                # cannot be used to evaluate the filters themselves.
+                win_markets.extend(m for m in markets
+                                   if window in m.get("ticker", ""))
+            if resolve_windows:
                 self._window_t = now
-            if not self._window:
-                print(f"  ⏳ No active window (no open KXBTC markets in "
+
+            if not win_markets:
+                print(f"  ⏳ No active window (no open "
+                      f"{'/'.join(_INSTRUMENT.series)} markets in "
                       f"{MIN_HOURS:.2f}–{MAX_HOURS:.1f}h range)")
                 return []
-            # Capture the raw window BEFORE any entry filter — see
-            # recorder.record_universe for why the filtered `quotes` stream
-            # cannot be used to evaluate the filters themselves.
-            _win_markets = [m for m in data.get("markets", [])
-                            if self._window in m.get("ticker", "")]
-            recorder.record_universe(spot, self._window, _win_markets)
+            recorder.record_universe(spot, self._window, win_markets)
 
             # Publish the raw window so PositionManager can price open positions
             # from this one bulk response instead of a single-ticker fetch each.
@@ -103,12 +125,12 @@ class Ladder:
                     m.get("close_time", ""),
                     m.get("status", ""),
                 )
-                for m in data.get("markets", [])
+                for m in all_markets
             }
             self._quotes_t = now
 
             ladder = []
-            for m in _win_markets:
+            for m in win_markets:
                 ya  = float(m.get("yes_ask_dollars") or 0)
                 yb  = float(m.get("yes_bid_dollars") or 0)
                 vol = float(m.get("volume_fp") or 0)

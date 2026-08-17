@@ -547,8 +547,11 @@ KELLY_FRACTION      = 0.25    # quarter-Kelly multiplier
 KELLY_CAP           = 0.025   # hard cap on Kelly-derived fraction (matches MAX_TRADE_PCT)
 
 # Vol regime thresholds (hourly vol units = per-bar vol × sqrt(900))
-VOL_REGIME_LOW_H    = 0.005   # < LOW  → calm market (~50% annualized)
-VOL_REGIME_HIGH_H   = 0.015   # > HIGH → stressed market (~150% annualized)
+# MOVED to instrument.py (2026-08-17). These are instrument facts, not tuning
+# knobs: BTC's boundaries classify 99% of SPX's measured hourly vol as LOW,
+# which pins the regime to a constant and applies true_prob's 0.92 LOW haircut
+# permanently. regime.py now reads them from the active instrument profile.
+# BTC values were VOL_REGIME_LOW_H = 0.005 (~50% ann), HIGH = 0.015 (~150% ann).
 
 # Vol compression (Kalshi pricing-lag) signal
 # When fast EWMA << slow EWMA, Kalshi's lagged model overestimates vol →

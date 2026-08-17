@@ -2,9 +2,14 @@ import math
 
 from .config import (
     BARS_PER_HOUR, BREAKOUT_ACCEL, REVERT_ZSCORE,
-    TREND_BARS, TREND_THRESHOLD,
-    VOL_REGIME_LOW_H, VOL_REGIME_HIGH_H, VOL_RATIO_COMPRESSION,
+    TREND_BARS, TREND_THRESHOLD, VOL_RATIO_COMPRESSION,
 )
+from .instrument import ACTIVE as _INSTRUMENT
+
+# Per-instrument, not per-config: BTC's boundaries classify 99% of SPX's
+# observed hourly vol as LOW. See instrument.py.
+VOL_REGIME_LOW_H  = _INSTRUMENT.vol_regime_low_h
+VOL_REGIME_HIGH_H = _INSTRUMENT.vol_regime_high_h
 from . import config as _C   # module-qualified: sweeps mutate config at
                              # runtime, and a `from .config import X` name is
                              # frozen at import so it never sees the override

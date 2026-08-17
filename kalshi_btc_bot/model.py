@@ -4,18 +4,26 @@ from scipy.stats import norm
 
 from .contracts import is_in_money
 from .config import BARS_PER_HOUR
+from .instrument import ACTIVE as _INSTRUMENT
 
-# Vol cone: calibrated to BTC historical realized vol range
-# Hourly vol floor/cap expressed in hourly-vol units
-_VOL_H_FLOOR = 0.003   # ~30% annualized — never let model assume no movement
-_VOL_H_CAP   = 0.030   # ~280% annualized — extreme regime ceiling. 2026-07-06:
-                        # was 0.080 (~749% annualized using this file's own
-                        # √8760 annualization convention) — 6x too loose to ever
-                        # actually clamp a data-glitch/flash-crash vol_h spike
-                        # before it corrupts true_prob/gamma. 0.030 sits safely
-                        # above HIGH-regime-scaled vol (0.015*1.15≈0.0172,
-                        # ~161% annualized) so normal high-vol pricing is
-                        # unaffected, but genuinely bounds runaway readings.
+# Vol cone: hourly vol floor/cap expressed in hourly-vol units, per instrument.
+# These MUST come from the active instrument rather than being module constants.
+# The BTC values below are 1.67x SPX's median hourly vol — 85% of measured SPX
+# observations fall below the BTC floor — so an index instrument inheriting them
+# would have vol clamped upward on nearly every true_prob call. See
+# instrument.py for each instrument's measured range.
+_VOL_H_FLOOR = _INSTRUMENT.vol_h_floor
+_VOL_H_CAP   = _INSTRUMENT.vol_h_cap
+
+# BTC reference values, retained for provenance:
+#   floor 0.003 — ~30% annualized, never let the model assume no movement.
+#   cap   0.030 — ~280% annualized, extreme regime ceiling. 2026-07-06: was
+#     0.080 (~749% annualized using this file's own √8760 annualization
+#     convention) — 6x too loose to ever actually clamp a data-glitch or
+#     flash-crash vol_h spike before it corrupts true_prob/gamma. 0.030 sits
+#     safely above HIGH-regime-scaled vol (0.015*1.15≈0.0172, ~161%
+#     annualized) so normal high-vol pricing is unaffected, but genuinely
+#     bounds runaway readings.
 
 # ─────────────────────────────────────────────
 # DISTRIBUTION MODEL

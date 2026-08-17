@@ -1,7 +1,13 @@
+from .instrument import ACTIVE as _INSTRUMENT
 
 # ─────────────────────────────────────────────
 # CONTRACT PARSER
 # ─────────────────────────────────────────────
+# Strike labels are the main way ladder/signal output is read by eye, so they
+# follow the instrument: BTC strikes are dollars, index strikes are points.
+_S = _INSTRUMENT.fmt_strike
+
+
 def _from_strikes(market: dict) -> dict | None:
     """Build a contract from the exchange's own strike fields.
 
@@ -32,15 +38,15 @@ def _from_strikes(market: dict) -> dict | None:
         return {"type": "RANGE", "direction": "NEUTRAL",
                 "strike": (floor_v + cap_v) / 2.0,
                 "low": floor_v, "high": cap_v,
-                "label": f"${floor_v:,.0f}-${cap_v:,.0f}"}
+                "label": f"{_S(floor_v)}-{_S(cap_v)}"}
     if floor_v is not None:
         return {"type": "ABOVE", "direction": "UP",
                 "strike": floor_v, "low": floor_v, "high": float("inf"),
-                "label": f"≥${floor_v:,.0f}"}
+                "label": f"≥{_S(floor_v)}"}
     if cap_v is not None:
         return {"type": "BELOW", "direction": "DN",
                 "strike": cap_v, "low": 0, "high": cap_v,
-                "label": f"≤${cap_v:,.0f}"}
+                "label": f"≤{_S(cap_v)}"}
     return None
 
 
@@ -63,17 +69,17 @@ def parse_contract(ticker: str, spot: float, market: dict | None = None) -> dict
             if strike > spot * 0.98:
                 return {"type": "ABOVE", "direction": "UP",
                         "strike": strike, "low": strike, "high": float("inf"),
-                        "label": f"≥${strike:,.0f}"}
+                        "label": f"≥{_S(strike)}"}
             else:
                 return {"type": "BELOW", "direction": "DN",
                         "strike": strike, "low": 0, "high": strike,
-                        "label": f"≤${strike:,.0f}"}
+                        "label": f"≤{_S(strike)}"}
         elif part.startswith("B"):
             low  = float(part[1:])
             high = low + 100
             return {"type": "RANGE", "direction": "NEUTRAL",
                     "strike": low + 50, "low": low, "high": high,
-                    "label": f"${low:,.0f}-${high:,.0f}"}
+                    "label": f"{_S(low)}-{_S(high)}"}
     except Exception:
         pass
     return {"type": "UNKNOWN", "direction": "NEUTRAL",

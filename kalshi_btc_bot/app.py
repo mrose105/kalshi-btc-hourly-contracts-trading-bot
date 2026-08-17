@@ -15,7 +15,8 @@ from .config import (
     POSITION_CHECK, PRICE_FETCH, SCAN_INTERVAL, SYNC_INTERVAL,
     RECORD_BOOK_INTERVAL,
 )
-from .feed import BTCFeed
+from .feed import SLOW_BARS
+from .instrument import ACTIVE as INSTRUMENT, make_feed
 from .ladder import Ladder
 from .model import DistModel
 from .portfolio import Portfolio
@@ -54,7 +55,7 @@ def main():
     )
     client.login()
 
-    feed      = BTCFeed()
+    feed      = make_feed()
     regime_e  = RegimeEngine()
     dist      = DistModel()
     ladder_e  = Ladder(client)
@@ -65,6 +66,13 @@ def main():
     print("  Bootstrapping 24h of 5-min bars for vol_ratio parity...")
     n_bars = feed.bootstrap_history(hours=24)
     print(f"  ✓ {n_bars} 5-min bars loaded")
+    if n_bars < SLOW_BARS:
+        # vol_ratio()'s denominator is the SLOW_BARS window. Short history does
+        # not disable the signal, it biases it: a partially filled window
+        # understates realized vol, and understated slow vol is what reads as
+        # compression — the regime that lowers MIN_EDGE and widens the OTM gate.
+        print(f"  ⚠️  Only {n_bars}/{SLOW_BARS} slow-window bars — vol_ratio "
+              f"stays neutral until the window fills")
 
     print("  Warming up (60s)...")
     for _ in range(15):
@@ -74,7 +82,7 @@ def main():
     portfolio.sync()
     if not portfolio.startup_safety_check():
         return
-    print(f"  Ready. BTC=${feed.last:,.0f} | "
+    print(f"  Ready. {INSTRUMENT.name}={INSTRUMENT.fmt_strike(feed.last)} | "
           f"Cash=${portfolio.real_cash:.2f} | Port=${portfolio.real_port:.2f}\n")
 
     # ── Independent daemon loops ──────────────────────────────────
