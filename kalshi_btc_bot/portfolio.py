@@ -512,7 +512,8 @@ class Portfolio:
             pass
         return None
 
-    def buy(self, contract: dict, true_prob: float, is_snipe: bool = False) -> bool:
+    def buy(self, contract: dict, true_prob: float, dist=None, spot: float = None,
+            vol: float = None, regime: dict = None, is_snipe: bool = False) -> bool:
         """Buy YES contracts. Position size is Kelly-derived (quarter-Kelly, capped)
         for normal entries, or fixed SNIPE_TRADE_PCT for is_snipe entries — Kelly
         sizing off a noisy deep-OTM tail probability isn't trustworthy enough to
@@ -524,6 +525,13 @@ class Portfolio:
         spread = ask - bid
         if spread > _C.MAX_SPREAD or spread / ask > _C.MAX_SPREAD_PCT:
             return False
+        p_info = None
+        if dist is not None and spot is not None and vol is not None and regime is not None:
+            p_info = dist.posterior_prob(
+                contract, spot, vol, contract.get("hours", 0.0), regime,
+                bid=bid, ask=ask,
+            )
+            true_prob = p_info["true_prob"]
         if true_prob - ask < _C.MIN_EDGE:
             return False
         limit = ask
@@ -612,6 +620,10 @@ class Portfolio:
                 "true_prob":      true_prob,
                 "true_prob_prev": true_prob,
                 "true_prob_curr": true_prob,
+                "posterior_prob": true_prob,
+                "prior_prob":     (p_info or contract).get("prior_prob"),
+                "market_prob":    (p_info or contract).get("market_prob"),
+                "market_weight":  (p_info or contract).get("market_weight"),
                 "contract":       contract,
                 "close_time":     contract.get("close_time", ""),
                 "is_no":          False,
@@ -637,7 +649,9 @@ class Portfolio:
                          reason="snipe" if is_snipe else "")
         return True
 
-    def buy_no(self, contract: dict, true_prob: float) -> bool:
+    def buy_no(self, contract: dict, true_prob: float, dist=None,
+               spot: float = None, vol: float = None,
+               regime: dict = None) -> bool:
         """Buy NO contracts (fade an overpriced YES)."""
         ticker       = contract["ticker"]
         bid, yes_ask = self._fresh_quote(ticker)
@@ -649,6 +663,13 @@ class Portfolio:
             self._log_reject(ticker, f"spread ${spread:.3f} ({spread/yes_ask:.0%}) "
                                      f"over MAX_SPREAD ${_C.MAX_SPREAD:.2f}/{_C.MAX_SPREAD_PCT:.0%}")
             return False
+        p_info = None
+        if dist is not None and spot is not None and vol is not None and regime is not None:
+            p_info = dist.posterior_prob(
+                contract, spot, vol, contract.get("hours", 0.0), regime,
+                bid=bid, ask=yes_ask,
+            )
+            true_prob = p_info["true_prob"]
 
         # Re-validate the mispricing against the fresh quote before committing.
         # buy() rechecks MIN_EDGE against the live ask for exactly this reason:
@@ -662,10 +683,10 @@ class Portfolio:
         min_ratio = (_C.BOUNDARY_NO_OVERPRICING_MIN
                      if contract.get("signal") == "BOUNDARY_NO"
                      else _C.NO_OVERPRICING_MIN)
-        if true_prob <= 0 or yes_ask / true_prob < min_ratio:
-            _r = (yes_ask / true_prob) if true_prob > 0 else 0
+        if true_prob <= 0 or bid / true_prob < min_ratio:
+            _r = (bid / true_prob) if true_prob > 0 else 0
             self._log_reject(ticker, f"overpricing {_r:.2f}x fell under {min_ratio:.2f}x "
-                                     f"on the fresh quote (ask ${yes_ask:.3f})")
+                                     f"on the fresh quote (bid ${bid:.3f})")
             return False
 
         # Buying NO means lifting a resting YES BID, so what you PAY is
@@ -750,6 +771,10 @@ class Portfolio:
                 "true_prob":      true_prob,
                 "true_prob_prev": true_prob,
                 "true_prob_curr": true_prob,
+                "posterior_prob": true_prob,
+                "prior_prob":     (p_info or contract).get("prior_prob"),
+                "market_prob":    (p_info or contract).get("market_prob"),
+                "market_weight":  (p_info or contract).get("market_weight"),
                 "contract":       contract,
                 "close_time":     contract.get("close_time", ""),
                 "is_no":          True,
@@ -827,6 +852,16 @@ class Portfolio:
                     return False
                 self.positions[ticker]["last_exit_attempt"] = now
 
+        urgent = any(token in reason for token in (
+            "stop", "time", "near_zero", "failed", "forced",
+        ))
+        if urgent:
+            fresh_bid, fresh_ask = self._fresh_quote(ticker, attempts=1)
+            fresh_exit = (max(0.0, 1.0 - fresh_ask)
+                          if is_no and fresh_ask > 0 else fresh_bid)
+            if fresh_exit > bid:
+                bid = fresh_exit
+
         if PAPER_TRADING:
             # Closing a YES long matches resting YES bids directly (no price
             # transform); closing a NO long matches resting NO bids directly.
@@ -844,16 +879,17 @@ class Portfolio:
                 if ticker not in self.positions:
                     return False
                 count = min(filled, self.positions[ticker]["count"])
-                bid   = fill_price
+                # The bulk quote is the executable top of book. If the separate
+                # depth snapshot lags or is thinner than the quoted size for a
+                # tiny paper exit, do not mark a stop below the best available
+                # market price we just refreshed.
+                bid   = max(fill_price, bid) if urgent else fill_price
                 self.real_cash += bid * count
 
         if not PAPER_TRADING:
             filled_count = 0
             proceeds  = 0.0
             side      = "no" if is_no else "yes"
-            urgent = any(token in reason for token in (
-                "stop", "time", "near_zero", "failed", "forced",
-            ))
             order_bid = bid
             if urgent:
                 order_bid = max(0.01, bid - _C.FORCE_EXIT_SLIPPAGE_CENTS / 100)

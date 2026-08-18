@@ -95,6 +95,14 @@ MIN_VOLUME          = 50
 MAX_ASK             = 0.45
 MAX_SPREAD          = 0.05       # max 5c bid/ask spread
 MAX_SPREAD_PCT      = 0.25       # max spread as 25% of ask
+
+# Market-price probability update. DistModel.true_prob remains the raw GBM
+# prior; live entry/position code may blend it with the current top-of-book
+# quote as evidence. Keep this conservative until real_price_edge_test.py proves
+# the posterior improves out-of-sample EV ranking.
+BAYES_MARKET_WEIGHT_BASE = 0.15
+BAYES_MARKET_WEIGHT_MAX  = 0.35
+BAYES_MAX_MOVE           = 0.10
 # 2026-07-06: was a flat ENTRY_PRICE_IMPROVE_CENTS=4 cross on every entry regardless
 # of price, sourced from the ladder's up-to-LADDER_CACHE_SECONDS-old snapshot. On a
 # cheap contract (e.g. ask=$0.13) that flat 4c cross alone produced an instant ~-35%

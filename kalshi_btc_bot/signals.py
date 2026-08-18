@@ -45,6 +45,12 @@ class SignalEngine:
     def __init__(self, dist):
         self.dist = dist
 
+    def _posterior(self, c: dict, spot: float, vol: float, regime: dict) -> dict:
+        return self.dist.posterior_prob(
+            c, spot, vol, c["hours"], regime,
+            bid=c.get("bid"), ask=c.get("ask"),
+        )
+
     def find_best(self, spot, vol, regime, ladder, existing,
                   vol_term=None) -> dict | None:
         """
@@ -120,7 +126,8 @@ class SignalEngine:
             if mins_left < TIME_EXIT_MINS and not c["itm"]:
                 continue
 
-            true_p    = self.dist.true_prob(c, spot, vol, c["hours"], regime)
+            p_info    = self._posterior(c, spot, vol, regime)
+            true_p    = p_info["true_prob"]
             raw_edge  = true_p - c["ask"]
 
             # Boost near-money RANGE contracts during compression:
@@ -148,6 +155,9 @@ class SignalEngine:
                 vol_edge_v = (vol_term.vol_edge(c["hours"]) if vol_term and vol_term.fitted
                               else 0.0)
                 best = {**c, "true_prob": true_p, "edge": raw_edge,
+                        "prior_prob": p_info["prior_prob"],
+                        "market_prob": p_info["market_prob"],
+                        "market_weight": p_info["market_weight"],
                         "vol_compression": vol_comp,
                         "vol_term_edge": vol_edge_v}
 
@@ -182,13 +192,17 @@ class SignalEngine:
                 if ctype == "BELOW" and direction == "UP":
                     continue
 
-            true_p = self.dist.true_prob(c, spot, vol, c["hours"], regime)
+            p_info = self._posterior(c, spot, vol, regime)
+            true_p = p_info["true_prob"]
             if true_p <= c["ask"]:
                 continue
             ratio = true_p / c["ask"]
             if ratio > best_ratio:
                 best_ratio = ratio
                 best = {**c, "true_prob": true_p, "edge": true_p - c["ask"],
+                        "prior_prob": p_info["prior_prob"],
+                        "market_prob": p_info["market_prob"],
+                        "market_weight": p_info["market_weight"],
                         "edge_ratio": ratio - 1.0}
 
         return best
@@ -221,7 +235,8 @@ class SignalEngine:
             if d_val < NO_DIST_MIN or d_val > NO_DIST_MAX:
                 continue
 
-            true_p = self.dist.true_prob(c, spot, vol, c["hours"], regime)
+            p_info = self._posterior(c, spot, vol, regime)
+            true_p = p_info["true_prob"]
             if true_p <= 0 or true_p >= NO_TRUE_PROB_MAX:
                 continue
 
@@ -234,6 +249,9 @@ class SignalEngine:
                     **c,
                     "signal":            "MISPRICE_NO",
                     "true_prob":         true_p,
+                    "prior_prob":        p_info["prior_prob"],
+                    "market_prob":       p_info["market_prob"],
+                    "market_weight":     p_info["market_weight"],
                     "overpricing_ratio": ratio,
                     "edge_pct":          edge_pct,
                     # Cost of BUYING no is 1 - yes_bid (lifting a resting YES bid),
@@ -301,7 +319,8 @@ class SignalEngine:
             if otm_d < BOUNDARY_NO_OTM_MIN or otm_d > BOUNDARY_NO_OTM_MAX:
                 continue
 
-            true_p = self.dist.true_prob(c, spot, vol, c["hours"], regime)
+            p_info = self._posterior(c, spot, vol, regime)
+            true_p = p_info["true_prob"]
             if true_p <= 0 or true_p >= NO_TRUE_PROB_MAX:
                 continue
 
@@ -330,6 +349,9 @@ class SignalEngine:
                     "signal":            "BOUNDARY_NO",
                     "net_edge":          net_edge,
                     "true_prob":         true_p,
+                    "prior_prob":        p_info["prior_prob"],
+                    "market_prob":       p_info["market_prob"],
+                    "market_weight":     p_info["market_weight"],
                     "overpricing_ratio": ratio,
                     "edge_pct":          (yes_ask - true_p) / true_p * 100,
                     # Cost of BUYING no is 1 - yes_bid (lifting a resting YES bid),
@@ -341,4 +363,3 @@ class SignalEngine:
                 }
 
         return best
-

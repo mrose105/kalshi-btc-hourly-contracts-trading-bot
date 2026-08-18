@@ -2,6 +2,7 @@ import math
 
 from scipy.stats import norm
 
+from . import config as _C
 from .contracts import is_in_money
 from .config import BARS_PER_HOUR
 from .instrument import ACTIVE as _INSTRUMENT
@@ -37,6 +38,23 @@ class DistModel:
     CDF:             scipy.stats.norm (numerically stable, replaces hand-rolled erf).
     Vol regime:      HIGH → +15% vol adjustment; LOW → -8%; NORMAL → flat.
     """
+
+    @staticmethod
+    def _clamp_prob(p: float) -> float:
+        return float(max(0.0, min(1.0, p)))
+
+    @staticmethod
+    def _logit(p: float) -> float:
+        p = max(0.001, min(0.999, p))
+        return math.log(p / (1.0 - p))
+
+    @staticmethod
+    def _inv_logit(x: float) -> float:
+        if x >= 0:
+            z = math.exp(-x)
+            return 1.0 / (1.0 + z)
+        z = math.exp(x)
+        return z / (1.0 + z)
 
     def true_prob(self, contract: dict, spot: float,
                   vol: float, hours: float, regime: dict) -> float:
@@ -89,6 +107,70 @@ class DistModel:
         except Exception:
             return 0.0
         return 0.0
+
+    def market_prob(self, bid: float | None = None,
+                    ask: float | None = None,
+                    mid: float | None = None) -> float | None:
+        """Top-of-book implied YES probability from the current bid/ask."""
+        if mid is not None:
+            mid = float(mid)
+            if 0.0 < mid < 1.0:
+                return self._clamp_prob(mid)
+        bid = float(bid or 0.0)
+        ask = float(ask or 0.0)
+        if bid > 0 and ask > 0 and bid < ask:
+            return self._clamp_prob((bid + ask) / 2.0)
+        if ask > 0:
+            return self._clamp_prob(ask)
+        if bid > 0:
+            return self._clamp_prob(bid)
+        return None
+
+    def posterior_prob(self, contract: dict, spot: float, vol: float,
+                       hours: float, regime: dict,
+                       bid: float | None = None,
+                       ask: float | None = None,
+                       market_mid: float | None = None) -> dict:
+        """Blend model prior with current market-implied probability.
+
+        The GBM output is the prior. The live Kalshi quote is evidence. We blend
+        in log-odds space so a repricing like 21c -> 9c materially moves the
+        estimate instead of only making the apparent edge larger.
+        """
+        prior = self.true_prob(contract, spot, vol, hours, regime)
+        market = self.market_prob(bid=bid, ask=ask, mid=market_mid)
+        if market is None:
+            return {
+                "prior_prob": prior,
+                "market_prob": None,
+                "true_prob": prior,
+                "market_weight": 0.0,
+            }
+
+        bid_f = float(bid or 0.0)
+        ask_f = float(ask or 0.0)
+        spread = max(0.0, ask_f - bid_f) if bid_f > 0 and ask_f > 0 else 0.10
+        spread_weight = max(0.0, 1.0 - min(spread, 0.12) / 0.12)
+        time_weight = max(0.0, min(1.0, (4.0 - max(0.0, hours)) / 4.0))
+        # Markets incorporate order-flow information the GBM does not. Make the
+        # evidence meaningful but leave room for explicit signal/regime edge.
+        weight = min(
+            _C.BAYES_MARKET_WEIGHT_MAX,
+            _C.BAYES_MARKET_WEIGHT_BASE + 0.10 * time_weight + 0.10 * spread_weight,
+        )
+
+        posterior_logit = ((1.0 - weight) * self._logit(prior)
+                           + weight * self._logit(market))
+        posterior = self._clamp_prob(self._inv_logit(posterior_logit))
+        if _C.BAYES_MAX_MOVE > 0:
+            posterior = max(prior - _C.BAYES_MAX_MOVE,
+                            min(prior + _C.BAYES_MAX_MOVE, posterior))
+        return {
+            "prior_prob": prior,
+            "market_prob": market,
+            "true_prob": posterior,
+            "market_weight": weight,
+        }
 
     def gamma(self, contract: dict, spot: float, vol: float,
               hours: float, regime: dict, bump_pct: float = 0.001) -> float:

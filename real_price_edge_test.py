@@ -105,7 +105,7 @@ def main():
         return best[1]
 
     dist = DistModel()
-    obs = []          # (edge, ask, itm, ticker)
+    obs = []          # (prior_edge, posterior_edge, ask, itm, ticker)
     unresolved = 0
     for r in ticks:
         L = r.get("l") or []
@@ -121,8 +121,8 @@ def main():
         t0 = dt.datetime.fromisoformat(r["t"])
         spot = r["spot"]
         for c in L:
-            ask, lo, hi, h = c.get("a"), c.get("lo"), c.get("hi"), c.get("h")
-            if not (ask and lo and hi and h) or ask <= 0 or h <= 0:
+            ask, bid, lo, hi, h = c.get("a"), c.get("b"), c.get("lo"), c.get("hi"), c.get("h")
+            if not (ask and bid and lo and hi and h) or ask <= 0 or bid <= 0 or h <= 0:
                 continue
             settle = spot_at(t0 + dt.timedelta(hours=h))
             if settle is None:
@@ -131,46 +131,51 @@ def main():
             con = {"type": "RANGE", "low": lo, "high": hi,
                    "strike": (lo + hi) / 2.0, "hours": h,
                    "itm": lo <= spot < hi}
-            p = dist.true_prob(con, spot, vol, h, regime)
-            if p <= 0:
+            p_info = dist.posterior_prob(con, spot, vol, h, regime, bid=bid, ask=ask)
+            prior = p_info["prior_prob"]
+            posterior = p_info["true_prob"]
+            if prior <= 0 or posterior <= 0:
                 continue
-            obs.append((p - ask, ask, 1 if lo <= settle < hi else 0, c.get("tk")))
+            obs.append((prior - ask, posterior - ask, ask,
+                        1 if lo <= settle < hi else 0, c.get("tk")))
 
     print(f"contract observations resolved: {len(obs):,}   "
           f"unresolved (no spot near expiry): {unresolved:,}")
     if not obs:
         raise SystemExit("nothing resolved — recorder may not span any expiry")
 
-    def table(rows, label):
+    def table(rows, label, edge_idx):
         print(f"\n=== {label} ===   n={len(rows):,}")
         print(f"  {'edge bucket':>18} {'n':>7} {'mean ask':>9} {'ITM rate':>9} {'EV/$1':>9}")
         for lo_e, hi_e in [(-9, 0), (0, .02), (.02, .05), (.05, .10), (.10, 9)]:
-            g = [o for o in rows if lo_e <= o[0] < hi_e]
+            g = [o for o in rows if lo_e <= o[edge_idx] < hi_e]
             if not g:
                 continue
-            ask = sum(o[1] for o in g) / len(g)
-            itm = sum(o[2] for o in g) / len(g)
+            ask = sum(o[2] for o in g) / len(g)
+            itm = sum(o[3] for o in g) / len(g)
             print(f"  {lo_e:+.2f}..{hi_e:<+.2f} {len(g):>7,} {ask:>9.4f} {itm:>9.4f} "
                   f"{((itm-ask)/ask):>+8.1%}")
-        sel = [o for o in rows if o[0] >= C.MIN_EDGE]
-        rej = [o for o in rows if o[0] < C.MIN_EDGE]
+        sel = [o for o in rows if o[edge_idx] >= C.MIN_EDGE]
+        rej = [o for o in rows if o[edge_idx] < C.MIN_EDGE]
         for nm, g in (("PASSES MIN_EDGE", sel), ("rejected", rej)):
             if not g:
                 continue
-            ask = sum(o[1] for o in g) / len(g)
-            itm = sum(o[2] for o in g) / len(g)
+            ask = sum(o[2] for o in g) / len(g)
+            itm = sum(o[3] for o in g) / len(g)
             print(f"  {nm:>18} {len(g):>7,} {ask:>9.4f} {itm:>9.4f} {((itm-ask)/ask):>+8.1%}")
 
-    table(obs, "ALL observations (correlated — same contract across ticks)")
+    table(obs, "PRIOR edge — ALL observations (correlated — same contract across ticks)", 0)
+    table(obs, "POSTERIOR edge — ALL observations (correlated — same contract across ticks)", 1)
 
     # one row per contract: first sighting, the least-correlated view
     seen, uniq = set(), []
     for o in obs:
-        if o[3] in seen:
+        if o[4] in seen:
             continue
-        seen.add(o[3])
+        seen.add(o[4])
         uniq.append(o)
-    table(uniq, "ONE row per contract (first sighting) — trust this n")
+    table(uniq, "PRIOR edge — ONE row per contract (first sighting) — trust this n", 0)
+    table(uniq, "POSTERIOR edge — ONE row per contract (first sighting) — trust this n", 1)
 
     print("\n  EV/$1 > 0 means buying at that real ask and holding to settlement")
     print("  made money. If 'PASSES MIN_EDGE' is not clearly above 'rejected',")

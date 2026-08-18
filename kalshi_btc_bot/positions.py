@@ -146,10 +146,13 @@ class PositionManager:
                     _e = pos.get("entry", 0)
                     _c = pos.get("contract", "")
                     _h = max(0.0, _hours_from(close_time))
+                    _p_info = self.dist.posterior_prob(
+                        _c, spot, vol, _h, regime, bid=bid, ask=ask,
+                    )
                     live_view.update_position(ticker, {
                         "bid": bid,
                         "pnl_pct": (bid - _e) / _e if _e > 0 else 0,
-                        "true_prob": self.dist.true_prob(_c, spot, vol, _h, regime),
+                        "true_prob": _p_info["true_prob"],
                         "itm": is_in_money(_c, spot),
                         "dist": otm_distance(_c, spot),
                         "mins_left": _h * 60,
@@ -200,13 +203,22 @@ class PositionManager:
             hours     = max(0.0, _hours_from(close_time))
             mins_left = hours * 60
 
-            # True prob + rolling 2-tick tracking
-            true_prob = self.dist.true_prob(contract, spot, vol, hours, regime)
+            # Raw GBM probability drives model-risk exits. A market-conditioned
+            # posterior is recorded separately so quote repricing is visible
+            # without turning gamma/snipe/boundary exits into quote-momentum exits.
+            p_info = self.dist.posterior_prob(
+                contract, spot, vol, hours, regime, bid=bid, ask=ask,
+            )
+            true_prob = p_info["prior_prob"]
             tp_prev   = pos.get("true_prob_prev", true_prob)
             tp_curr   = pos.get("true_prob_curr", true_prob)
             self.portfolio.positions[ticker]["true_prob"]      = true_prob
             self.portfolio.positions[ticker]["true_prob_prev"] = tp_curr
             self.portfolio.positions[ticker]["true_prob_curr"] = true_prob
+            self.portfolio.positions[ticker]["posterior_prob"] = p_info["true_prob"]
+            self.portfolio.positions[ticker]["prior_prob"]     = true_prob
+            self.portfolio.positions[ticker]["market_prob"]    = p_info["market_prob"]
+            self.portfolio.positions[ticker]["market_weight"]  = p_info["market_weight"]
 
             itm  = is_in_money(contract, spot)
             dist = otm_distance(contract, spot)

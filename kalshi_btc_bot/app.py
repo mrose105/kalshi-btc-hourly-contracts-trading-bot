@@ -186,7 +186,7 @@ def main():
                           f"dist={sig['otm_dist']:+.0f} | "
                           f"Hours: {sig['hours']:.2f}h | "
                           f"Vol: {sig['vol']:.0f}\n")
-                portfolio.buy(sig, sig["true_prob"])
+                portfolio.buy(sig, sig["true_prob"], dist, spot, vol, regime)
 
             # NO scalp signal
             no_sig = None
@@ -211,7 +211,7 @@ def main():
                           f"NO_cost=${no_sig['no_cost']:.2f} "
                           f"dist={no_sig['otm_dist']:+.0f} "
                           f"{no_sig['hours']*60:.0f}m left")
-                portfolio.buy_no(no_sig, no_sig["true_prob"])
+                portfolio.buy_no(no_sig, no_sig["true_prob"], dist, spot, vol, regime)
 
             # BOUNDARY_NO — sell OTM premium at z-score extremes in ranging market
             bno_sig = None
@@ -237,7 +237,7 @@ def main():
                           f"overpriced={bno_sig['overpricing_ratio']:.2f}x | "
                           f"dist={bno_sig['otm_dist']:+.0f} | "
                           f"{bno_sig['hours']*60:.0f}m left\n")
-                portfolio.buy_no(bno_sig, bno_sig["true_prob"])
+                portfolio.buy_no(bno_sig, bno_sig["true_prob"], dist, spot, vol, regime)
 
             # SNIPE signal — deep-OTM lottery tickets, ROI-ranked, separate scan from
             # find_best() (see config.py SNIPE_* comment for why they'd otherwise be
@@ -258,7 +258,8 @@ def main():
                           f"ROI edge: {snipe_sig['edge_ratio']:.0%} | "
                           f"dist={snipe_sig['otm_dist']:+.0f} | "
                           f"Hours: {snipe_sig['hours']:.2f}h\n")
-                portfolio.buy(snipe_sig, snipe_sig["true_prob"], is_snipe=True)
+                portfolio.buy(snipe_sig, snipe_sig["true_prob"],
+                              dist, spot, vol, regime, is_snipe=True)
 
             if not sig and not no_sig and not bno_sig and not snipe_sig and not live_view.ENABLED:
                 cd_str = f" [{len(_cd)} cooling]" if _cd else ""
