@@ -4,6 +4,10 @@
 > 2026-08-07 was computed on a 250-wide RANGE band that does not trade (§4), and
 > anything predating 2026-08-11 used a regime momentum window that meant 2.5
 > hours in the backtest but 60 seconds live (`QUANT_STANDARDS_AUDIT.md` §1e).
+> Anything predating 2026-08-17 also predates the synthetic-posterior fix:
+> synthetic bid/ask quotes were being treated as independent Bayesian market
+> evidence even though `build_ladder()` generated them from the model family
+> under test.
 > Current headline results live in [`../README.md`](../README.md).
 
 This document exists because the backtest's headline return has been wrong, by
@@ -30,6 +34,7 @@ function of capital scale (§7).** Logic parity with the live bot is close (see
 | 5. Live/backtest parity | **fixed** (Jul 28) | attribution didn't transfer |
 | 6. Rolling window | inherent | ±5% run-to-run |
 | 7. Capacity constraint (size vs. real depth) | **modeled Aug 4** | flips the sign past ~$2-5K capital |
+| 8. Synthetic posterior circularity | **fixed Aug 17** | synthetic prices became model evidence |
 
 ---
 
@@ -50,6 +55,10 @@ have had at decision time.
    live's `FORCE_EXIT_SLIPPAGE_CENTS`.
 5. **NO-side exits with no mirror haircut.** Same fabrication on the
    counterparty side.
+6. **Next-bar fills carried prior-bar probability.** The simulated order was
+   correctly delayed to the next bar's open, but it still used the signal bar's
+   `true_prob`. Now hours-to-expiry, ask, probability, and edge are recomputed
+   at the open before the fill is accepted.
 
 Progression as each landed:
 
@@ -111,6 +120,12 @@ this but does not remove it.
 **The only real fix** is to record live quotes and book depth and replay against
 them. Until then, treat backtest *return* as untrustworthy and use it only for
 relative comparisons where the pricing error is held constant.
+
+**Important Aug 17 boundary:** market-conditioned posterior probabilities are
+for live/paper and recorded real quote replay only. The synthetic backtest now
+constructs `SignalEngine(..., use_market_posterior=False)` so `build_ladder()`'s
+model-manufactured bid/ask cannot become Bayesian evidence. This fixes entry
+selection circularity; it does not fix model-derived exit prices.
 
 **Known live evidence for contrast:** the Jul 1–3 live record — 63 trades,
 **profit factor 0.78** — is small and stale, but market-verified rather than

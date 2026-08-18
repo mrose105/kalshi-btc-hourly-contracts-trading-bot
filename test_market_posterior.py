@@ -1,4 +1,5 @@
 from kalshi_btc_bot.model import DistModel
+from kalshi_btc_bot.signals import SignalEngine
 
 
 class FixedDist(DistModel):
@@ -35,3 +36,12 @@ def test_tighter_spread_gets_more_market_weight():
     wide = FixedDist(0.70).posterior_prob({}, 1, 1, 1, {}, bid=0.20, ask=0.40)
     assert tight["market_weight"] > wide["market_weight"]
     assert tight["true_prob"] < wide["true_prob"]
+
+
+def test_signal_engine_can_ignore_market_quote_for_synthetic_backtest():
+    engine = SignalEngine(FixedDist(0.70), use_market_posterior=False)
+    info = engine._posterior({"hours": 1.0, "bid": 0.20, "ask": 0.30}, 1, 1, {})
+    assert info["prior_prob"] == 0.70
+    assert info["true_prob"] == 0.70
+    assert info["market_prob"] is None
+    assert info["market_weight"] == 0.0

@@ -42,10 +42,19 @@ def _clustered(ticker: str, strike: float, existing: dict) -> bool:
 # SIGNAL ENGINE
 # ─────────────────────────────────────────────
 class SignalEngine:
-    def __init__(self, dist):
+    def __init__(self, dist, use_market_posterior: bool = True):
         self.dist = dist
+        self.use_market_posterior = use_market_posterior
 
     def _posterior(self, c: dict, spot: float, vol: float, regime: dict) -> dict:
+        if not self.use_market_posterior:
+            prior = self.dist.true_prob(c, spot, vol, c["hours"], regime)
+            return {
+                "prior_prob": prior,
+                "market_prob": None,
+                "true_prob": prior,
+                "market_weight": 0.0,
+            }
         return self.dist.posterior_prob(
             c, spot, vol, c["hours"], regime,
             bid=c.get("bid"), ask=c.get("ask"),
