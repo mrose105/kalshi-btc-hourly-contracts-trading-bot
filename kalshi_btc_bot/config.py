@@ -335,6 +335,29 @@ REENTRY_SIZE_DECAY  = 0.0        # 0 = disabled. If > 0, any entry on a ticker
                                   # ticks, which is why live shows 53 re-entries
                                   # against the backtest's 14. Treat any future
                                   # re-entry rule as untestable on bars.
+                                  #
+                                  # 2026-08-19, SCALE-IN (adding to an OPEN
+                                  # winner, not re-entering a closed one) was
+                                  # tested against this rule and REJECTED.
+                                  # Bars said the opportunity was large and
+                                  # safe — 614 add-chances, 88.6% of them on
+                                  # positions that were UP (median +27.6%).
+                                  # The recorded live book said the opposite:
+                                  # 0 of 30 policies beat the baseline entries,
+                                  # every one at a 0% win rate, and raising the
+                                  # "only add when up X%" bar made it strictly
+                                  # worse (-26% at +10% -> -51% at +20%) — the
+                                  # signature of buying near the peak. Exactly
+                                  # the bars-vs-ticks gap this note warns about,
+                                  # in the direction that flatters the feature.
+                                  # See scale_in_policy_sweep.py for the grid
+                                  # and scale_in_opportunity.py for the bar
+                                  # measurement that would have misled us.
+                                  # NOTE also: adding is impossible today by
+                                  # construction — buy() returns False when
+                                  # `ticker in self.positions` (portfolio.py:490,
+                                  # kalshi_btc_backtest.py:542) — so shipping it
+                                  # would have been a real change, not a tweak.
 STOP_MIN_HOURS      = 0.30       # TIER 6 gate: stop only fires if > 18 min left.
                                   # Below this, TIME_EXIT_MINS handles OTM exits and
                                   # expiry_settle captures ITM wins — don't stop binary
