@@ -4,15 +4,37 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 
 ---
 
-## Backtest Results (60-day walk-forward, run 2026-08-17)
+## Backtest Results (60-day walk-forward, re-run 2026-08-22)
 
-Current $500 sanity run after the market-posterior/backtest-parity fix:
+> **The backtest does not exercise the strategy that currently runs.** With
+> `ENABLE_YES` and `ENABLE_SNIPE` set to `False` — the live configuration — a
+> 60-day run produces **zero trades**, because it generates no BOUNDARY_NO
+> entries at all. Every figure in the table below therefore comes from the YES
+> and snipe lanes, both of which are disabled live and which lost **-$413** and
+> **-$670** respectively across the real trade log. Treat this section as a
+> regression check on the simulator, not as evidence about live performance.
+> See `docs/BACKTEST_INTEGRITY.md` before quoting any of it.
 
-| Starting capital | Return | Sharpe | Profit factor | Win rate | Max DD | Trades |
+| Run | Return | Sharpe | Profit factor | Win rate | Max DD | Trades |
 |---|---:|---:|---:|---:|---:|---:|
-| $500 | **+78.6%** | 6.28 | 1.67 | 46.7% | -7.8% | 225 |
+| all lanes, Gaussian prior | +108.4% | 7.23 | 1.86 | 47.2% | -7.8% | 246 |
+| all lanes, Student-t prior (shipped) | **-33.2%** | -10.60 | 0.58 | 34.3% | -33.8% | 210 |
+| **NO-only (matches live config)** | — | — | — | — | — | **0** |
 
-This is a more conservative number than the pre-fix posterior run because the
+The Student-t "collapse" is not a regression, and reading it as one would be
+backwards. For YES, `edge = true_prob - ask`, so a prior that under-predicted
+`true_prob` was suppressing YES entries. Correcting the calibration removes
+that accidental brake, and YES is the lane that loses money. Live this changes
+nothing, because YES is off — but it is a landmine if `ENABLE_YES` is ever
+flipped back on without re-validating the YES entry gates against the corrected
+prior.
+
+What the strategy that *does* run was measured on instead: recorded market
+data, resolved by settlement rather than by simulated quotes. See
+"Measured on recorded data" below.
+
+The older +78.6% figure was a more conservative number than the pre-fix
+posterior run because the
 synthetic backtest no longer treats synthetic bid/ask quotes as independent
 market evidence. `build_ladder()` manufactures quotes from a lagged-vol version
 of the same model family being tested; feeding those prices into the Bayesian
@@ -62,6 +84,51 @@ wins at a mean all-in NO cost of 0.751, for **-17.3% EV per dollar**
 (expiry-clustered 95% CI [-37.0%, +2.2%], with 95.8% of bootstrap samples
 non-positive). A superficially high win rate still loses when each loss risks
 roughly 75c to win 25c.
+
+### Measured on recorded data (2026-08-20/21)
+
+The synthetic backtest cannot evaluate the live NO strategy, so it was measured
+directly against `recordings/universe_*.jsonl.gz` — the **uncensored** stream,
+recorded before the ladder filters — with each contract resolved by where spot
+actually settled versus its `[lo, hi)` band. 775–810 contracts, ~685k book
+ticks, 87 expiries, 2026-08-12 to 08-21.
+
+**The model was miscalibrated, and the market was not.** 9,110
+contract-observations, lower is better:
+
+| predictor | Brier | log-loss | mean pred | bias |
+|---|---:|---:|---:|---:|
+| market mid | **0.1611** | **0.4973** | 23.5% | -0.9% |
+| Student-t df=3 (shipped) | 0.1632 | 0.5043 | 21.4% | -2.9% |
+| Gaussian prior (previous) | 0.1726 | 0.5312 | 17.6% | -6.7% |
+
+The Gaussian understated P(YES) in **every** probability bucket, worst at the
+extremes (far-OTM 3.9% predicted vs 14.5% realised; near-money 66.6% vs 90.3%).
+Since signals fire on `yes_bid / true_prob`, which is largest exactly where
+`true_prob` is most understated, **the signal was partly detecting its own
+bias.** That is the single most important thing on this page.
+
+**No configuration beat the market price.** Five independent attempts:
+
+1. Gaussian as-is — Brier 0.1726 vs market 0.1611
+2. Gaussian with vol rescaled x0.4 to x2.5 — best 0.1712, still loses
+3. Student-t df=3 — 0.1632, closes 82% of the gap, still loses
+4. Learned recalibration of the market itself — fit on 43 expiries, scored on
+   44: 0.1525 vs the market's 0.1506. **Loses out of sample**; adding features
+   made it worse, the signature of fitting noise
+5. Resting orders to earn the spread instead of paying it — the 2.4% saving is
+   real, but P(win | filled) is 76.0% against 91.7% when not filled, a -15.7pp
+   adverse-selection gap ~4x the spread saved
+
+No NO-cost region shows edge either: every bucket from 0.55 to 1.00 is negative
+or indistinguishable from zero across 8,866 observations / 88 expiries.
+
+**Read this as the operating assumption:** on this instrument, at this horizon,
+using public price history, the Kalshi price is the best available forecast.
+The strategies differ in how much they lose, not in edge. An edge would require
+an information source the price does not already contain — cross-venue
+lead-lag, a faster feed than the exchange consensus, or order-flow
+microstructure.
 
 ### What "60/40" means here
 
@@ -193,7 +260,7 @@ kalshi_btc_bot/
 ├── config.py       — all thresholds and risk params in one place
 ├── feed.py         — BTC price feed, EWMA/SMA vol, vol_ratio
 ├── regime.py       — market regime classifier
-├── model.py        — lognormal binary option pricer (scipy.stats.norm CDF)
+├── model.py        — binary option pricer; Student-t tails (DIST_TAIL_DF=3)
 ├── contracts.py    — ladder parsing, ITM/OTM helpers
 ├── ladder.py       — live Kalshi ladder fetcher
 ├── signals.py      — SignalEngine: entry filters, edge ranking, vol-term boost
@@ -304,6 +371,44 @@ Do not cite the +34.1% figure as evidence for it.
 | 5.25 | ITM but marginal (within 15 points of boundary), down ≥10%, < 10 min left, and true\_prob still fading (or down ≥65% unconditional hard stop) | Boundary risk |
 | 6 | Down 35%/time\_urgency + > 18 min left (gated off in the final `TIME_EXIT_MINS` if already ITM) | Stop loss |
 | — | Mid price ≤ 0.5¢ | Safety near-zero exit |
+
+### NO exit ladder (the one that actually runs)
+
+BOUNDARY_NO / MISPRICE_NO positions use a separate, much shorter ladder in
+`positions.py`. `no_pnl_pct` is measured against the NO bid (`1 - yes_ask`).
+
+| Trigger | Reason | Notes |
+|---|---|---|
+| `no_pnl_pct ≥ NO_PROFIT_CAPTURE` (80%) | `misprice_captured` | never reached in 41 recorded episodes — max MFE was +39.1% |
+| `no_pnl_pct ≥ NO_TIME_PROFIT` (40%) + < 5 min left | `misprice_time` | also never reached |
+| `overprice_r < NO_EDGE_GONE_RATIO` (1.05) **and up** | `edge_gone` | the only thesis-based exit |
+| `no_pnl_pct ≤ -NO_STOP` (40%) | `misprice_failed` | **a pure percentage stop** — nothing checks whether the mispricing thesis actually failed |
+| `no_pnl_pct ≤ -MIN_HOLD_CATASTROPHE` (65%) | `no_catastrophe` | bypasses the minimum hold |
+| < 2 min left | `time_forced_no` | bypasses the minimum hold |
+
+Two things worth knowing about this ladder:
+
+**`misprice_failed` is a misnomer.** It is a price stop, not a thesis check.
+The only thesis-aware exit (`edge_gone`) is gated on being *up*, so a position
+whose thesis is intact but losing has no thesis-aware exit — it rides to the
+40% stop. Empirically that is still the right call: of 7 episodes that reached
+-40%, only 1 settled our way, and stopping averaged -40% against -82.8% for
+holding. At -25% the thesis survives far more often (5/12), but holding is
+still worse (-43.5% vs -25.0%), because entries around 80¢ cap the recovery at
++20% while each failure loses the whole premium.
+
+**Two guards sit in front of the profit exits** (`config.py` for the evidence):
+
+- `MIN_HOLD_SECS = 60` — before ~60s an adverse move does not predict the
+  settlement (at 10s a dip mildly predicts *winning*, 76% vs 59%), so an exit
+  inside that window is reacting to quote noise. Sub-10s round trips are
+  0-for-7 in the live book. Stops are deferred, not cancelled; expiry and the
+  -65% catastrophe floor are exempt.
+- `CONFIRM_EXIT_DEPTH = True` — profit exits are re-priced against the depth
+  the whole position needs, because the decision used a size-less top-of-book
+  quote while the fill walks the ladder. That gap turned one `edge_gone`
+  take-profit into -$1.82. Stops deliberately skip the check: a worse
+  executable price makes a stop *more* valid, not less.
 
 Snipe positions (deep-OTM lottery entries, ask 10¢–25¢) skip tiers 0.5–4 and 6 by design — see `config.py` `SNIPE_PROFIT_LOCK_PCT` for the rationale — and only exit via 3.5 (near-settlement), 3.75 (snipe reversal lock), or 5 (OTM time exit). Entry price floor added 2026-07-07 after trade-log review showed sub-10¢ snipes were a coin flip that never reached the 75¢ near-settlement tier — the floor screens out tickets priced cheap because Kalshi's own model already sees them as near-zero, not because of vol lag.
 
