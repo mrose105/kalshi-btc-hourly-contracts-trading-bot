@@ -464,6 +464,23 @@ class Portfolio:
             print(f"  ⚠️  orderbook fetch failed {ticker[-18:]}: {e}")
             return {"yes": [], "no": []}
 
+    def executable_exit(self, ticker: str, count: int, is_no: bool) -> tuple:
+        """(filled, blended_price) that `count` lots would ACTUALLY clear at.
+
+        The exit ladder in positions.py decides against `1 - yes_ask`, a
+        top-of-book quote with no quantity attached, while sell() fills by
+        walking real depth. On 2026-08-21 that gap turned an `edge_gone`
+        take-profit into -$1.82: the decision saw a winner, 14 lots cleared 13c
+        lower. Recorded order attempts put the median gap at 0.00% but p10 at
+        -13.7% and the worst at -75.5% — usually free, occasionally ruinous.
+
+        Returns (0, None) when the book is empty so callers can distinguish
+        "no liquidity" from "priced at zero".
+        """
+        levels = self._orderbook(ticker).get("no" if is_no else "yes") or []
+        filled, px = self._walk_book(levels, max(1, int(count)))
+        return (filled, px) if filled > 0 else (0, None)
+
     @staticmethod
     def _walk_book(levels: list, target_qty: int, transform=None,
                     limit_price_c: float = None) -> tuple:

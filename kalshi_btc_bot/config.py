@@ -533,6 +533,34 @@ NO_EDGE_GONE_RATIO  = 1.05       # overpricing ratio drops here → edge_gone
 MIN_HOLD_SECS        = 60.0
 MIN_HOLD_CATASTROPHE = 0.65   # bypass the hold below this loss, as a fraction
 
+# ---------------------------------------------------------------------------
+# Confirm profit exits against real depth
+# ---------------------------------------------------------------------------
+# False = the historical behaviour (decide on top-of-book, fill on depth).
+#
+# The exit ladder decides using `1 - yes_ask`, a top-of-book quote carrying NO
+# quantity, while Portfolio.sell() fills by walking the resting ladder for the
+# whole position. Those are different prices, and on a thin book they are very
+# different. 2026-08-21: `edge_gone` — a rule that can only fire when the
+# position is UP — booked -$1.82, because the decision saw a winner and 14 lots
+# actually cleared 13c lower.
+#
+# 109 recorded exit attempts, fill vs the price the decision used:
+#         median  +0.00%      p10 -13.68%      p90 +2.60%      worst -75.47%
+#   edge_gone        n=43   median +0.00%   worst -24.64%
+#   stop_35%         n=20   median +0.00%   worst -29.84%
+#   snipe_lock       n= 7   median +0.00%   worst -75.47%
+# Usually free, occasionally ruinous — a fat left tail, not a constant drag.
+#
+# Applied to PROFIT exits only (misprice_captured, misprice_time, edge_gone):
+# they claim a gain that may not exist at size, so they are re-checked against
+# the executable price and skipped if it is not actually a gain. STOPS
+# deliberately skip the check — if the real price is worse, a stop is MORE
+# valid, not less, and deferring it would be the opposite of the intent.
+#
+# Cost: one extra orderbook fetch, and only when a profit rule has already
+# fired — not once per position per 2s scan.
+CONFIRM_EXIT_DEPTH   = True
 
 # BOUNDARY_NO — sell OTM premium at range extremes
 # When z-score shows BTC at the top or bottom of its recent range, fade the

@@ -79,6 +79,29 @@ class PositionManager:
         except:
             return 0.0, 0.0, "", ""
 
+    def _confirm_profit(self, ticker: str, pos: dict, entry: float,
+                        nominal_px: float) -> tuple:
+        """Is this exit still a PROFIT at the price real depth supports?
+
+        Returns (ok, price_to_sell_at). The price returned is the executable
+        one, so the sell is logged at what it will actually get rather than at
+        the top-of-book quote the decision was made on.
+
+        Only reached when a profit rule has already fired, so the extra
+        orderbook fetch is rare rather than once per position per 2s scan.
+        """
+        if not _C.CONFIRM_EXIT_DEPTH:
+            return True, nominal_px
+        filled, px = self.portfolio.executable_exit(
+            ticker, pos.get("count", 0), pos.get("is_no", False))
+        if filled <= 0 or px is None:
+            # No resting depth at all. Do not claim a profit we cannot realise;
+            # the stop and expiry exits still apply on later scans.
+            return False, nominal_px
+        if entry <= 0:
+            return False, nominal_px
+        return ((px - entry) / entry > 0), px
+
     def manage(self, spot: float, vol: float, regime: dict):
         """
         ALWAYS runs regardless of session stop or any other gate.
@@ -279,15 +302,27 @@ class PositionManager:
                          and no_pnl_pct > -_C.MIN_HOLD_CATASTROPHE
                          and hours >= 0.03)
 
+                # A PROFIT exit must be confirmed against the depth the whole
+                # position needs. no_bid_px is top-of-book with no size, and
+                # sell() fills by walking the ladder — booking a "win" at a
+                # price that does not exist at size is how a take-profit became
+                # -$1.82. Stops deliberately skip this check: if the executable
+                # price is worse, a stop is MORE valid, not less.
                 if no_pnl_pct >= NO_PROFIT_CAPTURE and not fresh:
-                    self.portfolio.sell(ticker, no_bid_px, reason="misprice_captured ✅")
-                    continue
+                    ok, px = self._confirm_profit(ticker, pos, entry, no_bid_px)
+                    if ok:
+                        self.portfolio.sell(ticker, px, reason="misprice_captured ✅")
+                        continue
                 if no_pnl_pct >= NO_TIME_PROFIT and hours < 0.08 and not fresh:
-                    self.portfolio.sell(ticker, no_bid_px, reason="misprice_time 💰")
-                    continue
+                    ok, px = self._confirm_profit(ticker, pos, entry, no_bid_px)
+                    if ok:
+                        self.portfolio.sell(ticker, px, reason="misprice_time 💰")
+                        continue
                 if overprice_r < NO_EDGE_GONE_RATIO and no_pnl_pct > 0 and not fresh:
-                    self.portfolio.sell(ticker, no_bid_px, reason="edge_gone ✅")
-                    continue
+                    ok, px = self._confirm_profit(ticker, pos, entry, no_bid_px)
+                    if ok:
+                        self.portfolio.sell(ticker, px, reason="edge_gone ✅")
+                        continue
                 if no_pnl_pct <= -NO_STOP and not fresh:
                     self.portfolio.sell(ticker, no_bid_px, reason="misprice_failed ❌")
                     continue
