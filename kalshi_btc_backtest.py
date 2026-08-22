@@ -26,6 +26,8 @@ Usage:
 """
 
 import argparse
+import contextlib
+import io
 import json
 import math
 import sys
@@ -616,7 +618,7 @@ class BacktestPortfolio:
             "cost":           cost,
             "peak":           no_cost,
             "true_prob":      true_prob,
-            "edge":           contract["ask"] - true_prob,
+            "edge":           yes_bid - true_prob,
             "contract":       contract,
             "entered_at":     bar_ts.isoformat(),
             "entry_hours":    contract["hours"],
@@ -1106,7 +1108,8 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                  no_stop: bool = False, verbose: bool = False,
                  use_vol_surface: bool = False,
                  no_threshold: float = None,
-                 start_date: str = None, end_date: str = None):
+                 start_date: str = None, end_date: str = None,
+                 enable_yes: bool = True, enable_snipe: bool = True):
     """start_date/end_date (YYYY-MM-DD): fetch an explicit, fixed calendar
     window instead of `days` back from now. Exists so a parameter sweep can
     tune on one window and validate on a genuinely separate one — `days`
@@ -1274,10 +1277,12 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                 if verbose and vs_fitted:
                     print(f"  [{ts:%H:%M}] {vol_term.summary()}")
 
-            sig = signal_e.find_best(
-                spot, regime_bt["vol"], regime_bt, ladder, portfolio.positions,
-                vol_term=vol_term,
-            )
+            sig = None
+            if enable_yes:
+                sig = signal_e.find_best(
+                    spot, regime_bt["vol"], regime_bt, ladder, portfolio.positions,
+                    vol_term=vol_term,
+                )
             if sig:
                 # Queue for fill at NEXT bar's open (not this bar's close).
                 pending.append(("yes", sig))
@@ -1310,9 +1315,11 @@ def run_backtest(days: int = 7, capital: float = 50.0,
             # alongside find_best; the backtest omitted it entirely, so an
             # entire live entry strategy went unmodelled (3 of 6 entries and
             # the only profitable exits in the 2026-07-28 session).
-            snipe_sig = signal_e.find_snipe(
-                spot, regime_bt["vol"], regime_bt, ladder, portfolio.positions,
-            )
+            snipe_sig = None
+            if enable_snipe:
+                snipe_sig = signal_e.find_snipe(
+                    spot, regime_bt["vol"], regime_bt, ladder, portfolio.positions,
+                )
             if snipe_sig:
                 pending.append(("snipe", snipe_sig))
 
@@ -1401,6 +1408,99 @@ def sweep_no_thresholds(days: int = 60, capital: float = 5000.0,
     return results
 
 
+def _parse_float_grid(raw: str) -> list[float]:
+    return [float(x.strip()) for x in raw.split(",") if x.strip()]
+
+
+def sweep_boundary_no_zscores(days: int = 60, capital: float = 500.0,
+                              zscores: list[float] = None,
+                              no_threshold: float = 999.0):
+    """Sweep BOUNDARY_NO z-score gates with YES/SNIPE still enabled.
+
+    `no_threshold` is intentionally very high by default: run_backtest() only
+    scans NO entries when this argument is not None, but setting generic
+    MISPRICE_NO's overpricing threshold to 999 effectively removes that path.
+    That leaves the z-score-sensitive BOUNDARY_NO path plus the normal YES/SNIPE
+    strategies, making the attribution table useful for mixed-strategy tuning.
+    """
+    if zscores is None:
+        zscores = [0.50, 0.75, 0.90, 1.00, 1.10, 1.20,
+                   1.25, 1.30, 1.40, 1.50, 1.60, 1.75, 2.00, 2.50, 3.00]
+
+    print(f"\n{'═'*108}")
+    print(f"  BOUNDARY_NO Z-SCORE SWEEP WITH YES/SNIPE — {len(zscores)} runs × {days} days  "
+          f"capital=${capital:.0f}")
+    print(f"  Generic MISPRICE_NO threshold during sweep: {no_threshold:.2f}")
+    print(f"{'═'*108}\n")
+
+    orig_z = C.BOUNDARY_NO_ZSCORE_MIN
+    orig_no = C.NO_OVERPRICING_MIN
+    results = []
+    try:
+        for z in zscores:
+            C.BOUNDARY_NO_ZSCORE_MIN = z
+            buf = io.StringIO()
+            with contextlib.redirect_stdout(buf):
+                m = run_backtest(days=days, capital=capital,
+                                 no_threshold=no_threshold, verbose=False)
+            results.append((z, m))
+            no_trades = m.get("no_trades", 0)
+            no_avg = m.get("no_pnl", 0) / no_trades if no_trades else 0.0
+            print(f"  z={z:>4.2f} trades={m.get('total_trades',0):>4} "
+                  f"ret={m.get('return_pct',0):>+7.2f}% "
+                  f"sharpe={m.get('sharpe',0):>5.2f} "
+                  f"dd={m.get('max_drawdown_pct',0):>5.1f}% "
+                  f"YES={m.get('yes_trades',0):>3}/${m.get('yes_pnl',0):>+8.2f} "
+                  f"NO={no_trades:>3}/${m.get('no_pnl',0):>+8.2f} "
+                  f"NOavg=${no_avg:>+6.2f}",
+                  flush=True)
+    finally:
+        C.BOUNDARY_NO_ZSCORE_MIN = orig_z
+        C.NO_OVERPRICING_MIN = orig_no
+
+    print(f"\n{'═'*108}")
+    print(f"  Z-SWEEP SUMMARY")
+    print(f"{'─'*108}")
+    print(f"  {'Z':>5}  {'Trades':>6}  {'Return%':>8}  {'Sharpe':>6}  {'PF':>5}  {'MaxDD%':>7}  "
+          f"{'YES':>4}  {'YES WR%':>7}  {'YES P&L':>9}  "
+          f"{'NO':>4}  {'NO WR%':>7}  {'NO P&L':>9}  {'NO avg':>8}")
+    print(f"{'─'*108}")
+    for z, m in results:
+        no_trades = m.get("no_trades", 0)
+        no_avg = m.get("no_pnl", 0) / no_trades if no_trades else 0.0
+        print(f"  {z:>5.2f}  {m.get('total_trades',0):>6}  "
+              f"{m.get('return_pct',0):>8.1f}  {m.get('sharpe',0):>6.2f}  "
+              f"{m.get('profit_factor',0):>5.2f}  {m.get('max_drawdown_pct',0):>7.1f}  "
+              f"{m.get('yes_trades',0):>4}  {m.get('yes_wr',0):>7.1f}  "
+              f"${m.get('yes_pnl',0):>+8.2f}  "
+              f"{no_trades:>4}  {m.get('no_wr',0):>7.1f}  "
+              f"${m.get('no_pnl',0):>+8.2f}  ${no_avg:>+7.2f}")
+    print(f"{'═'*108}")
+
+    best_z, best_m = max(results, key=lambda x: x[1].get("sharpe", 0))
+    print(f"\n  Best by Sharpe: z={best_z:.2f}  "
+          f"Sharpe={best_m.get('sharpe',0):.2f}  "
+          f"Return={best_m.get('return_pct',0):+.1f}%  "
+          f"YES P&L=${best_m.get('yes_pnl',0):+.2f}  "
+          f"NO P&L=${best_m.get('no_pnl',0):+.2f}\n")
+
+    Path("results").mkdir(exist_ok=True)
+    fname = f"results/z_sweep_{datetime.now():%Y%m%d_%H%M}.json"
+    with open(fname, "w") as f:
+        json.dump({
+            "config": {
+                "days": days,
+                "capital": capital,
+                "zscores": zscores,
+                "no_threshold": no_threshold,
+                "generic_misprice_no_disabled": no_threshold >= 999.0,
+            },
+            "results": [{"z": z, "metrics": m} for z, m in results],
+        }, f, indent=2, default=str)
+    print(f"  Saved z-sweep: {fname}\n")
+    return results
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Kalshi BTC strategy backtest")
     parser.add_argument("--days",         type=int,   default=60,   help="History window (max 60 for 5m). 60 is the default because a 7-day window is far too small to be robust.")
@@ -1414,9 +1514,35 @@ if __name__ == "__main__":
                         help="Enable MISPRICE_NO with this overpricing threshold (e.g. 1.18)")
     parser.add_argument("--no-sweep",     action="store_true",
                         help="Sweep MISPRICE_NO thresholds [1.10,1.15,1.18,1.20,1.25,1.30,1.40]")
+    parser.add_argument("--z-sweep",      action="store_true",
+                        help="Sweep BOUNDARY_NO z-score thresholds and report YES/NO attribution")
+    parser.add_argument("--z-values",     default=None,
+                        help="Comma-separated z-score grid for --z-sweep (e.g. 0.9,1.0,1.2,1.4)")
+    parser.add_argument("--z-sweep-no-threshold", type=float, default=999.0,
+                        help="Generic MISPRICE_NO overpricing threshold during --z-sweep; default 999 isolates BOUNDARY_NO")
+    parser.add_argument("--no-yes",       action="store_true",
+                        help="Disable normal YES RANGE entries")
+    parser.add_argument("--no-snipe",     action="store_true",
+                        help="Disable SNIPE entries")
+    parser.add_argument("--no-only",      action="store_true",
+                        help="Run NO-only: disables YES/SNIPE and enables boundary-NO scan with generic MISPRICE_NO isolated")
     args = parser.parse_args()
 
-    if args.no_sweep:
+    enable_yes = not args.no_yes and not args.no_only
+    enable_snipe = not args.no_snipe and not args.no_only
+    no_threshold = args.no_threshold
+    if args.no_only and no_threshold is None:
+        no_threshold = 999.0
+
+    if args.z_sweep:
+        zscores = _parse_float_grid(args.z_values) if args.z_values else None
+        sweep_boundary_no_zscores(
+            days=args.days,
+            capital=args.capital,
+            zscores=zscores,
+            no_threshold=args.z_sweep_no_threshold,
+        )
+    elif args.no_sweep:
         sweep_no_thresholds(days=args.days, capital=args.capital)
     else:
         run_backtest(
@@ -1427,5 +1553,7 @@ if __name__ == "__main__":
             no_stop=args.no_stop,
             verbose=args.verbose,
             use_vol_surface=args.vol_surface,
-            no_threshold=args.no_threshold,
+            no_threshold=no_threshold,
+            enable_yes=enable_yes,
+            enable_snipe=enable_snipe,
         )

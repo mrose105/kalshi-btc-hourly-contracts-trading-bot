@@ -22,6 +22,8 @@ MAX_EXPOSURE_PCT    = 0.18       # max 18% of real portfolio value in positions 
 MIN_CASH_PCT        = 0.05       # keep 5% as cash reserve
 MAX_TRADE_PCT       = 0.025      # max 2.5% of real portfolio per trade (was 0.05)
 NO_TRADE_PCT        = 0.02       # max 2% of real portfolio per MISPRICE_NO trade (was 0.04)
+ENABLE_YES          = False      # NO-only paper test: disable normal YES RANGE entries
+ENABLE_SNIPE        = False      # SNIPE is also a YES buy; keep off for clean NO attribution
 ENABLE_MISPRICE_NO = False      # disabled — BOUNDARY_NO is the active NO strategy
 MAX_POSITIONS       = 4
 STRIKE_CLUSTER_DIST = 150        # skip a new entry if its strike is within this many
@@ -446,7 +448,7 @@ NO_EDGE_GONE_RATIO  = 1.05       # overpricing ratio drops here → edge_gone
 # that mean reversion says won't happen. Same `is_no` position + exit logic
 # as MISPRICE_NO, different entry gate (z-score extremes instead of raw overpricing).
 ENABLE_BOUNDARY_NO          = True
-BOUNDARY_NO_ZSCORE_MIN      = 2.5    # |z| must exceed this to count as a range extreme (was 1.5 — sweep Jul 22 showed 2.5 best)
+BOUNDARY_NO_ZSCORE_MIN      = 1.40   # |z| must exceed this to count as a range extreme (Aug 17 sweep: 1.40-1.50 best NO band)
 BOUNDARY_NO_OTM_MIN         = -250   # don't go deeper than 250 OTM (premium too thin)
 BOUNDARY_NO_OTM_MAX         = -10    # small buffer — not right at the current boundary
 BOUNDARY_NO_OVERPRICING_MIN = 1.15   # lower than MISPRICE_NO — z-score adds independent conviction

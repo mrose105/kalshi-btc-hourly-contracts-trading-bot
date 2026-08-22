@@ -24,6 +24,76 @@ true probability, and edge are recomputed at fill time before the simulated
 position is opened. That mirrors the live path, where every entry re-fetches a
 fresh quote and recomputes posterior immediately before sizing/execution.
 
+To inspect BOUNDARY_NO behavior under the synthetic pricing assumptions, run:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 kalshi_btc_backtest.py --days 60 --capital 500 --z-sweep
+```
+
+The z-sweep leaves YES/SNIPE active, enables the boundary-NO scan, and reports
+YES P&L, NO P&L, win rates, drawdown, Sharpe, and average NO P&L per trade side
+by side. By default it sets generic MISPRICE_NO's threshold to `999`, which
+effectively isolates the z-score-driven BOUNDARY_NO path.
+
+This sweep **does not tune the live z-score**. Live `zscore(300)` measures five
+minutes of roughly 2-second ticks; the synthetic feed stretches the same call
+to roughly 150 five-minute bars (12.5 hours) to match sample count. Matching the
+marginal z distribution does not preserve the predictive horizon. Synthetic
+quotes and exits are also generated from the same model family used to rank
+them, so synthetic P&L cannot establish real Kalshi inefficiency.
+
+Use the raw recorded universe joined to contemporaneous quote/regime snapshots
+for the live entry-edge question:
+
+```bash
+python3 boundary_no_quote_replay.py --bootstrap 10000
+```
+
+That replay runs the production BOUNDARY_NO selector on contemporaneous live
+z-scores and real Kalshi bids, respects `MAX_POSITIONS` and same-expiry strike
+clustering, and holds selected contracts to recorded settlement. It reports a
+deterministic expiry-clustered confidence interval. It is an entry-quality test:
+top-of-book only with the conservative one-contract KXBTC taker fee, excluding
+latency, depth, stops, and capacity.
+
+Audited 2026-08-18, the uncensored raw-universe replay contradicts the synthetic
+result. At `z=1.40` it resolves 37 selections across 30 expiry clusters: 62.2%
+wins at a mean all-in NO cost of 0.751, for **-17.3% EV per dollar**
+(expiry-clustered 95% CI [-37.0%, +2.2%], with 95.8% of bootstrap samples
+non-positive). A superficially high win rate still loses when each loss risks
+roughly 75c to win 25c.
+
+### What "60/40" means here
+
+**A probability-quality reference, not a price cap.** It describes the
+confidence profile worth trading — a selected outcome the model puts near 60%
+against a market implying nearer 40% — and says nothing about what a contract
+may cost.
+
+A trade requires exactly one thing: **positive net edge between the
+selected-side model probability and the executable market price.** For NO that
+is `(1 - true_prob) - (1 - yes_bid)`, measured at the price that actually
+fills, and it is enforced at selection (`signals.py`) and re-checked against a
+fresh quote before execution (`Portfolio.buy_no`).
+
+There is **no 40c break-even cap and no 38c entry cap.** An earlier revision
+read the "60/40" framing as a payoff contract and added `MAX_ENTRY_PRICE`,
+`TARGET_MAX_BREAK_EVEN`, `MAX_LADDER_YES_ASK`, fee-aware sizing, and
+fee-adjusted stops/P&L. That was a strategy change nobody requested and it has
+been reverted. `MAX_ASK` (0.45) is the YES entry ceiling, as before.
+
+Do not introduce a 60% probability gate or an entry-price cap without an
+explicit request and a held-out validation. The replay figures above are
+research diagnostics on one recorded sample, not forward performance.
+
+For a clean NO-only paper test, set `ENABLE_YES = False` and
+`ENABLE_SNIPE = False` in `kalshi_btc_bot/config.py`, then restart the bot. The
+corresponding synthetic scenario command is:
+
+```bash
+PYTHONDONTWRITEBYTECODE=1 python3 kalshi_btc_backtest.py --days 60 --capital 500 --no-only
+```
+
 There is still no single headline return — the strategy has a measured
 **capacity limit**, and which side of it you're on determines the sign of the
 result. Past roughly a few thousand dollars, Kelly sizing wants positions larger
@@ -146,18 +216,18 @@ Three parallel scans on each tick.
 
 - **`find_best`** — probability-edge scan for the highest-edge contract. **RANGE-only in the RANGING regime**; TRENDING / REVERTING / BREAKOUT regimes also consider ABOVE / BELOW contracts, gated by the regime's direction (an ABOVE won't be bought during a confirmed downtrend, and vice-versa).
 - **`find_snipe`** — separate ROI-ranked scan for cheap deep-OTM lottery tickets that `find_best` would never surface (small raw-edge points but 30%+ ROI on a 10–25¢ ask).
-- **`find_boundary_no`** — mean-reversion premium-collection scan. When BTC is at a range extreme (|z-score| ≥ 2.5, RANGING or REVERTING regime), the market overprices the probability of continuation — OTM contracts in the breakout direction are too expensive relative to true probability. The bot buys NO on those contracts (betting BTC mean-reverts rather than breaks out), analogous to selling an OTM option at the extreme to collect overpriced premium. NO pays $1 if BTC fails to reach the OTM range by expiry. Exits via 40% stop-loss or expiry settlement.
+- **`find_boundary_no`** — mean-reversion premium-collection scan. When BTC is at a range extreme (|z-score| ≥ 1.40, RANGING or REVERTING regime), the market overprices the probability of continuation — OTM contracts in the breakout direction are too expensive relative to true probability. The bot buys NO on those contracts (betting BTC mean-reverts rather than breaks out), analogous to selling an OTM option at the extreme to collect overpriced premium. NO pays $1 if BTC fails to reach the OTM range by expiry. Exits via 40% stop-loss or expiry settlement.
 
 Filters applied before every entry:
 
 | Filter | Description |
 |--------|-------------|
 | Expiry gate | 6 min – 4 hours to expiry (`MIN_HOURS` = 0.10, `MAX_HOURS` = 4.0) |
-| Max ask | Skip anything priced above 45¢ (`MAX_ASK`) — the strategy targets the cheap side of the ladder |
+| Max ask | YES entries skipped above 45¢ (`MAX_ASK`); the shared ladder filters on the same value |
 | Min volume | Ladder rows below 50 contracts of volume are skipped |
 | OTM gate | RANGE: ≤ $50 OTM (normal vol), ≤ $150 OTM (vol compressed). ABOVE/BELOW: ≤ $100 OTM (`MAX_OTM_T`). All tighten dynamically as expiry approaches (≤ $60 OTM inside 30 min; ≤ $30 OTM inside 20 min) |
 | RANGE boundary buffer | Skip RANGE entries within $40 of *either* boundary (`MIN_RANGE_BOUNDARY_BUFFER`), all regimes, unless vol-compressed (structural mispricing exception) |
-| Spread filter | Skip if bid/ask spread > 5¢ or > 25% of ask, re-validated against a fresh single-ticker quote at order time (retried 3× — a single dropped request used to discard a valid signal silently). **Known limitation:** the 5¢ absolute gate is calibrated for 10–45¢ YES contracts and is applied unchanged to NO entries costing 55–90¢, where the same spread is proportionally far smaller. |
+| Spread filter | Skip if bid/ask spread > 5¢ or > 25% of YES ask, re-validated against a fresh single-ticker quote at order time (retried 3× — a single dropped request used to discard a valid signal silently). |
 | Min edge | `raw_edge = true_prob − kalshi_ask ≥ 1.5%` (drops to **1.0%** during vol compression) |
 | Strike clustering | Skip if the strike is within $150 of an existing open position's strike in the same expiry window |
 | Time-exit collision | Skip if the entry would immediately land inside the `TIME_EXIT_MINS` OTM force-close window |
@@ -183,6 +253,38 @@ evidence, not only something to trade against.
 The posterior is intentionally disabled in the synthetic backtest because those
 quotes are generated by `build_ladder()` itself. Real quote replay should use
 posterior; synthetic research should not.
+
+**It has not been shown to add value, and the naming oversells it.** Audited
+2026-08-18:
+
+- **It is not a Bayesian posterior.** It is a logarithmic opinion pool —
+  `logit(post) = (1−w)·logit(prior) + w·logit(market)` — with `w` set by hand
+  (`0.15 + 0.10·time + 0.10·spread`, capped at 0.35). That functional form *is*
+  the posterior mean under a Gaussian log-odds prior and likelihood, but only if
+  `w = τ_market/(τ_prior+τ_market)`. Here it is judgmental and uncalibrated.
+- **The headline real-quote result is a threshold artifact.** Because the mid is
+  always below the ask, `posterior_edge < prior_edge` identically, so clearing a
+  fixed `MIN_EDGE` just demands a larger prior edge — it selects *fewer*
+  contracts, not *different* ones. Matched on sample size the advantage
+  disappears:
+
+  | Selection | n | EV/$1 |
+  |---|---:|---:|
+  | posterior ≥ `MIN_EDGE` | 38 | +34.1% |
+  | prior ≥ `MIN_EDGE` | 58 | +5.0% |
+  | **prior top-38 (matched n)** | **38** | **+31.6%** |
+
+  The two 38-contract sets share **36 of 38** contracts. Raising `MIN_EDGE` from
+  0.015 to 0.028 on the raw prior reproduces the result with no posterior at all.
+- **It is not statistically significant either way.** Clustering by expiry
+  (mutually exclusive RANGE bands resolved by one BTC path): 29 clusters,
+  95% CI **[−36.3%, +100.4%]**, P(EV ≤ 0) = 18.2%.
+- **`BAYES_MAX_MOVE` binds backwards.** The ±0.10 cap engages only when prior and
+  market disagree most — exactly when market evidence is most informative.
+
+The posterior stays enabled on the live entry path because it is *conservative*
+(it can only shrink apparent edge toward the market), not because it is proven.
+Do not cite the +34.1% figure as evidence for it.
 
 ---
 

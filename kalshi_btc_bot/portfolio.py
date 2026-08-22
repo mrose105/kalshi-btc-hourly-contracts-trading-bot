@@ -78,6 +78,8 @@ from .config import PAPER_CAPITAL, PAPER_TRADING
 from . import live_view
 from . import recorder
 
+_ORDER_CREATE_ENDPOINT = "/portfolio/events/orders"
+
 # ─────────────────────────────────────────────
 # PORTFOLIO — syncs from real Kalshi API
 # ─────────────────────────────────────────────
@@ -305,7 +307,7 @@ class Portfolio:
             if not order_id:
                 continue
             try:
-                self.client._request("DELETE", f"/portfolio/orders/{order_id}")
+                self.client._request("DELETE", f"{_ORDER_CREATE_ENDPOINT}/{order_id}")
                 canceled += 1
             except Exception as e:
                 print(f"  ⚠️  Could not cancel order {order_id}: {e}")
@@ -339,7 +341,7 @@ class Portfolio:
             print(f"  ⚠️  {label} resting but no order_id returned")
             return
         try:
-            self.client._request("DELETE", f"/portfolio/orders/{order_id}")
+            self.client._request("DELETE", f"{_ORDER_CREATE_ENDPOINT}/{order_id}")
             print(f"  🧯 Canceled resting {label}: {order_id}")
         except Exception as e:
             print(f"  ⚠️  Cancel {label} failed: {e}")
@@ -353,8 +355,21 @@ class Portfolio:
         price: float,
         reduce_only: bool = False,
     ) -> dict:
-        price_str = f"{max(0.01, min(0.99, price)):.4f}"
-        v2_side = "bid" if action == "buy" else "ask"
+        if action not in {"buy", "sell"}:
+            raise ValueError(f"unsupported order action: {action!r}")
+        if side not in {"yes", "no"}:
+            raise ValueError(f"unsupported outcome side: {side!r}")
+
+        # The V2 event-order endpoint is a single YES-leg book: bid means buy
+        # YES and ask means sell YES. Keep callers expressed in outcome terms
+        # and translate only here. Buying NO at 38c is therefore an ASK at a
+        # 62c YES-leg price; selling NO is the complementary BID.
+        long_yes = (action == "buy" and side == "yes") or (
+            action == "sell" and side == "no"
+        )
+        v2_side = "bid" if long_yes else "ask"
+        yes_leg_price = price if side == "yes" else 1.0 - price
+        price_str = f"{max(0.01, min(0.99, yes_leg_price)):.4f}"
         payload = {
             "ticker": ticker,
             "side": v2_side,
@@ -370,7 +385,8 @@ class Portfolio:
         return payload
 
     @staticmethod
-    def _parse_fill(result: dict, fallback_price: float) -> tuple:
+    def _parse_fill(result: dict, fallback_price: float,
+                    outcome_side: str = "yes") -> tuple:
         """Extract (filled_count, avg_fill_price_dollars) from an order
         response. Kalshi wraps the order as {"order": {...}}; fill-count field
         naming varies (fill_count / fill_count_fp / taker_fill_count) and avg
@@ -387,7 +403,8 @@ class Portfolio:
             return 0, 0.0
         avg = order.get("average_fill_price")
         if avg is not None:
-            return filled, float(avg)
+            yes_price = float(avg)
+            return filled, yes_price if outcome_side == "yes" else 1.0 - yes_price
         cost_c = order.get("taker_fill_cost")
         if cost_c is not None:
             return filled, float(cost_c) / filled / 100.0
@@ -559,6 +576,7 @@ class Portfolio:
             cost = limit * count
             if cost > self.real_cash or cost > budget or count <= 0:
                 return False
+            wanted = count
 
             if PAPER_TRADING:
                 # Cap the fill to real resting depth (buying YES matches NO bids,
@@ -571,21 +589,21 @@ class Portfolio:
                     print(f"  ⚠️  BUY no depth: {ticker[-22:]} "
                           f"wanted={count} no_levels={no_levels[:3]}")
                     return False
-                recorder.record_order("buy", ticker, "yes", bid, ask,
-                                       {"no": no_levels}, limit, count,
-                                       filled, fill_price,
-                                       reason="snipe" if is_snipe else "",
-                                       true_prob=true_prob)
                 count = filled
                 ask   = fill_price
                 cost  = ask * count
+                recorder.record_order("buy", ticker, "yes", bid, ask,
+                                       {"no": no_levels}, limit, wanted,
+                                       filled, fill_price,
+                                       reason="snipe" if is_snipe else "",
+                                       true_prob=true_prob)
                 self.real_cash -= cost
 
         if not PAPER_TRADING:
             try:
                 result = self.client._request(
                     "POST",
-                    "/portfolio/orders",
+                    _ORDER_CREATE_ENDPOINT,
                     json_body=self.order_payload(ticker, "buy", "yes", count, limit),
                 )
                 filled, avg_px = Portfolio._parse_fill(result, ask)
@@ -689,6 +707,34 @@ class Portfolio:
                                      f"on the fresh quote (bid ${bid:.3f})")
             return False
 
+        # The RATIO gate above does not imply the ABSOLUTE edge gate, and for the
+        # contracts BOUNDARY_NO actually trades it is close to vacuous. Since
+        # no_cost = 1 - bid:
+        #     net_edge = (1 - true_p) - (1 - bid) = bid - true_p
+        #     ratio    = bid / true_p
+        #     =>  net_edge = true_p * (ratio - 1)
+        # At BOUNDARY_NO_OVERPRICING_MIN = 1.15, clearing a 0.05 net edge needs
+        # true_p >= 0.333 — but this signal deliberately targets OTM continuation
+        # contracts far below that. So a contract selected at true_p 0.10 /
+        # bid 0.15 (ratio 1.50) still cleared the fresh-quote recheck after the
+        # bid decayed to 0.115, a 23% adverse move, entering at net_edge 0.015 —
+        # under a third of the bar find_boundary_no (signals.py) required to
+        # select it in the first place.
+        #
+        # The synthetic fill path already re-checks this at the next bar's open
+        # (kalshi_btc_backtest.py:1239). Live did not, so live could fill trades
+        # the backtest would refuse — a parity gap in the direction that costs
+        # money. Mirrors that check, including applying only to BOUNDARY_NO.
+        if contract.get("signal") == "BOUNDARY_NO":
+            _net_edge = (1.0 - true_prob) - (1.0 - bid)
+            if _net_edge < _C.BOUNDARY_NO_MIN_NET_EDGE:
+                self._log_reject(
+                    ticker,
+                    f"net edge ${_net_edge:.3f} under "
+                    f"${_C.BOUNDARY_NO_MIN_NET_EDGE:.3f} on the fresh quote "
+                    f"(bid ${bid:.3f}, true {true_prob:.3f})")
+                return False
+
         # Buying NO means lifting a resting YES BID, so what you PAY is
         # 1 - yes_bid (the NO ask). 1 - yes_ask is the NO *bid* — the price you
         # would RECEIVE selling NO — and using it as a buy limit is short by the
@@ -720,6 +766,7 @@ class Portfolio:
                 self._log_reject(ticker, f"size: budget ${budget:.2f} / no_cost ${no_cost:.3f} "
                                          f"-> {count} contracts (cash ${self.real_cash:.2f})")
                 return False
+            wanted = count
 
             if PAPER_TRADING:
                 # Buying NO matches resting YES bids (effective no price = 1 - yes_price).
@@ -733,16 +780,25 @@ class Portfolio:
                 count   = filled
                 no_cost = fill_price
                 cost    = no_cost * count
+                # BUY_NO order recording — buy_no() previously never called
+                # record_order at all, so NO entries were invisible in
+                # orders/*.jsonl and the depth behind them unauditable.
+                recorder.record_order(
+                    "buy", ticker, "no", bid, yes_ask,
+                    {"yes": yes_levels}, 1.0 - bid, wanted, filled, fill_price,
+                    reason=contract.get("signal", "MISPRICE_NO"),
+                    true_prob=true_prob,
+                )
                 self.real_cash -= cost
 
         if not PAPER_TRADING:
             try:
                 result = self.client._request(
                     "POST",
-                    "/portfolio/orders",
+                    _ORDER_CREATE_ENDPOINT,
                     json_body=self.order_payload(ticker, "buy", "no", count, no_cost),
                 )
-                filled, avg_px = Portfolio._parse_fill(result, no_cost)
+                filled, avg_px = Portfolio._parse_fill(result, no_cost, "no")
                 if filled <= 0:
                     order = result.get("order", result)
                     print(f"  ⚠️  BUY_NO IOC not filled: {order.get('status')}")
@@ -879,11 +935,12 @@ class Portfolio:
                 if ticker not in self.positions:
                     return False
                 count = min(filled, self.positions[ticker]["count"])
-                # The bulk quote is the executable top of book. If the separate
-                # depth snapshot lags or is thinner than the quoted size for a
-                # tiny paper exit, do not mark a stop below the best available
-                # market price we just refreshed.
-                bid   = max(fill_price, bid) if urgent else fill_price
+                # Cash and P&L must use the depth-walk fill recorded above. A
+                # fresh top quote has no quantity attached, so crediting the
+                # whole exit at max(fill_price, quote) can book proceeds that
+                # were never available (and makes orders/*.jsonl disagree with
+                # trades.csv).
+                bid = fill_price
                 self.real_cash += bid * count
 
         if not PAPER_TRADING:
@@ -896,7 +953,7 @@ class Portfolio:
             try:
                 result = self.client._request(
                     "POST",
-                    "/portfolio/orders",
+                    _ORDER_CREATE_ENDPOINT,
                     json_body=self.order_payload(
                         ticker,
                         "sell",
@@ -906,7 +963,7 @@ class Portfolio:
                         reduce_only=True,
                     ),
                 )
-                filled, fill_price = Portfolio._parse_fill(result, bid)
+                filled, fill_price = Portfolio._parse_fill(result, bid, side)
                 if filled > 0:
                     filled_count = filled
                     proceeds    += fill_price * filled_count
@@ -928,7 +985,7 @@ class Portfolio:
                         try:
                             r2 = self.client._request(
                                 "POST",
-                                "/portfolio/orders",
+                                _ORDER_CREATE_ENDPOINT,
                                 json_body=self.order_payload(
                                     ticker,
                                     "sell",

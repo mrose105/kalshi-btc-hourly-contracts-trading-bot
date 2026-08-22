@@ -10,7 +10,8 @@ from kalshi_es_analysis import KalshiClient
 
 from .config import (
     MAX_EXPOSURE_PCT, MAX_TRADE_PCT, NO_TRADE_PCT,
-    ENABLE_BOUNDARY_NO, ENABLE_MISPRICE_NO, NO_EXEMPT_FROM_COOLDOWN,
+    ENABLE_BOUNDARY_NO, ENABLE_MISPRICE_NO, ENABLE_SNIPE, ENABLE_YES,
+    NO_EXEMPT_FROM_COOLDOWN,
     PAPER_TRADING,
     POSITION_CHECK, PRICE_FETCH, SCAN_INTERVAL, SYNC_INTERVAL,
     RECORD_BOOK_INTERVAL,
@@ -31,7 +32,7 @@ from . import recorder
 # ─────────────────────────────────────────────
 def main():
     signals_on = [name for name, on in (
-        ("YES", True), ("SNIPE", True),
+        ("YES", ENABLE_YES), ("SNIPE", ENABLE_SNIPE),
         ("BOUNDARY_NO", ENABLE_BOUNDARY_NO), ("MISPRICE_NO", ENABLE_MISPRICE_NO),
     ) if on]
     print("="*62)
@@ -166,8 +167,10 @@ def main():
             _ladder = [c for c in ladder if c["ticker"] not in _cd]
 
             # YES signal
-            sig = signal_e.find_best(
-                spot, vol, regime, _ladder, portfolio.positions)
+            sig = None
+            if ENABLE_YES:
+                sig = signal_e.find_best(
+                    spot, vol, regime, _ladder, portfolio.positions)
             if sig:
                 if live_view.ENABLED:
                     itm = "✅" if sig["itm"] else f"OTM{sig['otm_dist']:+.0f}"
@@ -242,7 +245,9 @@ def main():
             # SNIPE signal — deep-OTM lottery tickets, ROI-ranked, separate scan from
             # find_best() (see config.py SNIPE_* comment for why they'd otherwise be
             # starved out by the main edge ranking)
-            snipe_sig = signal_e.find_snipe(spot, vol, regime, _ladder, portfolio.positions)
+            snipe_sig = None
+            if ENABLE_SNIPE:
+                snipe_sig = signal_e.find_snipe(spot, vol, regime, _ladder, portfolio.positions)
             if snipe_sig:
                 if live_view.ENABLED:
                     live_view.log_event(

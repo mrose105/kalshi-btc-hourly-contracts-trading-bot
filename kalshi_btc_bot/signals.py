@@ -240,6 +240,8 @@ class SignalEngine:
             yes_ask = c["ask"]
             if yes_ask < NO_YES_ASK_MIN or yes_ask > NO_YES_ASK_MAX:
                 continue
+            yes_bid = c.get("bid", yes_ask)
+            no_cost = 1.0 - yes_bid
             d_val = c["otm_dist"]
             if d_val < NO_DIST_MIN or d_val > NO_DIST_MAX:
                 continue
@@ -249,8 +251,9 @@ class SignalEngine:
             if true_p <= 0 or true_p >= NO_TRUE_PROB_MAX:
                 continue
 
-            ratio    = yes_ask / true_p
-            edge_pct = (yes_ask - true_p) / true_p * 100
+            # Buying NO executes against the YES bid, never the YES ask.
+            ratio    = yes_bid / true_p
+            edge_pct = (yes_bid - true_p) / true_p * 100
 
             if ratio > best_ratio:
                 best_ratio = ratio
@@ -267,7 +270,7 @@ class SignalEngine:
                     # not 1 - yes_ask, which is the NO bid. Reporting the bid
                     # understated every BOUNDARY_NO/MISPRICE_NO entry by the
                     # full spread. See Portfolio.buy_no.
-                    "no_cost":           1.0 - c.get("bid", yes_ask),
+                    "no_cost":           no_cost,
                 }
 
         return best
@@ -343,11 +346,11 @@ class SignalEngine:
             # than the model says it is worth. Same class of error as pricing
             # no_cost off the ask (fixed 731be85).
             yes_bid = c.get("bid", yes_ask)
+            no_cost = 1.0 - yes_bid
             ratio = yes_bid / true_p
             # Absolute edge on the side we actually buy. The ratio test is
             # scale-free, so a big ratio on a tiny true_prob still leaves almost
             # no edge once you pay 90c for the NO. See config.
-            no_cost  = 1.0 - yes_bid
             net_edge = (1.0 - true_p) - no_cost
             if net_edge < _C.BOUNDARY_NO_MIN_NET_EDGE:
                 continue
@@ -362,7 +365,7 @@ class SignalEngine:
                     "market_prob":       p_info["market_prob"],
                     "market_weight":     p_info["market_weight"],
                     "overpricing_ratio": ratio,
-                    "edge_pct":          (yes_ask - true_p) / true_p * 100,
+                    "edge_pct":          (yes_bid - true_p) / true_p * 100,
                     # Cost of BUYING no is 1 - yes_bid (lifting a resting YES bid),
                     # not 1 - yes_ask, which is the NO bid. Reporting the bid
                     # understated every BOUNDARY_NO/MISPRICE_NO entry by the
