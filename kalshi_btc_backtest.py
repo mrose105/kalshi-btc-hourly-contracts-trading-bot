@@ -39,6 +39,7 @@ import pandas as pd
 import numpy as np
 
 sys.path.insert(0, str(Path(__file__).parent))
+from kalshi_btc_bot.fees        import taker_fee
 from kalshi_btc_bot.model       import DistModel
 from kalshi_btc_bot.regime      import RegimeEngine
 from kalshi_btc_bot.signals     import SignalEngine
@@ -569,7 +570,10 @@ class BacktestPortfolio:
         cost   = ask * count
         if count <= 0 or cost > self.cash:
             return False
-        self.cash -= cost
+        # PARITY: live/paper charge the Kalshi taker fee on entry
+        # (Portfolio.buy). The backtest must too, or it overstates by ~1.8-2.5%
+        # of deployed capital and stops being comparable to paper results.
+        self.cash -= cost + (taker_fee(count, ask) if C.CHARGE_FEES else 0.0)
         self.prior_entry_cost[ticker] = cost
         self.trade_count += 1
         self.positions[ticker] = {
@@ -610,7 +614,7 @@ class BacktestPortfolio:
         cost   = no_cost * count
         if count <= 0 or cost > self.cash:
             return False
-        self.cash -= cost
+        self.cash -= cost + (taker_fee(count, no_cost) if C.CHARGE_FEES else 0.0)
         self.trade_count += 1
         self.positions[ticker] = {
             "count":          count,
@@ -911,7 +915,11 @@ class BacktestPortfolio:
         _loss = pnl < 0
         self.cooldowns[ticker] = bar_ts + timedelta(
             seconds=C.STOP_COOLDOWN_SECS if _loss else C.EXIT_COOLDOWN_SECS)
-        self.cash    += bid * count
+        # PARITY with Portfolio.sell(): an early exit is a taker order and pays
+        # a second fee; expiry settlement is cash-settled by Kalshi and free.
+        _exit_fee = (taker_fee(count, bid)
+                     if (C.CHARGE_FEES and "expiry_settle" not in reason) else 0.0)
+        self.cash    += bid * count - _exit_fee
         self.realized += pnl
         t = self.total()
         if t > self.peak_total:
