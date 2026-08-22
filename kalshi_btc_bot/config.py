@@ -549,6 +549,100 @@ BOUNDARY_NO_HOURS_MAX       = 0.50   # wider window than plain NO — more time 
 BOUNDARY_NO_YES_ASK_MIN     = 0.10
 BOUNDARY_NO_YES_ASK_MAX     = 0.65
 
+# ---------------------------------------------------------------------------
+# Delayed entry — don't buy the signal, buy the dip after it
+# ---------------------------------------------------------------------------
+# When a NO signal first fires, record its cost and DON'T buy. Buy only once the
+# same signal re-fires at DELAYED_ENTRY_DIP below that first-sighting cost.
+# Entry price is the binding constraint on this strategy's break-even WR: a NO
+# bought at X has max gain (1-X)/X, so 0.74 caps you at +35% and needs 74% to
+# break even, while 0.60 pays +67% and needs 60%.
+#
+# 0.0 = OFF = current behaviour, buy on first sighting. THE DEFAULT.
+#
+# 2026-08-20 settlement-resolved study, 39 NO episodes / 28 expiry clusters,
+# recorded marks + uncensored universe spot. The dip is real and common —
+# 72% of positions dip >=5% below the signal price, 56% dip 10%, 46% dip 15% —
+# but on this sample it did NOT pay, because break-even and win rate fall
+# together:
+#         policy       avg cost   BE needed   P(win)    edge
+#         at signal      0.74        74%        67%     -7.0%
+#         wait -5%       0.67        66%        61%     -5.8%
+#         wait -10%      0.64        64%        55%     -9.6%
+#         wait -15%      0.60        60%        56%     -4.1%
+#         wait -20%      0.56        56%        47%     -9.7%
+# ROC -6.9% to -18.6% vs -9.5% holding the undelayed entry; -10% being worse
+# than both neighbours is noise at n=18-22, not a sweet spot. Second cost:
+# waiting FILTERS OUT WINNERS. At -15% you skip 21 of 39 trades and 16 of the
+# skipped ones settled in our favour — positions that never dip are the good
+# ones.
+#
+# WHY IT IS SHIPPED ANYWAY, and what is genuinely untested: that study bought
+# every dip unconditionally. This implementation cannot — a ticker only fills
+# if find_boundary_no/find_no_scalp RE-FIRES at the dipped price, with fresh
+# spot, fresh true_prob, fresh z-score and fresh net edge. Dips caused by spot
+# walking into the band stop re-firing and expire unfilled; dips that are quote
+# noise still qualify. The recording cannot answer whether that separation
+# works, because it has no counterfactual for "would the signal still fire
+# here". That is the open question this flag exists to measure. Treat any
+# result as unvalidated until it holds on data recorded AFTER it was switched
+# on. See also MIN_RANGE_BOUNDARY_BUFFER below: 72% of these entries carried
+# less than $40 of spot cushion against a $100-wide band, and the $0-20 cushion
+# bucket alone ran -35.7% ROC. That may be the bigger lever.
+#
+# 2026-08-20: switched ON at 0.10 in PAPER mode, by explicit request, to record
+# the data the recording could not provide. It is a measurement run, not a
+# validated parameter. test_delayed_entry.py refuses to let it be > 0 while
+# PAPER_TRADING is False.
+#
+# 2026-08-20 (second pass): the trigger is a BAND, not a floor.
+# `DELAYED_ENTRY_DIP` is the minimum dip; `DELAYED_ENTRY_DIP_MAX` caps it. A dip
+# that goes straight past the cap is ABANDONED, not bought.
+#
+# Why: a floor buys the cheaper contract by accepting a worse one, which is why
+# the edge was flat in entry price. Settlement-resolved, 39 NO episodes:
+#         policy              P(win)  avg cost   BE     edge
+#         enter at signal       67%     0.74    74%    -7.0%
+#         dip >= 5%, no cap     61%     0.67    66%    -5.8%
+#         dip >= 10%, no cap    55%     0.64    64%    -9.6%
+#         dip in [5%, 10%]      67%     0.71    71%    -4.4%
+#         dip in [5%, 15%]      65%     0.69    69%    -4.2%
+# The band is the only shape that holds win rate at the 67% base while paying
+# less. Dips that blow THROUGH the band settle at 50% ([5,10]) / 40% ([5,15]).
+# Shallow dips are price moving without information; deep dips are information.
+#
+# Tune (first 19 episodes) / validate (last 20): every capped band beat the
+# undelayed baseline on BOTH windows; every uncapped floor lost the tuning
+# window. NOT VALIDATED — n is 9-11 per window, the baseline itself swings
+# -21.5% to +1.9% between them, 5 of 11 policies clear the bar, and every
+# variant is still negative (best -3.2%). Least-bad, not proven.
+#
+# Cap widened 0.10 -> 0.12 on 2026-08-20. Reason is the offline grid, which
+# preferred [5%,12%] over [5%,10%] on BOTH windows before any live data existed
+# (TUNE -19.4% vs -20.0%, VALID +11.6% vs +6.9%, ALL -4.2% vs -6.2%); 0.10 was
+# picked to match a spoken number, not because it scored best.
+# Live evidence is consistent but is NOT the reason and must not become it:
+# on 2026-08-20 both delayed fills overshot 10% (-12.0% and -10.3%), so
+# [5%,10%] would have taken zero trades and abandoned the day's only winner by
+# $0.002. That is n=2 — treat it as a sanity check on band WIDTH, never as
+# threshold selection.
+# Why live dips overshoot a narrow band: the scan runs every ~2s and no_cost
+# moves in whole cents, so a 5-point band on a 68c contract is ~3.4c and one
+# tick of movement can clear it entirely.
+#
+# 2026-08-21: TURNED OFF. Not because the band was disproven — it was never
+# measured — but because it starves the funnel. One live day produced
+# 11 queued -> 1 filled -> 9 expired, a ~9% conversion rate. (Four of those
+# nine were the all_matches bug, since fixed; the rest genuinely never dipped
+# into the band.) At ~1 fill/day the paper run cannot accumulate the 30+ fills
+# across 25+ expiries needed to tell a -2.9% edge from a -7.0% one, so the
+# measurement this flag exists to perform is unreachable while it is on.
+# Re-enable once the undelayed book has enough volume to be a baseline worth
+# comparing against.
+DELAYED_ENTRY_DIP           = 0.0    # 0.05 = the validated band, see above
+DELAYED_ENTRY_DIP_MAX       = 0.12   # None = no cap (the old floor behaviour)
+DELAYED_ENTRY_MAX_WAIT_MINS = 20.0   # drop the pending entry after this long
+DELAYED_ENTRY_SIGNALS       = ("BOUNDARY_NO", "MISPRICE_NO")
 
 # Regime
 # Momentum lookback the regime classifier measures trend/acceleration over.

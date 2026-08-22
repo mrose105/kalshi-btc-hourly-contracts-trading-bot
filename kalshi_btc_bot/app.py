@@ -24,6 +24,7 @@ from .portfolio import Portfolio
 from .positions import PositionManager
 from .regime import RegimeEngine
 from .signals import SignalEngine
+from .pending import PendingEntries
 from . import live_view
 from . import recorder
 
@@ -63,6 +64,7 @@ def main():
     portfolio = Portfolio(client)
     signal_e  = SignalEngine(dist)
     pos_mgr   = PositionManager(client, portfolio, dist, feed, ladder=ladder_e)
+    pending_e = PendingEntries()
 
     print("  Bootstrapping 24h of 5-min bars for vol_ratio parity...")
     n_bars = feed.bootstrap_history(hours=24)
@@ -134,6 +136,9 @@ def main():
         regime = regime_e.detect(feed)
         vol    = regime["vol"]
         ladder = ladder_e.get(spot)
+        for _tk in pending_e.expire():
+            _m = f"⏳✗ EXPIRED {_tk[-18:]} — dip never came"
+            live_view.log_event(_m) if live_view.ENABLED else print(f"     {_m}")
 
         header = (f"[{t}] BTC=${spot:,.0f} | "
                   f"{regime['regime']} {regime['direction']} "
@@ -214,16 +219,30 @@ def main():
                           f"NO_cost=${no_sig['no_cost']:.2f} "
                           f"dist={no_sig['otm_dist']:+.0f} "
                           f"{no_sig['hours']*60:.0f}m left")
-                portfolio.buy_no(no_sig, no_sig["true_prob"], dist, spot, vol, regime)
+                # Delayed entry: hold the signal back until it re-fires at a
+                # dip. Gating here and not inside buy_no keeps the wait a
+                # SIGNAL-side policy — buy_no stays the pure execution path.
+                _sig, _st = pending_e.gate(no_sig)
+                _msg = pending_e.describe(no_sig, _st)
+                if _msg:
+                    live_view.log_event(_msg) if live_view.ENABLED else print(f"     {_msg}")
+                if _sig:
+                    portfolio.buy_no(_sig, _sig["true_prob"], dist, spot, vol, regime)
 
             # BOUNDARY_NO — sell OTM premium at z-score extremes in ranging market
-            bno_sig = None
+            bno_sig, bno_all = None, []
             if ENABLE_BOUNDARY_NO:
-                bno_sig = signal_e.find_boundary_no(
+                # With delayed entry on, ask for EVERY qualifying candidate:
+                # a queued ticker can only be re-checked on a scan that returns
+                # it, and returning just the top-ranked one silently stranded
+                # queued entries (see find_boundary_no's all_matches note).
+                bno_all = signal_e.find_boundary_no(
                     spot, vol, regime,
                     ladder if NO_EXEMPT_FROM_COOLDOWN else _ladder,
                     portfolio.positions,
-                    portfolio.real_cash, portfolio.start_total)
+                    portfolio.real_cash, portfolio.start_total,
+                    all_matches=True)
+                bno_sig = bno_all[0] if bno_all else None
             if bno_sig:
                 if live_view.ENABLED:
                     live_view.log_event(
@@ -240,7 +259,19 @@ def main():
                           f"overpriced={bno_sig['overpricing_ratio']:.2f}x | "
                           f"dist={bno_sig['otm_dist']:+.0f} | "
                           f"{bno_sig['hours']*60:.0f}m left\n")
-                portfolio.buy_no(bno_sig, bno_sig["true_prob"], dist, spot, vol, regime)
+                # Gate EVERY candidate so queued tickers keep being evaluated,
+                # then buy at most one — the best-ratio candidate that fired.
+                # bno_all is already sorted best-ratio first.
+                _fire = None
+                for _c in bno_all:
+                    _s, _st = pending_e.gate(_c)
+                    _msg = pending_e.describe(_c, _st)
+                    if _msg:
+                        live_view.log_event(_msg) if live_view.ENABLED else print(f"     {_msg}")
+                    if _s and _fire is None:
+                        _fire = _s
+                if _fire:
+                    portfolio.buy_no(_fire, _fire["true_prob"], dist, spot, vol, regime)
 
             # SNIPE signal — deep-OTM lottery tickets, ROI-ranked, separate scan from
             # find_best() (see config.py SNIPE_* comment for why they'd otherwise be

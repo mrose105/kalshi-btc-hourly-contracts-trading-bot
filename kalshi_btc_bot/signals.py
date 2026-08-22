@@ -277,8 +277,22 @@ class SignalEngine:
 
     def find_boundary_no(self, spot: float, vol: float, regime: dict,
                          ladder: list, existing: dict,
-                         real_cash: float, start_total: float) -> dict | None:
+                         real_cash: float, start_total: float,
+                         all_matches: bool = False):
         """Sell OTM premium at range extremes.
+
+        Returns the single best-ratio candidate, or — with all_matches=True —
+        every qualifying candidate sorted best-ratio first.
+
+        Why all_matches exists: delayed entry (config.DELAYED_ENTRY_DIP) can
+        only re-check a queued ticker on a scan where that ticker is returned.
+        Returning just the top-ranked contract meant a queued ticker stopped
+        being evaluated the moment any other contract outranked it, and then
+        expired unfilled no matter what its price did. Measured 2026-08-20 on
+        one live day: 4 of 11 queued contracts dipped 20-35% below their
+        reference, several for hundreds of consecutive ticks, and none filled.
+        The gates below are unchanged — this only widens what is REPORTED, and
+        the caller still buys at most one.
 
         When z-score shows BTC at the top or bottom of its recent range, the
         OTM contracts in the continuation direction are overpriced — the market
@@ -293,15 +307,17 @@ class SignalEngine:
         r      = regime.get("regime", "")
         zscore = regime.get("zscore", 0.0)
 
+        _empty = [] if all_matches else None
         if r not in ("RANGING", "REVERTING"):
-            return None
+            return _empty
         if abs(zscore) < _C.BOUNDARY_NO_ZSCORE_MIN:
-            return None
+            return _empty
         if start_total > 0 and real_cash < start_total * NO_CASH_MIN_PCT:
-            return None
+            return _empty
 
         best_ratio = _C.BOUNDARY_NO_OVERPRICING_MIN
         best       = None
+        matches    = []
 
         for c in ladder:
             if c["ticker"] in existing:
@@ -354,9 +370,11 @@ class SignalEngine:
             net_edge = (1.0 - true_p) - no_cost
             if net_edge < _C.BOUNDARY_NO_MIN_NET_EDGE:
                 continue
-            if ratio > best_ratio:
-                best_ratio = ratio
-                best = {
+            # The ratio bar is the SAME for both paths: best_ratio starts at
+            # BOUNDARY_NO_OVERPRICING_MIN, so a candidate must clear the config
+            # minimum to be recorded at all. all_matches must not relax it.
+            if ratio > _C.BOUNDARY_NO_OVERPRICING_MIN:
+                cand = {
                     **c,
                     "signal":            "BOUNDARY_NO",
                     "net_edge":          net_edge,
@@ -373,5 +391,11 @@ class SignalEngine:
                     "no_cost":           1.0 - c.get("bid", yes_ask),
                     "zscore":            zscore,
                 }
+                matches.append(cand)
+                if ratio > best_ratio:
+                    best_ratio = ratio
+                    best = cand
 
+        if all_matches:
+            return sorted(matches, key=lambda m: -m["overpricing_ratio"])
         return best
