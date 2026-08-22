@@ -11,6 +11,10 @@ PAPER_CAPITAL = 500.00     # simulated capital for paper mode — matches the
 # ─────────────────────────────────────────────
 # CONFIG
 # ─────────────────────────────────────────────
+# Price-DISTANCE constants come from the active instrument, not from literals
+# here. They were BTC dollar values tuned to a ~$300 hourly sigma; SPX's is ~26
+# points, so a literal ported across is off by ~12x. See instrument.py.
+from .instrument import ACTIVE as _INST
 
 # Risk controls
 # 2026-07-06: tightened across the board after a live session lost ~7% in under
@@ -26,7 +30,7 @@ ENABLE_YES          = False      # NO-only paper test: disable normal YES RANGE 
 ENABLE_SNIPE        = False      # SNIPE is also a YES buy; keep off for clean NO attribution
 ENABLE_MISPRICE_NO = False      # disabled — BOUNDARY_NO is the active NO strategy
 MAX_POSITIONS       = 4
-STRIKE_CLUSTER_DIST = 150        # skip a new entry if its strike is within this many
+STRIKE_CLUSTER_DIST = _INST.strike_cluster_dist        # skip a new entry if its strike is within this many
                                   # dollars of an existing open position's strike in the
                                   # same expiry window — MAX_POSITIONS caps capital
                                   # concentration but not directional correlation. 2026-07-07:
@@ -182,9 +186,9 @@ BAYES_MAX_MOVE           = 0.10
 # directly — no artificial cross needed since the quote is no longer stale.
 MIN_HOURS           = 0.10       # 6 min — keeps entries clear of the TIME_EXIT_MINS kill zone
 MAX_HOURS           = 4.0
-MAX_OTM_T           = 100
-MAX_OTM_B           = 150
-MIN_RANGE_BOUNDARY_BUFFER = 40   # skip RANGE entries within $40 of either boundary (ITM or
+MAX_OTM_T           = _INST.max_otm_t
+MAX_OTM_B           = _INST.max_otm_b
+MIN_RANGE_BOUNDARY_BUFFER = _INST.min_range_boundary_buffer   # skip RANGE entries within $40 of either boundary (ITM or
                                   # OTM side), all regimes. Old logic only guarded the OTM side
                                   # (dist < -20) — near-money ITM entries like dist +1..+38 with
                                   # no directional confirmation were let through and flipped OTM
@@ -307,7 +311,7 @@ MOMENTUM_LOCK_PCT   = 1.00       # TIER 2: up 100% + < 9 min
 STRONG_PROFIT_PCT   = 1.50       # TIER 3: up 150% + < 15 min
 PROFIT_EXIT_MEGA    = 3.00       # TIER 4: up 300%, no conditions
 TIME_EXIT_MINS      = 3          # TIER 5: OTM with < 3 min left — let late-window mispricing play out
-TIME_EXIT_NEAR_DIST = 15         # TIER 5 override: skip the force-exit above if still within this
+TIME_EXIT_NEAR_DIST = _INST.time_exit_near_dist         # TIER 5 override: skip the force-exit above if still within this
                                   # many points of the strike boundary — a near-boundary OTM position
                                   # can flip ITM by the buzzer, so only force-exit while still far OTM.
                                   # 2026-07-07: added after a snipe was force-closed for a modest gain
@@ -441,7 +445,7 @@ SNIPE_STOP_PCT      = 0.50       # TIER 6-snipe catastrophe floor. Snipes skip T
 # trigger it — gives the position room to be volatile — but exits once the move
 # is actually working against it. Hard floor below fires unconditionally as a
 # backstop even without momentum confirmation.
-BOUNDARY_RISK_DIST      = 15     # points from boundary considered "at risk" while ITM
+BOUNDARY_RISK_DIST      = _INST.boundary_risk_dist     # points from boundary considered "at risk" while ITM
 BOUNDARY_RISK_MINS      = 10     # window before expiry this tier is active — wider
                                   # than TIME_EXIT_MINS so it can act before the flip
 BOUNDARY_RISK_MIN_LOSS  = -0.10  # ignore trivial pnl noise, require real drawdown first
@@ -498,8 +502,8 @@ NO_YES_ASK_MAX      = 0.72
 NO_TRUE_PROB_MAX    = 0.55
 NO_HOURS_MIN        = 0.08
 NO_HOURS_MAX        = 0.35
-NO_DIST_MIN         = -300
-NO_DIST_MAX         = 100
+NO_DIST_MIN         = _INST.no_dist_min
+NO_DIST_MAX         = _INST.no_dist_max
 NO_CASH_MIN_PCT     = 0.20       # available cash > start_total * 0.20
 
 # MISPRICE_NO exit thresholds
@@ -590,8 +594,8 @@ CONFIRM_EXIT_DEPTH   = True
 # as MISPRICE_NO, different entry gate (z-score extremes instead of raw overpricing).
 ENABLE_BOUNDARY_NO          = True
 BOUNDARY_NO_ZSCORE_MIN      = 1.40   # |z| must exceed this to count as a range extreme (Aug 17 sweep: 1.40-1.50 best NO band)
-BOUNDARY_NO_OTM_MIN         = -250   # don't go deeper than 250 OTM (premium too thin)
-BOUNDARY_NO_OTM_MAX         = -10    # small buffer — not right at the current boundary
+BOUNDARY_NO_OTM_MIN         = _INST.boundary_no_otm_min   # don't go deeper than 250 OTM (premium too thin)
+BOUNDARY_NO_OTM_MAX         = _INST.boundary_no_otm_max    # small buffer — not right at the current boundary
 # 2026-08-22: raised 1.15 -> 1.60. At 1.15 this gate was INERT: sweeping it
 # from 1.00 to 1.15 admitted exactly the same 71 candidates, because
 # BOUNDARY_NO_MIN_NET_EDGE was binding first. Raising it is the single largest

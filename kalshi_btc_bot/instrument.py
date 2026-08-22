@@ -50,6 +50,39 @@ class Instrument:
     # operation. BTC is 24/7 and leaves this False.
     market_hours: bool
 
+    # ---------------------------------------------------------------------
+    # Price-DISTANCE constants, in the instrument's own units.
+    # ---------------------------------------------------------------------
+    # Every one of these was a bare dollar literal in config.py, calibrated to
+    # BTC's ~$300 hourly sigma. Ported to SPX unchanged they would be nonsense:
+    # SPX's hourly sigma is ~26 points, so "skip entries within $40 of a
+    # boundary" would become "skip within 40 POINTS" — 1.6 sigma, wide enough
+    # to reject essentially every candidate. That is the RANGE_WIDTH 250-vs-100
+    # failure again, which is what this module exists to prevent.
+    #
+    # SPX values are the BTC values expressed in SIGMA and re-priced. Sigma is
+    # the right basis because these gates all answer "how likely is one move to
+    # bust this position", which is a sigma question, not a price question.
+    # Measured 2026-08-22 on 60d of 5-minute bars:
+    #     BTC  spot 77,097   hourly sigma 0.388%  =  $299.21
+    #     SPX  spot  7,674   hourly sigma 0.334%  =   25.65 points
+    #     scale = 25.65 / 299.21 = 0.0857
+    #
+    # PROVISIONAL. Derived by scaling, not measured on SPX order-book data —
+    # the bot has never run on SPX and there are no KXINXU/KXINX recordings.
+    # Re-derive from real fills before trusting any SPX result, exactly as the
+    # vol cone above is still flagged provisional.
+    min_range_boundary_buffer: float
+    strike_cluster_dist: float
+    max_otm_b: float
+    max_otm_t: float
+    no_dist_min: float
+    no_dist_max: float
+    boundary_no_otm_min: float
+    boundary_no_otm_max: float
+    time_exit_near_dist: float
+    boundary_risk_dist: float
+
     # How to render a strike. BTC strikes are dollars; index strikes are points.
     def fmt_strike(self, v: float) -> str:
         return f"${v:,.0f}" if self.name == "BTC" else f"{v:,.0f}"
@@ -66,6 +99,18 @@ BTC = Instrument(
     vol_regime_low_h=0.005,
     vol_regime_high_h=0.015,
     market_hours=False,
+    # Unchanged from the config.py literals these replaced — BTC behaviour is
+    # byte-identical, which test_instrument_distances.py asserts.
+    min_range_boundary_buffer=40,
+    strike_cluster_dist=150,
+    max_otm_b=150,
+    max_otm_t=100,
+    no_dist_min=-300,
+    no_dist_max=100,
+    boundary_no_otm_min=-250,
+    boundary_no_otm_max=-10,
+    time_exit_near_dist=15,
+    boundary_risk_dist=15,
 )
 
 SPX = Instrument(
@@ -99,6 +144,21 @@ SPX = Instrument(
     vol_regime_low_h=0.00125,
     vol_regime_high_h=0.004,
     market_hours=True,
+    # BTC value x 0.0857 (the sigma ratio above), rounded to a half point where
+    # that is finer than the quote tick. Sub-5-point values are meaningful:
+    # otm_distance measures spot-to-strike and spot is continuous, so the
+    # 5-point ladder limits which STRIKES exist, not what distance is
+    # measurable.
+    min_range_boundary_buffer=3.5,    # BTC 40
+    strike_cluster_dist=13.0,         # BTC 150
+    max_otm_b=13.0,                   # BTC 150
+    max_otm_t=8.5,                    # BTC 100
+    no_dist_min=-26.0,                # BTC -300
+    no_dist_max=8.5,                  # BTC 100
+    boundary_no_otm_min=-21.0,        # BTC -250
+    boundary_no_otm_max=-0.9,         # BTC -10
+    time_exit_near_dist=1.5,          # BTC 15
+    boundary_risk_dist=1.5,           # BTC 15
 )
 
 _PROFILES = {"BTC": BTC, "SPX": SPX}
