@@ -94,6 +94,53 @@ FORCE_EXIT_SLIPPAGE_CENTS = 2    # cross stale bids by this many cents on urgent
 # Entry filters (YES signals)
 MIN_EDGE            = 0.015
 MIN_VOLUME          = 50
+
+# ---------------------------------------------------------------------------
+# Return distribution used by DistModel.true_prob
+# ---------------------------------------------------------------------------
+# None  = lognormal / Gaussian (the historical behaviour)
+# float = Student-t with this many degrees of freedom, rescaled so the variance
+#         still equals the vol input (t variance is df/(df-2), so the scale is
+#         divided by sqrt(df/(df-2))). Must be > 2 or the variance is infinite.
+#
+# 2026-08-20. The Gaussian was measured MISCALIBRATED on 9,110 settlement-
+# resolved contract-observations across 87 expiries: it understated P(YES) in
+# EVERY bucket, and at both ends at once —
+#         model says P(YES)   n      model   market   ACTUAL   error
+#         0-5%              303       3.9%     9.1%    14.5%  -10.6%
+#         10-20%          3,534      14.7%    18.1%    19.5%   -4.8%
+#         35-55%            447      41.3%    58.1%    59.5%  -18.2%
+#         55%+               72      66.6%    86.0%    90.3%  -23.6%
+# Under-predicting the PEAK and the TAIL simultaneously is not a sigma error —
+# no sigma fixes both. Raising vol degraded Brier monotonically (0.1726 ->
+# 0.1921 at x2.5); lowering it bottomed at 0.1712. That signature is
+# leptokurtosis: BTC drifts in a tight range over an hour and occasionally
+# jumps hard, which a Gaussian denies in both directions.
+#
+# Tune/validate, split BY EXPIRY so none straddles the boundary (TUNE 13,329
+# obs / 43 expiries, VALID 23,030 / 44):
+#         df        TUNE Brier   VALID Brier   VALID log-loss
+#         normal        0.2031        0.1525           0.4868
+#         2.5           0.1810        0.1503           0.4763
+#         3.0           0.1850        0.1493           0.4735
+#         8             0.1978        0.1513           0.4815
+#         20            0.2011        0.1521           0.4848
+# EVERY df beat the Gaussian on BOTH windows. Market mid scores 0.1506 on
+# VALID, so this takes the model from clearly-worse to level with the price.
+#
+# WHY 3.0 AND NOT TUNE'S ARGMIN OF 2.5: 2.5 was the bottom edge of the grid,
+# and t-variance df/(df-2) diverges as df->2, so the search was walking toward
+# a singularity. Since every value in the range wins both windows, the choice
+# within it is not critical, and 3.0 sits clear of the boundary. This is a
+# deliberate deviation from strict tune-selection, made for numerical
+# stability, NOT because 3.0 scored better on VALID.
+#
+# WHAT THIS DOES NOT DO: it does not create edge. Level-with-the-market means
+# zero alpha, and the bot still pays ~2.70% round-trip spread. Its value is
+# that signals fire on `yes_bid / true_prob`, which was largest exactly where
+# true_prob was most understated — the signal was detecting its own bias. A
+# calibrated prior stops manufacturing those trades.
+DIST_TAIL_DF        = 3.0
 MAX_ASK             = 0.45
 MAX_SPREAD          = 0.05       # max 5c bid/ask spread
 MAX_SPREAD_PCT      = 0.25       # max spread as 25% of ask
@@ -442,6 +489,8 @@ NO_TIME_PROFIT      = 0.40       # 40% gain + near expiry → misprice_time
 NO_STOP             = 0.40       # 40% loss → misprice_failed (sweep Jul 22: z2.5/stop0.40 best overall return 1407% + best NO P&L)
 NO_EDGE_GONE_RATIO  = 1.05       # overpricing ratio drops here → edge_gone
 
+
+
 # BOUNDARY_NO — sell OTM premium at range extremes
 # When z-score shows BTC at the top or bottom of its recent range, fade the
 # OTM contracts in the continuation direction. Market overprices a breakout
@@ -499,6 +548,7 @@ BOUNDARY_NO_HOURS_MIN       = 0.08
 BOUNDARY_NO_HOURS_MAX       = 0.50   # wider window than plain NO — more time decay to harvest
 BOUNDARY_NO_YES_ASK_MIN     = 0.10
 BOUNDARY_NO_YES_ASK_MAX     = 0.65
+
 
 # Regime
 # Momentum lookback the regime classifier measures trend/acceleration over.

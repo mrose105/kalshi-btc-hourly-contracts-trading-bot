@@ -1,6 +1,6 @@
 import math
 
-from scipy.stats import norm
+from scipy.stats import norm, t as _student
 
 from . import config as _C
 from .contracts import is_in_money
@@ -42,6 +42,29 @@ class DistModel:
     @staticmethod
     def _clamp_prob(p: float) -> float:
         return float(max(0.0, min(1.0, p)))
+
+    @staticmethod
+    def _tail_scale(vol_t: float) -> tuple:
+        """(scale, df) for the terminal log-price distribution.
+
+        df=None keeps the Gaussian. Otherwise Student-t, with the scale divided
+        by sqrt(df/(df-2)) so the distribution's VARIANCE still equals vol_t^2 —
+        without that correction, switching to t would silently widen the
+        forecast as well as fattening it, and the two effects could not be told
+        apart. See config.DIST_TAIL_DF for the calibration evidence.
+        """
+        df = getattr(_C, "DIST_TAIL_DF", None)
+        if df is None or df <= 2.0:
+            return vol_t, None
+        return vol_t / math.sqrt(df / (df - 2.0)), float(df)
+
+    @staticmethod
+    def _cdf(z: float, df: float | None) -> float:
+        return float(norm.cdf(z)) if df is None else float(_student.cdf(z, df))
+
+    @staticmethod
+    def _sf(z: float, df: float | None) -> float:
+        return float(norm.sf(z)) if df is None else float(_student.sf(z, df))
 
     @staticmethod
     def _logit(p: float) -> float:
@@ -93,17 +116,22 @@ class DistModel:
         mu = math.log(spot) + drift - 0.5 * vol_t * vol_t
         t  = contract["type"]
 
+        # Tail shape. The Gaussian understated P(YES) at BOTH the peak and the
+        # tail simultaneously, which no sigma corrects — see config.DIST_TAIL_DF.
+        scale, df = self._tail_scale(vol_t)
+
         try:
             if t == "ABOVE":
-                z = (math.log(contract["low"]) - mu) / vol_t
-                return float(max(0.0, min(1.0, norm.sf(z))))
+                z = (math.log(contract["low"]) - mu) / scale
+                return float(max(0.0, min(1.0, self._sf(z, df))))
             elif t == "BELOW":
-                z = (math.log(contract["high"]) - mu) / vol_t
-                return float(max(0.0, min(1.0, norm.cdf(z))))
+                z = (math.log(contract["high"]) - mu) / scale
+                return float(max(0.0, min(1.0, self._cdf(z, df))))
             elif t == "RANGE":
-                z_lo = (math.log(max(1, contract["low"]))  - mu) / vol_t
-                z_hi = (math.log(max(1, contract["high"])) - mu) / vol_t
-                return float(max(0.0, min(1.0, norm.cdf(z_hi) - norm.cdf(z_lo))))
+                z_lo = (math.log(max(1, contract["low"]))  - mu) / scale
+                z_hi = (math.log(max(1, contract["high"])) - mu) / scale
+                return float(max(0.0, min(1.0,
+                                          self._cdf(z_hi, df) - self._cdf(z_lo, df))))
         except Exception:
             return 0.0
         return 0.0
