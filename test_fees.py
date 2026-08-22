@@ -82,7 +82,8 @@ def test_paper_entry_charges_the_fee():
             contract = {"ticker": "BTC-TEST-B64650", "signal": "BOUNDARY_NO",
                         "hours": 0.5, "type": "RANGE", "low": 64600,
                         "high": 64700, "itm": False, "otm_dist": -50}
-            assert p.buy_no(contract, true_prob=0.40) is True
+            # 0.62 / 0.34 = 1.82x clears BOUNDARY_NO_OVERPRICING_MIN
+            assert p.buy_no(contract, true_prob=0.34) is True
             pos = p.positions["BTC-TEST-B64650"]
             spent = cash0 - p.real_cash
             expected_fee = taker_fee(pos["count"], pos["entry"])
@@ -109,7 +110,7 @@ def test_charge_fees_false_restores_old_accounting():
             contract = {"ticker": "BTC-TEST-B64650", "signal": "BOUNDARY_NO",
                         "hours": 0.5, "type": "RANGE", "low": 64600,
                         "high": 64700, "itm": False, "otm_dist": -50}
-            assert p.buy_no(contract, true_prob=0.40) is True
+            assert p.buy_no(contract, true_prob=0.34) is True
             spent = cash0 - p.real_cash
             assert abs(spent - p.positions["BTC-TEST-B64650"]["cost"]) < 1e-9
     finally:

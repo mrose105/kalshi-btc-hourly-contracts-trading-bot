@@ -265,7 +265,10 @@ def _boundary_ladder():
                 "high": float(strike) + 50, "hours": 0.25,
                 "otm_dist": float(strike + 50 - _SPOT),
                 "type": "RANGE", "itm": False, "vol": 900}
-    return [row(72750, 0.30, 0.33), row(72850, 0.23, 0.26)]
+    # Both rows must clear BOUNDARY_NO_OVERPRICING_MIN against _FlatDist's
+    # true_prob of 0.16, or find_boundary_no returns fewer candidates than the
+    # test asserts: 0.30/0.16 = 1.88x, 0.28/0.16 = 1.75x.
+    return [row(72750, 0.30, 0.33), row(72850, 0.28, 0.31)]
 
 
 class _FlatDist:

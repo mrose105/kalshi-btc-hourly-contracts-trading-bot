@@ -592,7 +592,37 @@ ENABLE_BOUNDARY_NO          = True
 BOUNDARY_NO_ZSCORE_MIN      = 1.40   # |z| must exceed this to count as a range extreme (Aug 17 sweep: 1.40-1.50 best NO band)
 BOUNDARY_NO_OTM_MIN         = -250   # don't go deeper than 250 OTM (premium too thin)
 BOUNDARY_NO_OTM_MAX         = -10    # small buffer — not right at the current boundary
-BOUNDARY_NO_OVERPRICING_MIN = 1.15   # lower than MISPRICE_NO — z-score adds independent conviction
+# 2026-08-22: raised 1.15 -> 1.60. At 1.15 this gate was INERT: sweeping it
+# from 1.00 to 1.15 admitted exactly the same 71 candidates, because
+# BOUNDARY_NO_MIN_NET_EDGE was binding first. Raising it is the single largest
+# improvement measured on this strategy.
+#
+# 404 candidates / 118 expiries from the uncensored recordings, Student-t
+# prior, held to settlement, NET OF FEES at 14 lots, split by expiry:
+#
+#     net_edge  ratio      TUNE     VALID       ALL    n    WR
+#     >=0.05    1.15     -10.0%     +0.3%     -5.5%   85   78%   <- was live
+#     >=0.05    1.60      -1.4%     +3.2%     +0.8%   64   84%
+#     >=0.00    1.60      -0.9%     +3.7%     +1.7%   98   88%   <- shipped
+#
+# 1.60 is an INTERIOR optimum, not a grid edge — it falls off on both sides
+# (1.45 -> -1.3%, 1.75 -> -4.5%, 2.00 -> -4.5%).
+#
+# Loss decomposition at 14 lots shows the costs are near-identical either way
+# and the whole difference is selection quality:
+#                            live gates      ratio 1.60
+#     edge at mid                 -2.8%           +4.0%
+#     crossing the spread         -1.4%           -1.3%
+#     Kalshi taker fee            -1.4%           -1.1%
+#     = net ROC                   -5.5%           +1.6%
+#
+# NOT VALIDATED AS AN EDGE. Selected from an 8-cell ratio grid on 118 expiries;
+# multiple-comparison risk is real and n=98 is thin. It wins both windows
+# independently and has an interior peak, which is the bar this repo uses to
+# act — but it is a hypothesis to confirm on data recorded AFTER this change,
+# not a proven edge. Everything else measured this week says the model does not
+# beat the market price (see project memory / README).
+BOUNDARY_NO_OVERPRICING_MIN = 1.60
 NO_EXEMPT_FROM_COOLDOWN     = True   # let NO scans see cooled-off tickers.
                                   # The re-entry cooldown exists to stop MOMENTUM
                                   # chasing: a YES position exits on scalp_lock /
@@ -614,6 +644,27 @@ NO_EXEMPT_FROM_COOLDOWN     = True   # let NO scans see cooled-off tickers.
                                   # re-entry would now be blocked anyway by the 5%
                                   # net-edge floor, so this mainly frees genuinely
                                   # strong repeat signals. Set False to restore.
+# HELD AT 0.05 alongside the raised BOUNDARY_NO_OVERPRICING_MIN (1.60).
+#
+# 2026-08-22, measured at ratio >= 1.60, net of fees, split by expiry:
+#     net_edge    TUNE     VALID      ALL    n    WR
+#     >= 0.00    -0.9%     +3.7%    +1.7%   98   88%
+#     >= 0.05    -1.4%     +3.2%    +0.8%   64   84%   <- kept
+#     >= 0.08       (fewer than 8 candidates — not measurable)
+#
+# 0.00 scores better on this sample, and there is a real argument for it: this
+# gate keys off (1 - true_prob) - cost, which selects contracts where the MODEL
+# most disagrees with the price, and the 2026-08-20 calibration work showed
+# that disagreement is largely the model's own bias. By that logic the gate
+# partly selects for model error, while the ratio test is relative and less
+# bias-sensitive.
+#
+# Kept at 0.05 anyway, deliberately. Requiring a positive absolute edge is the
+# economic floor of the trade — paying 80c for something the model values at
+# 82c is a coherent bet, and a gate at 0.00 would accept a 0.1c edge that
+# cannot survive a 2.5% fee-and-spread load. The +0.9pp that 0.00 buys on 118
+# expiries is not worth removing the one gate that enforces the trade's own
+# arithmetic. Raise it above 0.05 only when there is enough data to measure it.
 BOUNDARY_NO_MIN_NET_EDGE    = 0.05   # minimum ABSOLUTE edge on the NO side:
                                   #     (1 - true_prob) - no_cost  >=  this
                                   # The overpricing gate above is a RATIO, which is

@@ -11,10 +11,15 @@ The two gates are not redundant. With no_cost = 1 - bid:
     ratio    = bid / true_p
     =>  net_edge = true_p * (ratio - 1)
 
-so at BOUNDARY_NO_OVERPRICING_MIN = 1.15, clearing net_edge >= 0.05 needs
-true_p >= 0.333 — while BOUNDARY_NO deliberately targets OTM contracts far
-below that. The ratio gate is therefore nearly vacuous for exactly the
-contracts this signal trades.
+so clearing net_edge >= 0.05 needs true_p >= 0.05 / (ratio - 1).
+
+At the old BOUNDARY_NO_OVERPRICING_MIN = 1.15 that was true_p >= 0.333, far
+above the OTM contracts this signal trades — the ratio gate was nearly vacuous,
+and a sweep confirmed it: 1.00 through 1.15 admitted the identical 71
+candidates. Raised to 1.60 on 2026-08-22, the bar is true_p >= 0.083, so the
+two gates now bind over genuinely different regions. These tests pin the
+threshold they exercise explicitly rather than reading the live value, so a
+future tuning pass cannot silently make them vacuous again.
 """
 import sys
 from contextlib import contextmanager
@@ -53,17 +58,25 @@ def _gates(bid, true_p, is_boundary=True):
 
 
 def test_ratio_gate_does_not_imply_net_edge_gate():
-    """The documented failure: ratio passes, absolute edge is a third of the bar."""
-    bid, true_p = 0.115, 0.10          # scan saw bid 0.15; it decayed to 0.115
+    """The documented failure: ratio clears, absolute edge does not.
+
+    Derived from the shipped bar rather than hardcoded, so raising the ratio
+    gate cannot silently turn this into a no-op.
+    """
+    true_p = C.BOUNDARY_NO_MIN_NET_EDGE / (C.BOUNDARY_NO_OVERPRICING_MIN - 1.0) * 0.5
+    bid = true_p * C.BOUNDARY_NO_OVERPRICING_MIN   # exactly at the ratio bar
     ratio_ok, edge_ok, net_edge = _gates(bid, true_p)
-    assert ratio_ok, "ratio gate should pass at 1.15x"
+    assert ratio_ok, "ratio gate should pass exactly at the bar"
     assert not edge_ok, "net-edge gate should REJECT"
-    assert abs(net_edge - 0.015) < 1e-9, net_edge
+    assert net_edge < C.BOUNDARY_NO_MIN_NET_EDGE
 
 
 def test_deep_otm_is_the_dangerous_region():
     """As true_p falls, the ratio gate admits ever-smaller absolute edge."""
-    for true_p in (0.02, 0.05, 0.10, 0.20):
+    # net_edge = true_p * (ratio - 1), so the dangerous region is
+    # true_p < MIN_NET_EDGE / (ratio - 1). Follow the bar, don't hardcode it.
+    bar = C.BOUNDARY_NO_MIN_NET_EDGE / (C.BOUNDARY_NO_OVERPRICING_MIN - 1.0)
+    for true_p in (bar * 0.25, bar * 0.5, bar * 0.9):
         bid = true_p * C.BOUNDARY_NO_OVERPRICING_MIN   # exactly at the ratio bar
         ratio_ok, edge_ok, net_edge = _gates(bid, true_p)
         assert ratio_ok
@@ -129,15 +142,23 @@ def test_live_buy_no_enforces_net_edge():
     with _paper_portfolio() as portfolio_module:
         p = portfolio_module.Portfolio(client=None)
         p.sync()
-        p._fresh_quote = lambda tk, attempts=3: (0.115, 0.14)
-        assert 0.14 - 0.115 <= C.MAX_SPREAD and (0.14 - 0.115) / 0.14 <= C.MAX_SPREAD_PCT, \
+        # Must clear the spread gate AND the ratio gate, so the only thing left
+        # that can reject is the net-edge gate under test.
+        _tp = (C.BOUNDARY_NO_MIN_NET_EDGE
+               / (C.BOUNDARY_NO_OVERPRICING_MIN - 1.0)) * 0.5
+        _bid = round(_tp * C.BOUNDARY_NO_OVERPRICING_MIN, 4)
+        _ask = round(_bid * 1.15, 4)
+        p._fresh_quote = lambda tk, attempts=3: (_bid, _ask)
+        assert _ask - _bid <= C.MAX_SPREAD and (_ask - _bid) / _ask <= C.MAX_SPREAD_PCT, \
             "fixture must clear the spread gate or the test proves nothing"
+        assert _bid / _tp >= C.BOUNDARY_NO_OVERPRICING_MIN, \
+            "fixture must clear the ratio gate or the test proves nothing"
         reasons = []
         p._log_reject = lambda tk, why: reasons.append(why)
         contract = {"ticker": "BTC-TEST-B60000", "signal": "BOUNDARY_NO",
                     "hours": 0.5, "type": "RANGE", "low": 59950, "high": 60050}
-        ok = p.buy_no(contract, true_prob=0.10)
-        assert ok is False, "buy_no filled a trade with net_edge 0.015 < 0.05"
+        ok = p.buy_no(contract, true_prob=_tp)
+        assert ok is False, "buy_no filled a trade under the net-edge bar"
         joined = " | ".join(reasons).lower()
         assert "net edge" in joined, (
             f"rejected, but not by the net-edge gate — reasons were: {reasons}")
@@ -166,7 +187,10 @@ def test_paper_buy_no_records_pre_fill_order_values():
             }
             wanted = int(p.budget(C.NO_TRADE_PCT) / 0.38)
             assert wanted > 3, "fixture must want more than the 3 lots of depth"
-            assert p.buy_no(contract, true_prob=0.40) is True
+            _tp = 0.34            # 0.62 / 0.34 = 1.82x, clears the ratio bar
+            assert 0.62 / _tp >= C.BOUNDARY_NO_OVERPRICING_MIN
+            assert (1 - _tp) - 0.38 >= C.BOUNDARY_NO_MIN_NET_EDGE
+            assert p.buy_no(contract, true_prob=_tp) is True
         finally:
             portfolio_module.recorder.record_order = original
 
@@ -176,7 +200,7 @@ def test_paper_buy_no_records_pre_fill_order_values():
         "buy", "BTC-TEST-B64650", "no", 0.62, 0.64,
         {"yes": yes_levels}, 0.38, wanted, 3, 0.38,
     )
-    assert kwargs == {"reason": "BOUNDARY_NO", "true_prob": 0.40}
+    assert kwargs == {"reason": "BOUNDARY_NO", "true_prob": 0.34}
 
 
 def test_urgent_paper_exit_credits_depth_fill_not_unfilled_quote():
