@@ -145,6 +145,27 @@ MAX_ASK             = 0.45
 MAX_SPREAD          = 0.05       # max 5c bid/ask spread
 MAX_SPREAD_PCT      = 0.25       # max spread as 25% of ask
 
+# ---------------------------------------------------------------------------
+# Kalshi trading fees
+# ---------------------------------------------------------------------------
+# Reinstated 2026-08-22. Fee accounting was deleted along with the mistaken
+# 60/40 entry-price cap on 08-18 because the two had been written together.
+# The cap was wrong; the fee arithmetic was not, and removing it meant every
+# backtest, replay and paper P&L since has overstated results.
+#
+# fee = ceil(rate * multiplier * count * price * (1 - price)) per order,
+# rounded UP to the cent. Measured on the 39 settlement-resolved NO entries at
+# a realistic 14-lot size: median 1.83% of capital deployed, p90 2.76%. At 1
+# lot the ceil dominates and it is 2.70% median — small orders are
+# disproportionately expensive.
+#
+# Settlement is FREE, so a held contract pays once on entry; anything exited
+# early pays again on the way out. Blended drag at ~35% early exits is ~2.45%.
+# For scale: the best stop setting measured -4.1% ROC before fees, -6.6% after.
+KALSHI_TAKER_FEE_RATE = 0.07
+KALSHI_FEE_MULTIPLIER = 1.0    # KXBTC public series metadata, verified 2026-08-18
+CHARGE_FEES           = True   # False restores the historical fee-free accounting
+
 # Market-price probability update. DistModel.true_prob remains the raw GBM
 # prior; live entry/position code may blend it with the current top-of-book
 # quote as evidence. Keep this conservative until real_price_edge_test.py proves

@@ -75,6 +75,7 @@ def _ensure_log_schema() -> None:
 # anything that sweeps against the LIVE portfolio, which nothing does yet.
 from . import config as _C
 from .config import PAPER_CAPITAL, PAPER_TRADING
+from .fees import taker_fee
 from . import live_view
 from . import recorder
 
@@ -614,7 +615,10 @@ class Portfolio:
                                        filled, fill_price,
                                        reason="snipe" if is_snipe else "",
                                        true_prob=true_prob)
-                self.real_cash -= cost
+                # Kalshi charges the taker on entry. Omitting it overstated
+                # every paper result by ~1.8-2.5% of deployed capital.
+                self.real_cash -= cost + (taker_fee(filled, fill_price)
+                                          if _C.CHARGE_FEES else 0.0)
 
         if not PAPER_TRADING:
             try:
@@ -810,7 +814,8 @@ class Portfolio:
                     reason=contract.get("signal", "MISPRICE_NO"),
                     true_prob=true_prob,
                 )
-                self.real_cash -= cost
+                self.real_cash -= cost + (taker_fee(filled, fill_price)
+                                          if _C.CHARGE_FEES else 0.0)
 
         if not PAPER_TRADING:
             try:
@@ -963,7 +968,11 @@ class Portfolio:
                 # were never available (and makes orders/*.jsonl disagree with
                 # trades.csv).
                 bid = fill_price
-                self.real_cash += bid * count
+                # Early exits are taker orders too and pay a SECOND fee.
+                # Settlement is free and does not route through here — see
+                # settle_paper_position().
+                self.real_cash += bid * count - (taker_fee(count, bid)
+                                                 if _C.CHARGE_FEES else 0.0)
 
         if not PAPER_TRADING:
             filled_count = 0

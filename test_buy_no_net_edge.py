@@ -208,7 +208,12 @@ def test_urgent_paper_exit_credits_depth_fill_not_unfilled_quote():
 
     # 14 contracts against a single 30c level = $4.20, NOT 14 x the 0.39 quote
     # ($5.46) and not 14 x the 0.59 fresh top ($8.26). The quote carries no size.
-    assert abs(p.real_cash - 4.20) < 1e-9, p.real_cash
+    # Less the exit taker fee — an early exit is a taker order and pays one
+    # (settlement would not). Fee accounting was reinstated 2026-08-22.
+    from kalshi_btc_bot.fees import taker_fee
+    fee = taker_fee(14, 0.30) if C.CHARGE_FEES else 0.0
+    assert fee > 0, "fee accounting should be on by default"
+    assert abs(p.real_cash - (4.20 - fee)) < 1e-9, p.real_cash
     assert abs(p.realized_pnl - ((0.30 - 0.68) * 14)) < 1e-9
     assert recorded[0][0][9] == 0.30  # record_order fill_px
 
