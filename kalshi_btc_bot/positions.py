@@ -23,6 +23,9 @@ from .config import (
     STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS, TIME_EXIT_NEAR_DIST,
 )
 from .contracts import is_in_money, otm_distance
+from . import config as _C   # module-qualified: `from .config import X` freezes
+                             # the value at import, so a sweep setting config.X
+                             # silently no-ops. Hit three times in this repo.
 from . import live_view
 from . import recorder
 
@@ -264,17 +267,33 @@ class PositionManager:
                           f"{'❌' if itm else '✅'} dist={dist:+.0f} "
                           f"{rep_str} {mins_left:.0f}m left")
 
-                if no_pnl_pct >= NO_PROFIT_CAPTURE:
+                # Minimum hold. Before ~60s an adverse move does not predict the
+                # settlement (it mildly predicts the OPPOSITE at 10s), so an
+                # exit fired inside that window is reacting to quote noise and
+                # pays the round-trip spread for nothing. Expiry-forced exits
+                # and a catastrophe floor stay exempt. See config.MIN_HOLD_SECS.
+                held = time.time() - float(pos.get("opened") or 0.0)
+                fresh = (_C.MIN_HOLD_SECS > 0
+                         and pos.get("opened")
+                         and held < _C.MIN_HOLD_SECS
+                         and no_pnl_pct > -_C.MIN_HOLD_CATASTROPHE
+                         and hours >= 0.03)
+
+                if no_pnl_pct >= NO_PROFIT_CAPTURE and not fresh:
                     self.portfolio.sell(ticker, no_bid_px, reason="misprice_captured ✅")
                     continue
-                if no_pnl_pct >= NO_TIME_PROFIT and hours < 0.08:
+                if no_pnl_pct >= NO_TIME_PROFIT and hours < 0.08 and not fresh:
                     self.portfolio.sell(ticker, no_bid_px, reason="misprice_time 💰")
                     continue
-                if overprice_r < NO_EDGE_GONE_RATIO and no_pnl_pct > 0:
+                if overprice_r < NO_EDGE_GONE_RATIO and no_pnl_pct > 0 and not fresh:
                     self.portfolio.sell(ticker, no_bid_px, reason="edge_gone ✅")
                     continue
-                if no_pnl_pct <= -NO_STOP:
+                if no_pnl_pct <= -NO_STOP and not fresh:
                     self.portfolio.sell(ticker, no_bid_px, reason="misprice_failed ❌")
+                    continue
+                if no_pnl_pct <= -_C.MIN_HOLD_CATASTROPHE:
+                    # Catastrophe floor — bypasses the hold by design.
+                    self.portfolio.sell(ticker, no_bid_px, reason="no_catastrophe 🛑")
                     continue
                 if hours < 0.03:
                     self.portfolio.sell(ticker, no_bid_px, reason="time_forced_no")

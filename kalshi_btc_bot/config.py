@@ -489,6 +489,49 @@ NO_TIME_PROFIT      = 0.40       # 40% gain + near expiry → misprice_time
 NO_STOP             = 0.40       # 40% loss → misprice_failed (sweep Jul 22: z2.5/stop0.40 best overall return 1407% + best NO P&L)
 NO_EDGE_GONE_RATIO  = 1.05       # overpricing ratio drops here → edge_gone
 
+# ---------------------------------------------------------------------------
+# Minimum hold — don't round-trip on quote noise
+# ---------------------------------------------------------------------------
+# 0 = off (the historical behaviour: a position could be opened and closed on
+# consecutive 2s scans).
+#
+# 2026-08-21. A BOUNDARY_NO position was bought at $0.650 and sold 2 SECONDS
+# later at $0.520 for -$1.82, reason `edge_gone` — a rule that can only fire
+# when the position is UP. Nothing about the world changed in two seconds; only
+# the quote did. The bot paid the ~2.70% round-trip spread twice for nothing.
+#
+# Live book, 286 round trips, by hold time:
+#         < 10s     n=  7   total -$179.63   win rate   0%
+#         10-60s    n= 20   total  -$27.49   win rate  45%
+#         1-5m      n=117   total +$366.70   win rate  54%   <- only + band
+#         5-30m     n=124   total -$952.68   win rate  52%
+#         30m+      n= 18   total -$304.08   win rate  28%
+# Sub-10-second round trips are 0 for 7. (Era-contaminated — spans the
+# RANGE_WIDTH bug and the YES/snipe lanes — so read the direction, not the $.)
+#
+# 60s is where an adverse move STOPS being noise. Settlement-resolved, 39 NO
+# episodes, P(NO settles our way) conditioned on having dipped >2% by time t:
+#         at  10s   dipped 76%  vs  not-dipped 59%   gap +17pp  (WRONG way)
+#         at  30s          65%              68%           -3pp
+#         at  60s          52%              83%          -31pp
+#         at 300s          50%              84%          -34pp
+# Before ~60s a dip mildly predicts WINNING; after it, losing. Every exit
+# inside the first minute is therefore triggered by noise. Corroborating: all
+# 26 winners went green at some point, median time-to-first-green 59s (p25 0s,
+# p75 353s) — exiting sub-minute cuts winners before they turn.
+#
+# Exempt from the hold, deliberately: expiry-forced exits (never hold into
+# settlement) and a catastrophe floor, matching the existing design note that
+# only a -65% floor covers positions opened inside the expiry gate. Of the 7
+# episodes that reached -40%, only 1 settled our way, so the STOP is doing real
+# work — it is the FAST exits that are not.
+#
+# Scope: wired into the NO exit ladder only, which is the lane that trades.
+# The YES ladder has the same defect and the same symptom on record
+# (positions.py: "live 2026-07-23 four stops in 15 min, all peak_pnl=0, one at
+# 12s hold") but is disabled, so it is left alone rather than changed blind.
+MIN_HOLD_SECS        = 60.0
+MIN_HOLD_CATASTROPHE = 0.65   # bypass the hold below this loss, as a fraction
 
 
 # BOUNDARY_NO — sell OTM premium at range extremes

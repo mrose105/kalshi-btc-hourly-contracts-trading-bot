@@ -644,6 +644,10 @@ class Portfolio:
                 "market_weight":  (p_info or contract).get("market_weight"),
                 "contract":       contract,
                 "close_time":     contract.get("close_time", ""),
+                # Wall-clock open, for config.MIN_HOLD_SECS. Without it nothing
+                # stops a position being opened and closed on consecutive 2s
+                # scans, which the live book shows is 0-for-7.
+                "opened":         time.time(),
                 "is_no":          False,
                 "is_snipe":       is_snipe,
                 # Hours to expiry at entry — TIER 6 uses this to tell a position
@@ -833,6 +837,7 @@ class Portfolio:
                 "market_weight":  (p_info or contract).get("market_weight"),
                 "contract":       contract,
                 "close_time":     contract.get("close_time", ""),
+                "opened":         time.time(),
                 "is_no":          True,
             }
         mode = "[PAPER] " if PAPER_TRADING else ""
