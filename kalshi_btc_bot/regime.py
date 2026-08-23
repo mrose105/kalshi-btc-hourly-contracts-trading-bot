@@ -80,4 +80,8 @@ class RegimeEngine:
             "consec":          f"{cn}{cd}",
             "vol_ratio":       round(vr, 3),
             "vol_compression": vol_comp,
+            # Dollar move over the lag window, for config.LAG_FILTER_MAX_ADVERSE.
+            # Signed: positive = spot rose. signals.py resolves which direction
+            # is "toward the band" per contract, since that flips with side.
+            "dspot_lag":       round(feed.last * feed.momentum(_C.LAG_FILTER_SECS), 2),
         }

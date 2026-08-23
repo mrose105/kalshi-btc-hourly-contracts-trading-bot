@@ -347,6 +347,23 @@ class SignalEngine:
             if otm_d < BOUNDARY_NO_OTM_MIN or otm_d > BOUNDARY_NO_OTM_MAX:
                 continue
 
+            # Lag filter. Kalshi's quotes trail the underlying — measured peak
+            # correlation at 20s, absorbing only 30-40% of a move. Entering
+            # right after spot has moved TOWARD the band means paying a price
+            # that has not caught up yet and is about to fall. That is what the
+            # systematic entry drawdown was (100% of entries, median MAE
+            # -13.6%). See config.LAG_FILTER_MAX_ADVERSE.
+            _adv = _C.LAG_FILTER_MAX_ADVERSE
+            if _adv and _adv > 0:
+                _d = regime.get("dspot_lag")
+                if _d is not None:
+                    # Which way hurts a NO depends on the side we are fading.
+                    # Band ABOVE spot (z>0): rising spot walks into it.
+                    # Band BELOW spot (z<0): falling spot walks into it.
+                    _toward = _d if spot < low else -_d
+                    if _toward > _adv:
+                        continue
+
             p_info = self._posterior(c, spot, vol, regime)
             true_p = p_info["true_prob"]
             if true_p <= 0 or true_p >= NO_TRUE_PROB_MAX:

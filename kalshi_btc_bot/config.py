@@ -875,6 +875,55 @@ WATCHLIST_ENTRY_NET_EDGE   = 0.05
 # momentum on hourly contracts is microstructure noise, and the classifier was
 # correctly finding no trend in it. Same thresholds on longer windows:
 #     60s -> 0.5%   5m -> 6.7%   10m -> 13.4%   30m -> 31.3%   60m -> 41.2%
+# ---------------------------------------------------------------------------
+# Lag filter — do not buy a quote Kalshi has not repriced yet
+# ---------------------------------------------------------------------------
+# 0 or None = OFF.
+#
+# Kalshi's contract prices LAG the underlying. Measured 2026-08-2x over 1.2M
+# observations, correlating a PAST Coinbase move against Kalshi's SUBSEQUENT
+# repricing of the same contract:
+#     lag     corr     Kalshi repricing per $100 of spot move
+#      2s    +0.026            +0.06c
+#     10s    +0.133            +0.63c
+#     20s    +0.180            +0.93c   <- peak
+#     60s    +0.083            +0.43c
+#    120s    +0.049            +0.25c
+# A clean inverted-U peaking at 20s: Kalshi is still absorbing the move 20
+# seconds later and has finished by ~2 minutes. Confirmed independently by
+# backing Kalshi's implied spot out of the band ladder — it moves only 30-40%
+# of a Coinbase move over the following 10-60s. There is NO persistent basis:
+# the band Kalshi prices highest is the band containing Coinbase spot 75% of
+# the time and the median offset is exactly $0, so this is timing, not a
+# different index.
+#
+# WHY A FILTER AND NOT A TRADE. Trading the lag directly needs the repricing to
+# beat the ~2c spread, i.e. a ~$200 spot move inside 20s. That happens 0.19% of
+# the time. As a FILTER it costs nothing — nothing is crossed.
+#
+# WHAT IT FIXES. 256 of 257 signalled contracts (100%) drew down after entry,
+# median MAE -13.6%. Buying right after an unpriced adverse move means paying a
+# quote that is about to fall. That is what the drawdown is.
+#
+# Measured, rejecting an arm when spot moved more than X toward the band over
+# the prior ~20s (arming only, the larger sample):
+#     reject if moved >   n    WR      ROC   P(>0)
+#     (no filter)        38   79%    -1.0%    45%
+#     $100               37   78%    -1.5%    44%
+#     $50                32   81%    +1.8%    62%
+#     $25                27   85%    +7.4%    81%   <- shipped
+#     $10                16   88%    +6.9%    77%
+#     $0                 11   91%    +8.3%    73%
+# Win rate climbs MONOTONICALLY as the filter tightens, 79 -> 91%. A
+# dose-response, not one lucky cell, and it retains 71% of the sample. With the
+# watchlist on, $25 gives +18.0% at P(>0) 87% (n=11).
+#
+# NOT VALIDATED. n=27 armed / 11 with the watchlist, and $25 came from a
+# five-value grid. What makes it worth shipping over the other candidates is
+# that it has a measured MECHANISM rather than a grid search behind it.
+LAG_FILTER_SECS         = 20     # lookback, matching the measured peak
+LAG_FILTER_MAX_ADVERSE  = 25.0   # $ of spot movement TOWARD the band; 0 = off
+
 MOMENTUM_WINDOW_SECS = 600
 # 2026-08-11 sweep (momentum_window_sweep.py, 40d tune / 19d held out), real-time
 # windows vs the 60s-scaled baseline:
