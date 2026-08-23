@@ -692,7 +692,38 @@ BOUNDARY_NO_MIN_NET_EDGE    = 0.05   # minimum ABSOLUTE edge on the NO side:
                                   # floor; it would have kept the +18.8% and +14.5%
                                   # entries and rejected the four thinnest.
 BOUNDARY_NO_HOURS_MIN       = 0.08
-BOUNDARY_NO_HOURS_MAX       = 0.50   # wider window than plain NO — more time decay to harvest
+# 2026-08-22: 0.50 -> 0.25. Entry timing was the measured defect, not exits.
+#
+# 256 of 257 signalled contracts (100%) drew down after entry. Median MAE
+# -13.6% against a median MFE of +4.6% — the typical adverse move is 3x the
+# typical favourable one. That is systematic, not noise: the gate fires on
+# yes_bid/true_prob being high, which means NO is CHEAP, and it keeps getting
+# cheaper. The bot was catching the START of a repricing, not the end.
+#
+# Same signals, entered only inside a tighter clock (net of fees @14 lots,
+# split by expiry):
+#     enter when <=   n    WR    cost      ROC    TUNE   VALID
+#     30 min (was)   257   79%  $0.820   -4.5%   -5.0%   -4.0%
+#     20 min         157   80%  $0.815   -2.8%   -4.2%   -1.6%
+#     15 min         111   80%  $0.803   -1.5%   -4.0%   +0.5%
+#     10 min          52   77%  $0.784   -3.4%   -8.4%   +0.6%
+#
+# WHAT THIS IS AND IS NOT. It is NOT a better entry price — cost moves $0.820
+# -> $0.803, under two cents, and win rate is flat at 80%. What improves is
+# that there is less time left for spot to reach the band. This buys less
+# EXPOSURE, not more edge. Read it as risk reduction.
+#
+# Two other fixes for the same defect were tested and REJECTED:
+#   - wait for the repricing to stop (no new low for N ticks): filters almost
+#     nothing (n 256 -> 254 at 20s) and ROC is unchanged. The drawdown
+#     oscillates rather than sliding, so there is no moment it is visibly over.
+#   - require the gate to hold for N consecutive ticks: removes 11% of signals
+#     and moves ROC 0.1pp. The transient that caused the 2026-08-23 -$4.07 loss
+#     lasted ~20 ticks, not one.
+# The only thing that removed the bad entries wholesale was dropping the
+# REVERTING drift term in model.py — which also removed 93% of ALL signals,
+# because that term is what generates them. See project memory.
+BOUNDARY_NO_HOURS_MAX       = 0.25   # 15 min; was 0.50
 BOUNDARY_NO_YES_ASK_MIN     = 0.10
 BOUNDARY_NO_YES_ASK_MAX     = 0.65
 
