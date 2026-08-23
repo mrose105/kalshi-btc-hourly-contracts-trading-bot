@@ -822,6 +822,48 @@ DELAYED_ENTRY_DIP_MAX       = 0.12   # None = no cap (the old floor behaviour)
 DELAYED_ENTRY_MAX_WAIT_MINS = 20.0   # drop the pending entry after this long
 DELAYED_ENTRY_SIGNALS       = ("BOUNDARY_NO", "MISPRICE_NO")
 
+# ---------------------------------------------------------------------------
+# Watchlist entry — arm strict, fill on the MODEL's valuation
+# ---------------------------------------------------------------------------
+# 0.0 = OFF = current behaviour, buy at the moment the signal arms.
+#
+# The problem this addresses: 256 of 257 signalled contracts (100%) drew down
+# after entry, median MAE -13.6% vs MFE +4.6%. The gate fires on
+# yes_bid/true_prob being high, which means NO is CHEAP — and it keeps getting
+# cheaper. The bot buys the start of a repricing.
+#
+# Why the earlier delayed-entry attempt could not capture that: it required the
+# signal to RE-FIRE at the dipped price. But the gates going stale IS the
+# discount. As spot drifts toward the band, true_prob rises, the overpricing
+# ratio collapses, and the signal stops firing exactly while the contract gets
+# cheap. Reachable discount under "must still qualify": median 2.2%. Under the
+# model's valuation alone: ~16%.
+#
+# So: arm on the FULL gate set, then fill only when
+#   1. price has dipped WATCHLIST_ENTRY_DIP below the arming cost, AND
+#   2. the model still values NO above that price by WATCHLIST_ENTRY_NET_EDGE.
+#
+# Measured 2026-08-23, settlement-resolved, net of fees @14 lots, 15-min window:
+#     policy                          n    WR    cost      ROC   TUNE  VALID
+#     buy at arming (live)          110   80%  $0.803   -1.7%  -3.4%  -0.2%
+#     dip  5%, net_edge >= 0.05      53   75%  $0.725   +2.1%  +8.8%  -3.8%
+#     dip 10%, net_edge >= 0.05      39   72%  $0.669   +4.9%  +3.4%  +6.3%
+#     dip 10%, net_edge >= 0.00      44   70%  $0.678   +1.7%  -6.9%  +9.0%
+#     dip 15%, net_edge >= 0.05      27   63%  $0.609   +0.7%  -4.0%  +5.2%
+#
+# Win rate falls 80% -> 72% but break-even falls 80% -> 67%, so the discount
+# more than pays for the worse hit rate. The net-edge requirement is what makes
+# it work: 0.05 gives +4.9%, 0.00 gives +1.7% and flips TUNE negative. The
+# stale gates are the discount; the model's valuation is the filter.
+#
+# NOT AN ESTABLISHED EDGE. n=39 across 35 expiries and 9 days — a far better
+# spread than the 5-day results that failed before — but 4 of those 9 days are
+# negative, the clustered 95% CI is [-16.6%, +24.7%], and P(ROC>0) is 69%. That
+# is below the bar this repo uses to act on anything. Shipped OFF; switch on in
+# paper as a measurement, and judge it on days this grid search never saw.
+WATCHLIST_ENTRY_DIP        = 0.0    # 0.10 = the measured setting
+WATCHLIST_ENTRY_NET_EDGE   = 0.05
+
 # Regime
 # Momentum lookback the regime classifier measures trend/acceleration over.
 # 2026-08-11: RegimeEngine hardcoded feed.momentum(60) — 60 SECONDS on 2s live

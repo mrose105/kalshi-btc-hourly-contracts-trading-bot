@@ -273,6 +273,20 @@ def main():
                 if _fire:
                     portfolio.buy_no(_fire, _fire["true_prob"], dist, spot, vol, regime)
 
+            # Watchlist fills. Armed tickers are re-priced off the CURRENT
+            # ladder, NOT off a re-fired signal — the gates going stale is the
+            # discount this is trying to buy. See config.WATCHLIST_ENTRY_DIP.
+            if pending_e and ladder:
+                _rows = {c["ticker"]: c for c in ladder}
+                for _tk, _row in pending_e.watchlist_fills(
+                        _rows, dist, spot, vol, regime):
+                    _m = (f"⏳→📉 WATCHLIST {_tk[-18:]} ${_row['no_cost']:.3f} "
+                          f"(ref ${_row['watchlist_ref']:.3f}, "
+                          f"{(_row['no_cost'] - _row['watchlist_ref']) / _row['watchlist_ref']:+.1%}) "
+                          f"true={_row['true_prob']:.0%}")
+                    live_view.log_event(_m) if live_view.ENABLED else print(f"     {_m}")
+                    portfolio.buy_no(_row, _row["true_prob"], dist, spot, vol, regime)
+
             # SNIPE signal — deep-OTM lottery tickets, ROI-ranked, separate scan from
             # find_best() (see config.py SNIPE_* comment for why they'd otherwise be
             # starved out by the main edge ranking)

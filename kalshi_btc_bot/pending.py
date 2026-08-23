@@ -93,6 +93,72 @@ class PendingEntries:
             return sig, "triggered"
         return None, "waiting"
 
+    def watchlist_fills(self, rows_by_ticker, dist, spot, vol, regime,
+                        now=None) -> list:
+        """Re-price every ARMED ticker off the CURRENT ladder and fire the ones
+        whose discount and model value both clear. Returns [(ticker, row)].
+
+        This is the opposite of `gate()`. gate() only ever re-checks a ticker on
+        a scan where the SIGNAL re-fires, i.e. where every entry gate still
+        passes. But the gates going stale IS the discount: as spot drifts toward
+        the band, true_prob rises, the overpricing ratio collapses, and the
+        signal stops firing — precisely while the contract gets cheap. Requiring
+        the full gate set to re-pass caps the reachable discount at ~2.2%
+        (median). Dropping to the model's own valuation reaches ~16%.
+
+        So the arming gate stays strict and the FILL condition is only:
+          1. price has dipped WATCHLIST_ENTRY_DIP below the arming cost, and
+          2. the model still values NO above that price by
+             WATCHLIST_ENTRY_NET_EDGE.
+
+        Measured 2026-08-23, settlement-resolved, net of fees, 15-min window:
+            policy                          n    WR    cost      ROC   TUNE  VALID
+            buy at arming (live)          110   80%  $0.803   -1.7%  -3.4%  -0.2%
+            dip 10%, net_edge >= 0.05      39   72%  $0.669   +4.9%  +3.4%  +6.3%
+        Win rate falls 8pp but break-even falls 13pp, so the discount more than
+        pays for the worse hit rate. Requiring net_edge >= 0.05 rather than
+        >= 0.00 is what makes it work (+4.9% vs +1.7%) — the model's valuation
+        is the filter, the stale gates are the discount.
+
+        NOT AN ESTABLISHED EDGE. n=39 over 9 days, 4 of them negative, clustered
+        95% CI [-16.6%, +24.7%], P(ROC>0) = 69%. Below the bar this repo uses to
+        act; shipped OFF, as a live measurement.
+
+        KNOWN INCONSISTENCY: this re-prices with dist.true_prob (the raw
+        Student-t prior), because that is what the measurement above used.
+        find_boundary_no arms using _posterior() (the market-blended value). Two
+        different probability estimates in one strategy. Re-measure with the
+        posterior before treating either as settled.
+        """
+        dip = getattr(_C, "WATCHLIST_ENTRY_DIP", 0.0)
+        if dip <= 0 or not self._pending:
+            return []
+        need = getattr(_C, "WATCHLIST_ENTRY_NET_EDGE", 0.05)
+        out = []
+        for ticker, p in list(self._pending.items()):
+            row = rows_by_ticker.get(ticker)
+            if not row:
+                continue
+            bid = row.get("bid")
+            if not bid or bid <= 0:
+                continue
+            cost = 1.0 - float(bid)
+            if cost > p["ref"] * (1.0 - dip):
+                continue
+            try:
+                true_p = dist.true_prob(row, spot, vol, row["hours"], regime)
+            except Exception:
+                continue
+            if not (0.0 < true_p < 1.0):
+                continue
+            if (1.0 - true_p) - cost < need:
+                continue
+            del self._pending[ticker]
+            out.append((ticker, {**row, "signal": "BOUNDARY_NO",
+                                 "true_prob": true_p, "no_cost": cost,
+                                 "watchlist_ref": p["ref"]}))
+        return out
+
     def describe(self, sig, status, cost_key="no_cost"):
         """One-line human summary of a gate() decision, or None if not needed."""
         if status in ("off", None):
