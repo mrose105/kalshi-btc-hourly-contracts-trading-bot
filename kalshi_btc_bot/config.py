@@ -843,25 +843,27 @@ DELAYED_ENTRY_SIGNALS       = ("BOUNDARY_NO", "MISPRICE_NO")
 #   1. price has dipped WATCHLIST_ENTRY_DIP below the arming cost, AND
 #   2. the model still values NO above that price by WATCHLIST_ENTRY_NET_EDGE.
 #
-# Measured 2026-08-23, settlement-resolved, net of fees @14 lots, 15-min window:
-#     policy                          n    WR    cost      ROC   TUNE  VALID
-#     buy at arming (live)          110   80%  $0.803   -1.7%  -3.4%  -0.2%
-#     dip  5%, net_edge >= 0.05      53   75%  $0.725   +2.1%  +8.8%  -3.8%
-#     dip 10%, net_edge >= 0.05      39   72%  $0.669   +4.9%  +3.4%  +6.3%
-#     dip 10%, net_edge >= 0.00      44   70%  $0.678   +1.7%  -6.9%  +9.0%
-#     dip 15%, net_edge >= 0.05      27   63%  $0.609   +0.7%  -4.0%  +5.2%
+# Measured 2026-08-23, settlement-resolved, net of fees @14 lots, 15-min
+# window, ARMING ON THE POSTERIOR exactly as find_boundary_no does:
+#     policy                          n    WR    cost      ROC   VALID  P(>0)
+#     buy at arming (live)          110   80%  $0.803   -1.7%   -0.2%     --
+#     dip  5%, fill on posterior     14   79%  $0.689  +12.0%  +26.2%    79%
+#     dip 10%, fill on posterior     10   70%  $0.632   +8.2%     n<6    65%
+#     dip 15%, fill on posterior      9   67%  $0.603   +7.7%     n<6    65%
 #
-# Win rate falls 80% -> 72% but break-even falls 80% -> 67%, so the discount
-# more than pays for the worse hit rate. The net-edge requirement is what makes
-# it work: 0.05 gives +4.9%, 0.00 gives +1.7% and flips TUNE negative. The
-# stale gates are the discount; the model's valuation is the filter.
+# Win rate falls 80% -> 79% while cost falls $0.803 -> $0.689, so break-even
+# drops 11pp for a 1pp hit rate cost. That is the whole mechanism.
 #
-# NOT AN ESTABLISHED EDGE. n=39 across 35 expiries and 9 days — a far better
-# spread than the 5-day results that failed before — but 4 of those 9 days are
-# negative, the clustered 95% CI is [-16.6%, +24.7%], and P(ROC>0) is 69%. That
-# is below the bar this repo uses to act on anything. Shipped OFF; switch on in
-# paper as a measurement, and judge it on days this grid search never saw.
-WATCHLIST_ENTRY_DIP        = 0.0    # 0.10 = the measured setting
+# A CORRECTION WORTH KEEPING. An earlier run of this measured +4.9% at n=39 and
+# used the raw prior to ARM as well as to fill. Live arms on the posterior.
+# Re-armed correctly the sample collapses from 39 to 14 — so the n=39 figure
+# never described the live system. The fill pricer barely matters (+12.9% prior
+# vs +12.0% posterior); the ARMING pricer changes everything.
+#
+# NOT AN ESTABLISHED EDGE, and shipped at the measured setting only because it
+# is a paper measurement. n=14 across 14 expiries and 6 days, P(ROC>0) = 79%.
+# That is 14 trades. Judge it on days this grid search never saw, not on this.
+WATCHLIST_ENTRY_DIP        = 0.05
 WATCHLIST_ENTRY_NET_EDGE   = 0.05
 
 # Regime

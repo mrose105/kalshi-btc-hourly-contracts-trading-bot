@@ -14,6 +14,20 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 > **-$670** respectively across the real trade log. Treat this section as a
 > regression check on the simulator, not as evidence about live performance.
 > See `docs/BACKTEST_INTEGRITY.md` before quoting any of it.
+>
+> **Known parity gap:** `BacktestPortfolio` is a separate class from the live
+> `Portfolio`. Fees are charged in both (pinned by `test_fee_parity.py`), but
+> the live-only entry features — delayed entry, watchlist entry, minimum hold,
+> depth-confirmed exits — have no backtest implementation. They were measured
+> against recorded ticks instead, because the backtest generates no
+> BOUNDARY_NO trades at all.
+>
+> **And the YES lanes disagree with reality.** The +108% row below is the YES
+> and snipe lanes; the real trade log has them at **-$413.00 over 155 trades
+> (42% WR)** and **-$670.66 over 76 trades**. `build_ladder()` manufactures
+> synthetic quotes from a lagged-vol version of the same model family being
+> tested, so the simulator scores the model against prices the model produced.
+> Both lanes are disabled live.
 
 | Run | Return | Sharpe | Profit factor | Win rate | Max DD | Trades |
 |---|---:|---:|---:|---:|---:|---:|
@@ -396,6 +410,51 @@ whose thesis is intact but losing has no thesis-aware exit — it rides to the
 holding. At -25% the thesis survives far more often (5/12), but holding is
 still worse (-43.5% vs -25.0%), because entries around 80¢ cap the recovery at
 +20% while each failure loses the whole premium.
+
+### Entry timing — the measured defect
+
+**256 of 257 signalled contracts (100%) drew down after entry.** Median MAE
+-13.6% against a median MFE of +4.6%: the typical adverse move is three times
+the typical favourable one. That follows from the gate itself — it fires on
+`yes_bid / true_prob` being high, which means NO is *cheap*, and it keeps
+getting cheaper. The bot catches the start of a repricing, not the end.
+
+The **exits are not the problem**. Across 92 resolvable live round trips the
+actual exits beat hold-to-settlement by **+$50.84** (`edge_gone` +$16.65, the
+40% stop +$34.19) — and the book was still negative. `edge_gone` banking 1-6c
+per contract looks like leakage and is not: settlement win rate on those
+positions is 72%, so roughly one in four would have gone on to lose the whole
+premium.
+
+| fix tried | result |
+|---|---|
+| `BOUNDARY_NO_HOURS_MAX` 0.50 → **0.25** | **adopted** — ROC -4.5% → -1.5%. Buys less exposure, not a better price: cost moves $0.820 → $0.803, win rate flat |
+| wait for the repricing to stop (no new low for N ticks) | **rejected** — filters 2 of 256 signals; the drawdown oscillates rather than sliding |
+| require N consecutive qualifying ticks | **rejected** — removes 11%, moves ROC 0.1pp; the transient behind a -$4.07 loss lasted ~20 ticks |
+
+### Watchlist entry (`WATCHLIST_ENTRY_DIP`)
+
+The reachable discount is capped by *when you are allowed to look*. Insisting
+every entry gate re-passes at the dipped price caps it at **2.2%** (median),
+because the gates going stale **is** the discount: as spot drifts toward the
+band `true_prob` rises, the overpricing ratio collapses, and the signal stops
+firing precisely while the contract gets cheap.
+
+So a contract is armed on the full gate set, then filled off the raw ladder
+when (a) price has dipped `WATCHLIST_ENTRY_DIP` below the arming cost and
+(b) the model still values NO above that price by `WATCHLIST_ENTRY_NET_EDGE`.
+Stale gates are the discount; the model's valuation is the filter.
+
+| policy (15-min window) | n | WR | cost | ROC | VALID | P(>0) |
+|---|---:|---:|---:|---:|---:|---:|
+| buy at arming | 110 | 80% | $0.803 | -1.7% | -0.2% | — |
+| dip 5%, net_edge ≥ 0.05 | 14 | 79% | $0.689 | **+12.0%** | +26.2% | 79% |
+
+Win rate falls 1pp while cost falls 11pp. **n=14 across 6 days, P(>0)=79% —
+a live measurement, not an edge.** An earlier run measured +4.9% at n=39 but
+armed on the raw prior, which live does not do; re-armed correctly the sample
+collapsed to 14. The fill pricer barely matters (+12.9% prior vs +12.0%
+posterior); the *arming* pricer changes everything.
 
 **Two guards sit in front of the profit exits** (`config.py` for the evidence):
 

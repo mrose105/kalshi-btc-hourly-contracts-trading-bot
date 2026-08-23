@@ -34,12 +34,18 @@ class _Watch:
 
 
 class _Dist:
-    """Stub pricer — returns whatever true_prob the test wants."""
+    """Stub pricer — returns whatever probability the test wants.
+
+    Exposes posterior_prob, because watchlist_fills prices with the POSTERIOR
+    to match the arming gate. A stub offering only true_prob would let a
+    regression back to the prior pass unnoticed.
+    """
     def __init__(self, tp):
         self.tp = tp
 
-    def true_prob(self, row, spot, vol, hours, regime):
-        return self.tp
+    def posterior_prob(self, row, spot, vol, hours, regime, bid=None, ask=None):
+        return {"true_prob": self.tp, "prior_prob": self.tp,
+                "market_prob": None, "market_weight": 0.0}
 
 
 def _row(bid, ticker="KXBTC-T-B64650"):
@@ -148,9 +154,34 @@ def test_a_throwing_pricer_does_not_take_down_the_scan():
                                  _Boom(), 64650.0, 0.0001, REG) == []
 
 
-def test_shipped_default_is_off():
-    assert C.WATCHLIST_ENTRY_DIP == 0.0, (
-        "unvalidated: n=39, P(ROC>0)=69%, 4 of 9 days negative")
+def test_unvalidated_watchlist_may_not_run_with_real_money():
+    """n=14 across 6 days, P(ROC>0)=79%. That is fourteen trades.
+
+    Switched on 2026-08-23 as a PAPER measurement, by explicit request. Same
+    guard as DELAYED_ENTRY_DIP: it does not touch the real account until it
+    holds on data recorded after switch-on.
+    """
+    if C.WATCHLIST_ENTRY_DIP > 0:
+        assert C.PAPER_TRADING is True, (
+            f"WATCHLIST_ENTRY_DIP={C.WATCHLIST_ENTRY_DIP} is unvalidated and "
+            f"PAPER_TRADING is False — validate on paper first, or set it to 0.0")
+
+
+def test_off_by_zero_is_still_supported():
+    """The escape hatch must keep working even though the flag ships on."""
+    with _Watch(0.0):
+        p = _armed(0.80)
+        assert p.watchlist_fills({"KXBTC-T-B64650": _row(0.40)},
+                                 _Dist(0.05), 64650.0, 0.0001, REG) == []
+
+
+def test_it_prices_with_the_posterior_not_the_prior():
+    """Consistency with the arming gate. A prior-priced fill would put two
+    different probability estimates inside one strategy."""
+    src = open("kalshi_btc_bot/pending.py").read()
+    body = src.split("def watchlist_fills")[1].split("\n    def ")[0]
+    assert "posterior_prob(" in body
+    assert "dist.true_prob(" not in body
 
 
 def test_it_reads_config_at_call_time():

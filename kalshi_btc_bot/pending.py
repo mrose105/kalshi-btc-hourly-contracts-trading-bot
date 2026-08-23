@@ -111,24 +111,22 @@ class PendingEntries:
           2. the model still values NO above that price by
              WATCHLIST_ENTRY_NET_EDGE.
 
-        Measured 2026-08-23, settlement-resolved, net of fees, 15-min window:
-            policy                          n    WR    cost      ROC   TUNE  VALID
-            buy at arming (live)          110   80%  $0.803   -1.7%  -3.4%  -0.2%
-            dip 10%, net_edge >= 0.05      39   72%  $0.669   +4.9%  +3.4%  +6.3%
-        Win rate falls 8pp but break-even falls 13pp, so the discount more than
-        pays for the worse hit rate. Requiring net_edge >= 0.05 rather than
-        >= 0.00 is what makes it work (+4.9% vs +1.7%) — the model's valuation
-        is the filter, the stale gates are the discount.
+        Measured 2026-08-23, settlement-resolved, net of fees, 15-min window,
+        arming on the posterior exactly as find_boundary_no does:
+            policy                        n    WR    cost      ROC   VALID  P(>0)
+            buy at arming (live)        110   80%  $0.803   -1.7%   -0.2%     --
+            dip 5%, net_edge >= 0.05     14   79%  $0.689  +12.0%  +26.2%    79%
+        Win rate falls 1pp while cost falls 11pp, so break-even drops far more
+        than the hit rate does. That is the whole mechanism.
 
-        NOT AN ESTABLISHED EDGE. n=39 over 9 days, 4 of them negative, clustered
-        95% CI [-16.6%, +24.7%], P(ROC>0) = 69%. Below the bar this repo uses to
-        act; shipped OFF, as a live measurement.
+        NOT AN ESTABLISHED EDGE — n=14 across 14 expiries and 6 days, P(ROC>0)
+        = 79%. Fourteen trades. Judge it on days the grid search never saw.
 
-        KNOWN INCONSISTENCY: this re-prices with dist.true_prob (the raw
-        Student-t prior), because that is what the measurement above used.
-        find_boundary_no arms using _posterior() (the market-blended value). Two
-        different probability estimates in one strategy. Re-measure with the
-        posterior before treating either as settled.
+        Prices with the POSTERIOR, matching the arming gate. An earlier draft
+        used the raw prior and measured +4.9% at n=39 — but that run also ARMED
+        on the prior, which live does not do. Re-armed correctly on the
+        posterior the sample collapses to n~14, and the prior-vs-posterior
+        choice for the fill is worth about 1pp. Consistency wins.
         """
         dip = getattr(_C, "WATCHLIST_ENTRY_DIP", 0.0)
         if dip <= 0 or not self._pending:
@@ -146,7 +144,14 @@ class PendingEntries:
             if cost > p["ref"] * (1.0 - dip):
                 continue
             try:
-                true_p = dist.true_prob(row, spot, vol, row["hours"], regime)
+                # POSTERIOR, matching what find_boundary_no arms on. Using the
+                # raw prior here would put two different probability estimates
+                # inside one strategy. Measured cost of the consistency: ~1pp
+                # (+12.9% prior vs +12.0% posterior at dip 5%).
+                true_p = dist.posterior_prob(
+                    row, spot, vol, row["hours"], regime,
+                    bid=row.get("bid"), ask=row.get("ask"),
+                )["true_prob"]
             except Exception:
                 continue
             if not (0.0 < true_p < 1.0):
