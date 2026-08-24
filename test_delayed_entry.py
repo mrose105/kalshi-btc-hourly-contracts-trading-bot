@@ -23,15 +23,23 @@ class _Dip:
 
     cap defaults to None (no cap) so the pre-band tests below keep testing the
     FLOOR semantics they were written for.
+
+    WATCHLIST_ENTRY_DIP is pinned to 0.0 for the block. `_pending` now has two
+    consumers, and arming is enabled by EITHER flag, so a test of delayed entry
+    has to say what the other one is doing or it measures the combination. That
+    is not hypothetical: this fixture left the live 0.05 in place, so the
+    dip=0.0 passthrough test started arming as soon as the two were decoupled.
+    The combination is covered in test_watchlist_entry.py, which owns it.
     """
     def __init__(self, dip, wait=None, cap=None):
         self.dip, self.wait, self.cap = dip, wait, cap
 
     def __enter__(self):
         self._d, self._w = C.DELAYED_ENTRY_DIP, C.DELAYED_ENTRY_MAX_WAIT_MINS
-        self._c = C.DELAYED_ENTRY_DIP_MAX
+        self._c, self._wl = C.DELAYED_ENTRY_DIP_MAX, C.WATCHLIST_ENTRY_DIP
         C.DELAYED_ENTRY_DIP = self.dip
         C.DELAYED_ENTRY_DIP_MAX = self.cap
+        C.WATCHLIST_ENTRY_DIP = 0.0
         if self.wait is not None:
             C.DELAYED_ENTRY_MAX_WAIT_MINS = self.wait
         return self
@@ -40,6 +48,7 @@ class _Dip:
         C.DELAYED_ENTRY_DIP = self._d
         C.DELAYED_ENTRY_MAX_WAIT_MINS = self._w
         C.DELAYED_ENTRY_DIP_MAX = self._c
+        C.WATCHLIST_ENTRY_DIP = self._wl
 
 
 def test_zero_is_off_and_passes_every_signal_through_untouched():

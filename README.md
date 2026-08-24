@@ -419,6 +419,20 @@ Three parallel scans on each tick.
   watchlist arms on the gates and then fills on the model's valuation.
   `DELAYED_ENTRY_DIP_MAX = 0.12` still caps it if it is ever switched back on.
 
+  > **The watchlist was inert until 2026-08-24 and this README said otherwise.**
+  > `_pending` is written in one place, inside `gate()`, which returned early
+  > whenever `DELAYED_ENTRY_DIP <= 0`. Shipped config was `DELAYED_ENTRY_DIP =
+  > 0.0` with `WATCHLIST_ENTRY_DIP = 0.05`, so nothing ever armed and
+  > `watchlist_fills()` returned `[]` for the life of every process. The bot was
+  > buying at arming — the baseline measured at **-1.7% ROC** — while the
+  > config, the tests and this file all described the dip policy measured at
+  > **+12.0%**. Found by asking why a 3h41m session placed zero orders when 122
+  > observations had cleared every model gate. Arming is now enabled by
+  > `_arming_on()`, true if *either* flag is set; `test_watchlist_entry.py`
+  > fails if a switched-on feature is unreachable under the live config.
+  > Any figure attributed to watchlist entry before this date describes
+  > buy-at-arming, not the watchlist.
+
   `ENABLE_MISPRICE_NO` is off for an **operational** reason, not a performance
   one — its measured edge was real. Re-enabling it requires fixing
   `find_no_scalp`'s single-best shape first.
@@ -556,7 +570,7 @@ premium.
 | wait for the repricing to stop (no new low for N ticks) | **rejected** — filters 2 of 256 signals; the drawdown oscillates rather than sliding |
 | require N consecutive qualifying ticks | **rejected** — removes 11%, moves ROC 0.1pp; the transient behind a -$4.07 loss lasted ~20 ticks |
 | `LAG_FILTER_MAX_ADVERSE = 25` (reject stale quotes) | **adopted, paper-gated** — attacks the cause rather than the symptom: the drawdown *is* Kalshi not having repriced yet. n=27 |
-| `WATCHLIST_ENTRY_DIP = 0.05` (arm strict, fill on value) | **adopted, paper-gated** — cost $0.803 → $0.689 for 1pp of win rate. n=14 |
+| `WATCHLIST_ENTRY_DIP = 0.05` (arm strict, fill on value) | **adopted, paper-gated** — cost $0.803 → $0.689 for 1pp of win rate. n=14. *Inert in live until 2026-08-24 — see the warning below* |
 
 ### Watchlist entry (`WATCHLIST_ENTRY_DIP`)
 

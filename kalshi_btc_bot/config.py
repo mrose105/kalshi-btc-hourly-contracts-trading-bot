@@ -818,6 +818,10 @@ BOUNDARY_NO_YES_ASK_MAX     = 0.65
 # Re-enable once the undelayed book has enough volume to be a baseline worth
 # comparing against.
 DELAYED_ENTRY_DIP           = 0.0    # 0.05 = the validated band, see above
+# NOTE: 0.0 no longer disables ARMING — WATCHLIST_ENTRY_DIP arms on its own now
+# (pending.PendingEntries._arming_on). Until 2026-08-24 this flag gated both,
+# so shipping 0.0 alongside WATCHLIST_ENTRY_DIP = 0.05 left the watchlist
+# permanently inert. Setting BOTH to 0.0 is the real off switch.
 DELAYED_ENTRY_DIP_MAX       = 0.12   # None = no cap (the old floor behaviour)
 DELAYED_ENTRY_MAX_WAIT_MINS = 20.0   # drop the pending entry after this long
 DELAYED_ENTRY_SIGNALS       = ("BOUNDARY_NO", "MISPRICE_NO")

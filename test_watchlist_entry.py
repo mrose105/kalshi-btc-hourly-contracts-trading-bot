@@ -190,6 +190,129 @@ def test_it_reads_config_at_call_time():
     assert "from .config import WATCHLIST_ENTRY_DIP" not in src
 
 
+# ---------------------------------------------------------------------------
+# THE INERT-FEATURE BUG, found live 2026-08-24.
+#
+# _pending is written in exactly one place, and gate() used to return early on
+# DELAYED_ENTRY_DIP <= 0. Shipped config was DELAYED_ENTRY_DIP = 0.0 with
+# WATCHLIST_ENTRY_DIP = 0.05, so nothing ever armed and watchlist_fills()
+# returned [] for the life of the process. Every test above passed the whole
+# time, because each one sets DELAYED_ENTRY_DIP = 0.10 in its own fixture.
+#
+# The tests knew the arming path had to be on. The config did not.
+# ---------------------------------------------------------------------------
+
+
+class _WatchOnly:
+    """Watchlist on, delayed entry OFF — exactly the shipped configuration."""
+    def __init__(self, dip=0.05, ne=0.05):
+        self.dip, self.ne = dip, ne
+
+    def __enter__(self):
+        self._d = C.WATCHLIST_ENTRY_DIP
+        self._n = C.WATCHLIST_ENTRY_NET_EDGE
+        self._o = C.DELAYED_ENTRY_DIP
+        C.WATCHLIST_ENTRY_DIP = self.dip
+        C.WATCHLIST_ENTRY_NET_EDGE = self.ne
+        C.DELAYED_ENTRY_DIP = 0.0
+        return self
+
+    def __exit__(self, *a):
+        C.WATCHLIST_ENTRY_DIP = self._d
+        C.WATCHLIST_ENTRY_NET_EDGE = self._n
+        C.DELAYED_ENTRY_DIP = self._o
+
+
+def test_watchlist_arms_without_delayed_entry():
+    """THE BUG. WATCHLIST_ENTRY_DIP alone must arm the ticker."""
+    with _WatchOnly():
+        p = PendingEntries()
+        out, st = p.gate({"ticker": "KXBTC-T-B64650", "signal": "BOUNDARY_NO",
+                          "no_cost": 0.87, "true_prob": 0.10})
+        assert st == "queued", f"status={st!r} — nothing armed, watchlist inert"
+        assert out is None, "must withhold the buy; the arming price is the ref"
+        assert len(p) == 1
+
+
+def test_watchlist_only_actually_fills():
+    """End to end on the shipped config: arm, dip, fill."""
+    with _WatchOnly(dip=0.05, ne=0.05):
+        p = PendingEntries()
+        p.gate({"ticker": "KXBTC-T-B64650", "signal": "BOUNDARY_NO",
+                "no_cost": 0.87, "true_prob": 0.10})
+        # cost 0.70 is a 19.5% dip off 0.87; true_p 0.05 -> net edge 0.25
+        fills = p.watchlist_fills({"KXBTC-T-B64650": _row(0.30)},
+                                  _Dist(0.05), 64650.0, 0.0001, REG)
+        assert len(fills) == 1, "armed and deeply discounted, but no fill"
+        assert abs(fills[0][1]["watchlist_ref"] - 0.87) < 1e-9
+
+
+def test_gate_never_fills_in_watchlist_only_mode():
+    """gate() has no dip of its own here — every fill comes from the ladder."""
+    with _WatchOnly():
+        p = PendingEntries()
+        sig = {"ticker": "KXBTC-T-B64650", "signal": "BOUNDARY_NO",
+               "no_cost": 0.87, "true_prob": 0.10}
+        p.gate(sig)
+        for cost in (0.80, 0.70, 0.50, 0.20):
+            out, st = p.gate({**sig, "no_cost": cost})
+            assert out is None and st == "waiting", (cost, st)
+        assert len(p) == 1, "must stay armed for watchlist_fills()"
+
+
+def test_both_off_still_passes_straight_through():
+    """PARITY: the genuine off case must be unchanged."""
+    with _WatchOnly(dip=0.0):
+        p = PendingEntries()
+        sig = {"ticker": "KXBTC-T-B64650", "signal": "BOUNDARY_NO",
+               "no_cost": 0.87, "true_prob": 0.10}
+        out, st = p.gate(sig)
+        assert st == "off" and out is sig
+        assert len(p) == 0
+
+
+def test_delayed_entry_alone_is_unaffected():
+    """The other consumer must keep its own fill behaviour."""
+    old_w, old_d = C.WATCHLIST_ENTRY_DIP, C.DELAYED_ENTRY_DIP
+    C.WATCHLIST_ENTRY_DIP, C.DELAYED_ENTRY_DIP = 0.0, 0.10
+    try:
+        p = PendingEntries()
+        sig = {"ticker": "KXBTC-T-B64650", "signal": "BOUNDARY_NO",
+               "no_cost": 1.00, "true_prob": 0.10}
+        assert p.gate(sig)[1] == "queued"
+        out, st = p.gate({**sig, "no_cost": 0.89})   # 11% dip, inside the cap
+        assert st == "triggered" and out is not None
+    finally:
+        C.WATCHLIST_ENTRY_DIP, C.DELAYED_ENTRY_DIP = old_w, old_d
+
+
+def test_no_switched_on_feature_may_be_unreachable():
+    """THE CLASS, not the instance.
+
+    Any flag that is on in the shipped config must be able to affect behaviour.
+    Asserted structurally: every consumer of `_pending` must be represented in
+    `_arming_on()`, so turning one on cannot be silently gated by another.
+    """
+    src = open("kalshi_btc_bot/pending.py").read()
+    # assert, don't index — a missing _arming_on must report as a failure, not
+    # crash the runner with IndexError and skip every test after it.
+    assert "def _arming_on" in src, "no _arming_on: arming is gated on one flag"
+    arming = src.split("def _arming_on")[1].split("def gate")[0]
+    assert "DELAYED_ENTRY_DIP" in arming
+    assert "WATCHLIST_ENTRY_DIP" in arming, (
+        "watchlist_fills() consumes _pending but its flag does not enable "
+        "arming — switching it on would do nothing")
+
+    # And the live config must not contain an unreachable switched-on feature.
+    if getattr(C, "WATCHLIST_ENTRY_DIP", 0.0) > 0:
+        p = PendingEntries()
+        _, st = p.gate({"ticker": "KXBTC-T-B1", "signal": "BOUNDARY_NO",
+                        "no_cost": 0.87, "true_prob": 0.10})
+        assert st == "queued", (
+            f"WATCHLIST_ENTRY_DIP={C.WATCHLIST_ENTRY_DIP} is on but gate() "
+            f"returned {st!r} under the LIVE config — the feature is inert")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
