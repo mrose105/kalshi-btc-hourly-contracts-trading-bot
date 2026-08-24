@@ -1,10 +1,24 @@
 # Kalshi BTC Hourly Contracts Trading Bot
 
-A live quantitative trading bot for Kalshi's KXBTC binary event markets, built around a **volatility mispricing signal**: Kalshi prices RANGE contracts using a 24-hour lagged SMA vol estimate, while this bot uses a fast EWMA. When current vol compresses below Kalshi's lagged estimate, RANGE contracts are structurally underpriced — the bot detects these windows and buys YES at 2–40¢, targeting 75¢–$1.00 settlement.
+A live quantitative trading bot for Kalshi's KXBTC hourly binary event markets.
+
+**What actually runs today** is a single strategy: `BOUNDARY_NO` — a
+mean-reversion premium collector. When BTC sits at a range extreme
+(|z| ≥ 1.40) the market overprices continuation, so the bot buys NO on the
+out-of-the-money band in the breakout direction, inside the final 15 minutes,
+and exits on `edge_gone`, a 40% stop, or settlement. `ENABLE_YES` and
+`ENABLE_SNIPE` are **off**; the vol-compression YES thesis described further
+down is documented history, not live behaviour, and lost -$413 and -$670 in the
+real trade log.
+
+**Status: paper.** `PAPER_TRADING = True`. Three of the shipped entry features
+— watchlist entry, the lag filter, and the 15-minute window — are measured on
+samples of n=11 to n=27 and are gated by tests that refuse to let them run
+against the real account. See "Risk Profile" for what that sample size means.
 
 ---
 
-## Backtest Results (60-day walk-forward, re-run 2026-08-22)
+## Backtest Results (60-day walk-forward, re-run 2026-08-24)
 
 > **The backtest does not exercise the strategy that currently runs.** With
 > `ENABLE_YES` and `ENABLE_SNIPE` set to `False` — the live configuration — a
@@ -15,12 +29,17 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 > regression check on the simulator, not as evidence about live performance.
 > See `docs/BACKTEST_INTEGRITY.md` before quoting any of it.
 >
-> **Known parity gap:** `BacktestPortfolio` is a separate class from the live
-> `Portfolio`. Fees are charged in both (pinned by `test_fee_parity.py`), but
-> the live-only entry features — delayed entry, watchlist entry, minimum hold,
-> depth-confirmed exits — have no backtest implementation. They were measured
-> against recorded ticks instead, because the backtest generates no
-> BOUNDARY_NO trades at all.
+> **Known parity gaps, open as of 2026-08-24:**
+> `BacktestPortfolio` is a separate class from the live `Portfolio`. Fees are
+> charged in both (pinned by `test_fee_parity.py`), but these live-only
+> features have **no backtest implementation**: delayed entry, watchlist entry,
+> minimum hold, depth-confirmed exits, and the lag filter. They were measured
+> against recorded ticks resolved by settlement instead — which is the better
+> measurement anyway, but it means the two paths are not the same code and
+> nothing automatically catches them drifting apart.
+> Also open: `spx_vol_calibration.py` is cited by `instrument.py` but does not
+> exist, and the SPX distance constants are still BTC values scaled by the
+> 0.0857 σ ratio rather than calibrated.
 >
 > **And the YES lanes disagree with reality.** The +108% row below is the YES
 > and snipe lanes; the real trade log has them at **-$413.00 over 155 trades
@@ -32,8 +51,18 @@ A live quantitative trading bot for Kalshi's KXBTC binary event markets, built a
 | Run | Return | Sharpe | Profit factor | Win rate | Max DD | Trades |
 |---|---:|---:|---:|---:|---:|---:|
 | all lanes, Gaussian prior | +108.4% | 7.23 | 1.86 | 47.2% | -7.8% | 246 |
-| all lanes, Student-t prior (shipped) | **-33.2%** | -10.60 | 0.58 | 34.3% | -33.8% | 210 |
+| all lanes, Student-t prior (previous) | -33.2% | -10.60 | 0.58 | 34.3% | -33.8% | 210 |
+| **all lanes, current config (2026-08-24)** | **-43.2%** | **-8.41** | **0.62** | **35.8%** | **-26.3%** | **193** |
 | **NO-only (matches live config)** | — | — | — | — | — | **0** |
+
+The current-config run is `$500 → $283.98`, avg win +$2.84 against avg loss
+-$2.54, 6.3 bars held. Its composition is the thing to read, not its return:
+**`yes_trades=193`, `no_trades=0`** — 184 of the 193 fired inside the
+compression gate. Adding fee accounting (`CHARGE_FEES`) and raising
+`BOUNDARY_NO_OVERPRICING_MIN` to 1.60 moved the number from -33.2% to -43.2%,
+but every one of those trades is in a lane that is switched off live. The run
+is a regression check on the simulator. It is not a measurement of the
+strategy.
 
 The Student-t "collapse" is not a regression, and reading it as one would be
 backwards. For YES, `edge = true_prob - ask`, so a prior that under-predicted
@@ -197,41 +226,111 @@ Use capital sweeps before quoting scale-sensitive performance.
 8. **Synthetic posterior disabled** — synthetic Kalshi quotes are no longer treated as Bayesian market evidence.
 9. **Fill-time revalidation** — next-bar fills recompute probability and edge at the open before entering.
 
-## Risk Profile — 10,000-path Monte Carlo (at $100)
+## Risk Profile — 10,000-path Monte Carlo
 
-Return alone says nothing about what running this feels like. Bootstrapping the 250 trades from the $100 backtest into 10,000 resampled equity paths (`python3 montecarlo.py results/backtest_20260811_1820.json --n 10000 --capital 100`):
+Bootstrapping the *backtest* would resample the YES lanes, which are off. So
+the Monte Carlo runs on the live strategy's own distribution instead: every
+BOUNDARY_NO selection that passes the **current** gate set on recorded
+universe data, each one resolved by where spot actually settled against its
+`[lo, hi)` band, with the Kalshi taker fee charged.
 
-| Metric | Value |
-|---|---|
-| Actual final equity | $213 (+113.0%) |
-| **Median simulated** | **$213 (+112.8%)** |
-| 5th percentile | $164 |
-| 95th percentile | $265 |
+**The sample is eleven trades.**
 
-The actual backtest lands on the median, so the historical trade *ordering* wasn't unusually lucky.
+| per-trade, on capital at risk | |
+|---|---:|
+| n | **11** |
+| mean | +17.8% |
+| median | +28.2% |
+| std dev | 61.2% |
+| win rate | 82% |
+| best / worst | +96% / -103% |
 
-### Drawdown
+10,000 resampled paths, 2% of bankroll risked per trade:
 
-```
-Actual max DD:    -13.9%
-Median sim DD:     -6.7%
-P(DD > 20%):        0.3%
-P(DD > 30%):        0.0%
-```
+| horizon | p5 | median | p95 | median max DD | p95 max DD | worst DD |
+|---|---:|---:|---:|---:|---:|---:|
+| 25 trades | -1.8% | +9.3% | +20.2% | -4.1% | -8.3% | -17.7% |
+| 100 trades | +15.7% | +41.6% | +72.1% | -6.4% | -11.7% | -22.4% |
 
-The realised -13.9% sits well above the median path (-6.7%), so this particular ordering was on the rougher side. Tails are much tighter than earlier versions of this README reported, because the compression gate cut trade count roughly 5× — fewer, more selective trades.
+**Do not read the 100-trade row as a forecast.** It reports P(profit) = 100%,
+which is an artifact of the method: a bootstrap cannot resample a regime its
+eleven source trades never contained. What the table legitimately shows is
+*path* risk conditional on the per-trade distribution being right — and the
+per-trade distribution is 11 observations with a 61% standard deviation. The
+82% win rate has a 95% binomial interval of roughly [48%, 98%].
 
-### The Monte Carlo still understates risk in three ways
+The asymmetry is the part that generalises. Entries cost ~$0.80, so a win
+returns ~+25% and a loss costs ~-100%: break-even needs 80% wins. The measured
+82% sits directly on that line. That is the whole risk picture — this strategy
+does not have room to be slightly wrong about its win rate.
 
-1. **Fixed dollar P&L, no compounding.** The bootstrap resamples raw dollar amounts, but the live bot Kelly-sizes off *current* equity. Real paths compound, widening both tails.
-2. **IID resampling destroys loss clustering.** Losses correlate in reality — same regime, adjacent strikes, one BTC move busting several positions at once.
-3. **It inherits the model-pricing error.** Every path resamples trades whose exit price came from the bot's own model, not a recorded book.
+### The Monte Carlo still understates risk in four ways
 
-`SESSION_STOP_PCT` (3%) gates *new entries* only — it never closes open positions, so it does not floor these drawdowns.
+1. **n=11.** Everything above inherits an eleven-trade sample. It propagates
+   that uncertainty; it does not reduce it.
+2. **IID resampling destroys loss clustering.** Losses correlate in reality —
+   same regime, adjacent strikes, one BTC move busting several positions.
+3. **No capacity model.** Kelly sizing past a few thousand dollars wants
+   positions deeper than the real KXBTC book absorbs.
+4. **Settlement-resolved, not execution-resolved.** Top-of-book fills with the
+   one-contract fee; no latency, no partial fills, no slippage on exit.
+
+`SESSION_STOP_PCT` (3%) gates *new entries* only — it never closes open
+positions, so it does not floor these drawdowns.
 
 ---
 
-## The Edge — Kalshi's Vol Lag
+## Kalshi's Price Lag (measured 2026-08-23)
+
+Kalshi's contract prices trail the underlying. Correlating a *past* Coinbase
+move against Kalshi's *subsequent* repricing of the same contract, over 1.2M
+recorded observations:
+
+| lookahead | 2s | 10s | **20s** | 60s | 120s |
+|---|---:|---:|---:|---:|---:|
+| corr | +0.026 | +0.133 | **+0.180** | +0.083 | +0.049 |
+
+Positive on all 10 days and all 8 hour-buckets, and **stronger on larger
+moves** (+0.255 for moves ≥ $30 vs +0.179 below). It is structural. There is no
+persistent basis to go with it: the band Kalshi prices highest contains
+Coinbase spot 75% of the time at a median offset of exactly $0 — so an observed
+gap is timing, and it closes.
+
+**It is not tradeable directly.** A round trip pays two spreads, ~20% of a 20¢
+contract, against ~9.5% the lag delivers. Every directional-lag configuration
+tested came back negative. What *is* free is using it as a **filter**:
+`LAG_FILTER_MAX_ADVERSE = 25.0` refuses any entry where spot has moved more
+than $25 toward the band over the trailing `LAG_FILTER_SECS = 20`, because that
+quote is stale and about to fall. The direction that counts flips with the side
+being faded — z<0 fades bands below spot, so a *falling* spot is the adverse
+one; z>0 is the mirror. Getting that backwards would reject exactly the good
+entries, which is what most of `test_lag_filter.py` guards.
+
+**The bot's own feed was half the problem.** It read
+`api.coinbase.com/v2/prices/BTC-USD/spot`, a cached retail endpoint that itself
+lags Coinbase's exchange ticker by ~10s (corr +0.739). Half the head start was
+gone before the strategy saw a price. `feed.py` now reads
+`api.exchange.coinbase.com/products/BTC-USD/ticker`, with the old endpoint kept
+as a fallback. Webull tracks the exchange ticker at a fixed ~$19 offset and
+leads the retail endpoint by the same 10s — it confirmed the finding but adds
+nothing beyond the exchange feed.
+
+`python3 feed_compare.py` shows all sources side by side with a rolling lag
+correlation. Kalshi has no public spot endpoint, so its view is backed out of
+the band ladder — peak band ±3 neighbours, price-weighted. Do **not** weight the
+full ladder: with ~118 bands including deep tails that put the estimate $893 off
+in a live check. The local version reproduced Kalshi's own displayed price to
+the dollar ($77,749.99 against the app's $77,750.80).
+
+---
+
+## Historical thesis — Kalshi's Vol Lag (YES lanes, disabled)
+
+> This is what the bot was originally built around. `ENABLE_YES` and
+> `ENABLE_SNIPE` are `False`; these lanes lost -$413 and -$670 in the real
+> trade log. Kept because the compression machinery still gates `find_best`
+> and `find_snipe`, and because flipping either flag back on without
+> re-validating against the corrected Student-t prior is a live landmine.
 
 Kalshi prices RANGE contracts using a rolling average of historical vol. This bot uses a fast EWMA that responds in minutes. The gap between them creates structural mispricing:
 
@@ -298,6 +397,31 @@ Three parallel scans on each tick.
 - **`find_best`** — probability-edge scan for the highest-edge contract. **RANGE-only in the RANGING regime**; TRENDING / REVERTING / BREAKOUT regimes also consider ABOVE / BELOW contracts, gated by the regime's direction (an ABOVE won't be bought during a confirmed downtrend, and vice-versa).
 - **`find_snipe`** — separate ROI-ranked scan for cheap deep-OTM lottery tickets that `find_best` would never surface (small raw-edge points but 30%+ ROI on a 10–25¢ ask).
 - **`find_boundary_no`** — mean-reversion premium-collection scan. When BTC is at a range extreme (|z-score| ≥ 1.40, RANGING or REVERTING regime), the market overprices the probability of continuation — OTM contracts in the breakout direction are too expensive relative to true probability. The bot buys NO on those contracts (betting BTC mean-reverts rather than breaks out), analogous to selling an OTM option at the extreme to collect overpriced premium. NO pays $1 if BTC fails to reach the OTM range by expiry. Exits via 40% stop-loss or expiry settlement.
+
+  **This is the only lane that runs live.** Its own gates, all read
+  module-qualified from `config.py` at call time:
+
+  | gate | value | note |
+  |---|---:|---|
+  | `BOUNDARY_NO_HOURS_MAX` | **0.25** | 15 min. Was 0.50; ROC -4.5% → -1.5% |
+  | `BOUNDARY_NO_OVERPRICING_MIN` | **1.60** | was 1.15, which was provably inert — sweeping below it changed nothing |
+  | `BOUNDARY_NO_ZSCORE_MIN` | 1.40 | also inert below its current value |
+  | `BOUNDARY_NO_MIN_NET_EDGE` | 0.05 | 0.00 still requires non-negative edge, but a 0.1¢ edge cannot survive a ~2.5% fee-and-spread load |
+  | `LAG_FILTER_MAX_ADVERSE` | 25.0 | reject stale quotes — see "Kalshi's Price Lag" |
+  | `WATCHLIST_ENTRY_DIP` | 0.05 | arm strict, fill on the model's valuation |
+
+  `find_boundary_no(..., all_matches=True)` returns every qualifying contract,
+  not just the best. (`find_no_scalp` still has the old single-best shape and
+  would need the same treatment if `ENABLE_MISPRICE_NO` is re-enabled.)
+
+  `DELAYED_ENTRY_DIP` is **0.0 (off)**, superseded by watchlist entry: a fixed
+  dip floor waits for a price the gates may never re-approve, whereas the
+  watchlist arms on the gates and then fills on the model's valuation.
+  `DELAYED_ENTRY_DIP_MAX = 0.12` still caps it if it is ever switched back on.
+
+  `ENABLE_MISPRICE_NO` is off for an **operational** reason, not a performance
+  one — its measured edge was real. Re-enabling it requires fixing
+  `find_no_scalp`'s single-best shape first.
 
 Filters applied before every entry:
 
@@ -431,6 +555,8 @@ premium.
 | `BOUNDARY_NO_HOURS_MAX` 0.50 → **0.25** | **adopted** — ROC -4.5% → -1.5%. Buys less exposure, not a better price: cost moves $0.820 → $0.803, win rate flat |
 | wait for the repricing to stop (no new low for N ticks) | **rejected** — filters 2 of 256 signals; the drawdown oscillates rather than sliding |
 | require N consecutive qualifying ticks | **rejected** — removes 11%, moves ROC 0.1pp; the transient behind a -$4.07 loss lasted ~20 ticks |
+| `LAG_FILTER_MAX_ADVERSE = 25` (reject stale quotes) | **adopted, paper-gated** — attacks the cause rather than the symptom: the drawdown *is* Kalshi not having repriced yet. n=27 |
+| `WATCHLIST_ENTRY_DIP = 0.05` (arm strict, fill on value) | **adopted, paper-gated** — cost $0.803 → $0.689 for 1pp of win rate. n=14 |
 
 ### Watchlist entry (`WATCHLIST_ENTRY_DIP`)
 
@@ -455,6 +581,40 @@ a live measurement, not an edge.** An earlier run measured +4.9% at n=39 but
 armed on the raw prior, which live does not do; re-armed correctly the sample
 collapsed to 14. The fill pricer barely matters (+12.9% prior vs +12.0%
 posterior); the *arming* pricer changes everything.
+
+### A closed market is not a settled market
+
+Kalshi's `closed` status means trading has stopped; the outcome is determined
+later. Treating it as settled made the bot book an outcome from
+`is_in_money(spot)` at the arbitrary moment it noticed the close, using *our*
+spot rather than Kalshi's settlement value.
+
+Observed 2026-08-23 on `KXBTC-26AUG2323-B77250`: close_time 23:00, still
+quoting 0.17/0.20 at 22:50:14, booked as settled six seconds later and credited
+the full $1.00. Spot was $77,359 against a band of [77,200, 77,300) — **$59
+outside, with ten minutes left.** A coin flip recorded as a certainty. (It
+happened to be right; spot passed back through the band before the real close.)
+`expired_settled` is 29 exits and -$1,187.51 across the paper history, so how
+that branch decides is not a detail.
+
+`_SETTLED` is now `{"finalized", "settled", "determined"}` — `closed` removed —
+with a fallback for a position whose status never updates: `close_time` already
+passed by 0.05h **and** both sides stopped quoting. Pinned by
+`test_settlement_detection.py`.
+
+### Execution costs
+
+`CHARGE_FEES = True`. Kalshi's taker fee is
+`ceil(0.07 × count × price × (1 - price))` cents, settlement is free. Charged
+identically in backtest, paper, and live — pinned by `test_fee_parity.py`,
+because backtest/live divergence is the recurring bug class in this repo. The
+implementation rounds to 9 decimal places before `ceil`: `0.70 × (1 - 0.70)`
+evaluates to 147.00000000000003 cents against `0.30`'s exact 147.0, and without
+the round that float asymmetry charges a whole extra cent on one side.
+
+Note the percentage asymmetry this creates: a 2¢ spread on a 20¢ contract is
+10% of the position; on an 80¢ NO it is 2.5%. The NO lane is the cheap one to
+trade, which is part of why it is the lane still running.
 
 **Two guards sit in front of the profit exits** (`config.py` for the evidence):
 
@@ -538,6 +698,34 @@ python3 kalshi_btc_backtest.py --days 60 --capital 100 --verbose       # print e
 python3 montecarlo.py --n 10000 --capital 100                          # bootstrap equity fan + drawdown distribution
 ```
 
+Remember what the backtest can and cannot answer: it produces **zero**
+BOUNDARY_NO trades, so it never exercises the live strategy. For that, replay
+recorded books against settlement:
+
+```bash
+python3 boundary_no_quote_replay.py --bootstrap 10000
+```
+
+### Tests
+
+```bash
+for f in test_*.py; do python3 "$f" >/dev/null || echo "FAIL $f"; done
+```
+
+122 tests across 14 files, all passing. Several are deliberately *policy*
+tests rather than behaviour tests: `test_lag_filter.py` and
+`test_watchlist_entry.py` each assert that if their feature is switched on then
+`PAPER_TRADING` must be `True`, so an unvalidated n=11–27 feature cannot reach
+the real account by accident. `test_fee_parity.py` pins backtest and live fee
+accounting to the same function.
+
+### Feed comparison
+
+```bash
+python3 feed_compare.py                 # Coinbase + Kalshi implied, rolling lag corr
+python3 feed_compare.py --csv out.csv   # log every tick
+```
+
 ### Live / Paper trading
 
 ```bash
@@ -605,6 +793,81 @@ export KALSHI_BASE_URL="https://demo-api.kalshi.co/trade-api/v2"
 
 ---
 
+## Data Recording & Storage
+
+`kalshi_btc_bot/recorder.py`. Everything the bot sees goes to
+**gzipped JSON Lines**, one file per stream per UTC day, in `recordings/`:
+
+```
+recordings/{stream}_{YYYY-MM-DD}.jsonl.gz     87 files, 67 MB
+```
+
+No database. One JSON object per line, short keys to keep the files small, and
+a day-rolled handle per stream so a long session never holds one enormous file
+open. Every record carries `t`, an ISO-8601 UTC timestamp to milliseconds —
+that field is also what selects the file, so records are filed by *event* day,
+not by when the process happened to start.
+
+| stream | one record per | key fields | ~size/day |
+|---|---|---|---:|
+| `universe` | full ladder poll, **pre-filter** | `spot`, `win`, `m[]` of `{tk, a, b, v, lo, hi, ct}` | 3.5 MB |
+| `books` | order-book snapshot | `tk`, `b`, `a`, `h`, `spot`, `held`, `yes[]`, `no[]` depth ladders | 1.1 MB |
+| `quotes` | scan tick | `spot`, `rg` (regime: `r`, `d`, `v`, `vh`, `vr`, `vc`, `z`, `m`), `l[]` | 1.1 MB |
+| `marks` | held-position mark | `tk`, `b`, `a`, `entry`, `cnt`, `peak`, `tp`, `prior`, `mkt`, `post`, `mw` | 7 KB |
+| `orders` | order attempt | `ev`, `side`, `lim`, `want`, `fill`, `px`, `why`, plus the full `book` at decision time | small |
+| `walls` | Deribit OI snapshot (~5 min) | wall levels | small |
+
+**`universe` is the important one.** It is recorded *before* the ladder
+filters, so it is the only uncensored record of what was actually available —
+which is what makes counterfactual studies possible. Every "measured on
+recorded data" figure in this README comes from replaying it and resolving each
+contract by where spot settled against its `[lo, hi)` band. `quotes` and
+`books` are already filtered and cannot answer "what would this other gate have
+done?"
+
+### Design details that are load-bearing
+
+**Recording never blocks trading.** `_emit()` puts onto a bounded
+`queue.Queue(maxsize=10000)` with `put_nowait` and a daemon writer thread
+drains it. A full queue increments `dropped` and returns; a write exception is
+swallowed. The bot degrades to losing data rather than stalling on disk I/O in
+a trading loop.
+
+**Flush cadence is per-stream, and a single shared counter was wrong.**
+
+```python
+_FLUSH_EVERY = {"orders": 1, "walls": 1, "marks": 5,
+                "books": 50, "quotes": 200, "universe": 20}
+```
+
+With ~25,000 `quotes` writes against ~6 `orders` writes in a session, a shared
+global threshold means the odds an order write ever lands on it are near zero —
+so the `orders` stream sat unflushed in memory all day, invisible to anything
+reading the file and one `kill -9` from being lost. `orders` and `marks` are
+the two streams the exit-pricing work depends on, so they flush immediately or
+near it. `walls` too: those snapshots arrive every ~5 min and can never be
+re-fetched, since Deribit publishes no historical open interest.
+
+`close()` is wired to both `KeyboardInterrupt` and `atexit`, so a graceful
+shutdown flushes everything regardless of cadence.
+
+**It is off unless you ask for it.** `ENABLED = os.getenv("KALSHI_RECORD") == "1"`
+— exactly the string `1`. The bot trades normally and silently without it. See
+the Quickstart warning; a session on 2026-08-15 traded 1h35m and left zero
+recordings.
+
+### Derived outputs
+
+`results/` (311 files, 88 MB) holds analysis JSON, not market data — 269
+`backtest_*.json` runs plus lead-lag and unified-analysis reports. Backtest
+runs are named `backtest_{YYYYMMDD}_{HHMM}.json`; the current-config run quoted
+above is `backtest_20260824_1621.json`. `montecarlo.py` and the replay tools
+read these rather than re-running the simulation.
+
+Nothing prunes either directory automatically.
+
+---
+
 ## Tech Stack
 
 - **Python 3.11+** — async-ready, type-annotated
@@ -612,7 +875,8 @@ export KALSHI_BASE_URL="https://demo-api.kalshi.co/trade-api/v2"
 - **scipy.optimize.brentq** — implied vol extraction from binary option prices
 - **numpy / pandas** — vol computation, OHLCV processing
 - **yfinance** — BTC-USD 5-min OHLCV for backtesting
-- **Kalshi REST API** — RSA-PSS signed requests, IOC order entry
+- **Coinbase Exchange ticker** — live spot (`api.exchange.coinbase.com/products/BTC-USD/ticker`), with the retail `v2/prices` endpoint as fallback only; the retail feed lags the exchange by ~10s
+- **Kalshi REST API** — RSA-PSS signed requests, IOC order entry. Note `no_cost = 1 - yes_bid`, and the V2 event-order endpoint is a YES-leg book
 - **Alpaca / alpaca-py** — retained for the separate Kalshi-to-SPY/SPX options lead-signal research lane (`options_signals.py`, `strategy_engine.py`, `unified_analysis.py`, `arb_scanner.py`). The current BTC bot does not execute Alpaca orders.
 
 ---

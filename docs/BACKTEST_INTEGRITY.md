@@ -8,6 +8,8 @@
 > synthetic bid/ask quotes were being treated as independent Bayesian market
 > evidence even though `build_ladder()` generated them from the model family
 > under test.
+> Anything predating 2026-08-22 predates fee accounting (§9): the taker fee was
+> not charged at all, in either the backtest or the live path.
 > Current headline results live in [`../README.md`](../README.md).
 
 This document exists because the backtest's headline return has been wrong, by
@@ -15,11 +17,19 @@ large factors, more than once — and each time it looked entirely plausible unt
 someone measured it. It catalogues every class of defect found so far, the
 evidence for each, and a checklist to run before quoting any figure.
 
-**Current status: the backtest's absolute return is not a forecast of live P&L,
-and there is no longer a single number to forecast with — return is now a
-function of capital scale (§7).** Logic parity with the live bot is close (see
-§5), but exits still price off the model rather than a recorded order book
-(§3), which is unfixed and dominates everything not already explained by §7.
+**Current status (2026-08-24): the backtest does not exercise the strategy that
+runs.** Under the live configuration it produces **zero** trades, because it
+generates no BOUNDARY_NO entries at all (§10). Every figure it reports comes
+from the YES and snipe lanes, which are switched off. That supersedes the older
+framing below in importance: the absolute return was never a forecast of live
+P&L, but the sharper problem is that it is not a measurement of the same
+strategy. Of the defects that remain when it *is* used as a simulator check,
+model-derived exit pricing (§3) still dominates.
+
+The live strategy is measured instead by replaying recorded books against
+actual settlement — `boundary_no_quote_replay.py`, and the recorded-tick
+studies summarised in the README. Read a backtest number as a regression test
+on the simulator, nothing more.
 
 ---
 
@@ -35,6 +45,52 @@ function of capital scale (§7).** Logic parity with the live bot is close (see
 | 6. Rolling window | inherent | ±5% run-to-run |
 | 7. Capacity constraint (size vs. real depth) | **modeled Aug 4** | flips the sign past ~$2-5K capital |
 | 8. Synthetic posterior circularity | **fixed Aug 17** | synthetic prices became model evidence |
+| 9. Execution costs not charged | **fixed Aug 22** | ~2.5% per round trip, unmodelled |
+| 10. **Wrong strategy entirely** | **structural, open** | **measures a disabled lane** |
+
+---
+
+## 10. The backtest measures a lane that does not trade — open
+
+The live configuration is `ENABLE_YES = False`, `ENABLE_SNIPE = False`, and the
+only strategy running is `BOUNDARY_NO`. A 60-day run under that exact config
+returns **zero trades**: `build_ladder()`'s synthetic quotes never produce a
+contract that clears the BOUNDARY_NO gate set.
+
+So every backtest figure in this repo describes the YES and snipe lanes. The
+2026-08-24 run is -43.2% over 193 trades — all 193 YES, none NO. And those
+lanes are separately known to disagree with reality: the real trade log has
+them at -$413 over 155 trades and -$670 over 76 trades, while the synthetic
+version of the same lanes once reported +108%. `build_ladder()` prices quotes
+from a lagged-vol member of the model family being tested, so the simulator is
+scoring the model against prices the model produced.
+
+This is not fixable by tuning a threshold. It would require replaying a
+recorded order book instead of synthesising one — which is what
+`boundary_no_quote_replay.py` does, and why that tool, not the backtest, is
+the reference for entry quality.
+
+**Consequence for the checklist:** before quoting any backtest number, check
+`yes_trades` / `no_trades` in the result JSON. If `no_trades == 0`, the number
+says nothing about live behaviour.
+
+---
+
+## 9. Execution costs were not charged — fixed Aug 22
+
+Neither the backtest nor the live P&L accounting charged Kalshi's taker fee.
+It is `ceil(0.07 × count × price × (1 - price))` cents; settlement is free.
+On an 80¢ NO entry that is ~1.1¢ per contract each way, and the fee peaks at
+mid-price, exactly where most entries sit.
+
+`CHARGE_FEES = True` now applies the same `fees.taker_fee()` in both paths,
+pinned by `test_fee_parity.py` — backtest/live divergence being the recurring
+defect class in this repo (§5).
+
+One implementation trap worth recording: `0.70 × (1 - 0.70)` evaluates to
+147.00000000000003 cents where `0.30 × (1 - 0.30)` gives exactly 147.0, so a
+naive `ceil` charged an extra whole cent on one side of the book but not the
+other. `taker_fee()` rounds to 9 decimals before the `ceil`.
 
 ---
 
@@ -309,6 +365,9 @@ Both need to hold for a number to be believed.
 
 ## Checklist before quoting any backtest number
 
+0. **Check `no_trades` in the result JSON first.** If it is 0, the run measured
+   the disabled YES/snipe lanes and says nothing about the live strategy (§10).
+   Nothing further on this list matters until this one passes.
 1. **Does any tier report 100% win rate?** If yes, it is a profit-lock tier and
    its win rate is tautological. Check what fraction of total P&L it carries.
 2. **What prices the exit?** If it is the model rather than a recorded book, the
