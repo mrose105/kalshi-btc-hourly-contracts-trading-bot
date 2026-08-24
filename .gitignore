@@ -26,9 +26,13 @@ venv/
 
 # Runtime output
 *.log
+bot_session.lo*      # catches the truncated-redirect typo too
 logs/
 tmp/
 *.pid
+
+# Agent tooling config
+.codex/
 
 # Recorded market data (can reach ~15MB/day gzipped)
 recordings/
