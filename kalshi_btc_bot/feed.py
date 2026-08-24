@@ -109,21 +109,63 @@ class BTCFeed:
         # single enormous return. Drop it and re-anchor to the current slot.
         self._current_bar_start = self._slot_start(ts)
 
+    # Coinbase's EXCHANGE market-data ticker, not the retail /v2/prices/spot
+    # endpoint this used to call.
+    #
+    # 2026-08-23, sampling all three once a second for 75s:
+    #     feed         distinct prices   changed/sample
+    #     /v2/prices                14              64%
+    #     exchange ticker           43              75%
+    #     Webull                    51              85%
+    #
+    # Lead-lag at 10s (does row lead column?):
+    #                  /v2/prices   exchange     webull
+    #     /v2/prices        —         +0.238     +0.260
+    #     exchange       +0.739         —        -0.253
+    #     webull         +0.755      -0.324        —
+    #
+    # Both the exchange feed and Webull LEAD /v2/prices by ~10s (+0.739,
+    # +0.755). Against each other they are a wash — negative in BOTH
+    # directions, which is noise, not a lead. So /v2/prices was simply stale:
+    # a cached retail convenience endpoint, ~$10 off the exchange price with
+    # sd $30, where Webull sits $19 off with sd only $6 (a stable index
+    # difference, not information).
+    #
+    # That matters because the whole strategy is timing against Kalshi, which
+    # itself lags spot by ~20s. Running the model on a feed that was already
+    # 10s stale ate half the head start.
+    #
+    # Webull would have worked equally well and was NOT chosen: same
+    # information, but an unofficial reverse-engineered broker endpoint versus
+    # an official market-data API from a vendor already in use. Rate limit is
+    # 10 req/s per IP against the bot's PRICE_FETCH cadence; measured 25/25 at
+    # 2.5 req/s, 84ms median latency.
+    _TICKER   = "https://api.exchange.coinbase.com/products/BTC-USD/ticker"
+    _FALLBACK = "https://api.coinbase.com/v2/prices/BTC-USD/spot"
+
     def fetch(self) -> float:
+        price = None
         try:
-            r = requests.get(
-                "https://api.coinbase.com/v2/prices/BTC-USD/spot",
-                timeout=5
-            )
-            price = float(r.json()["data"]["amount"])
-            now   = datetime.datetime.now()
-            self.last = price
-            self.prices.append((now, price))
-            self.prices = self.prices[-500:]
-            self._maybe_close_5min_bar(now, price)
-            return price
-        except:
+            r = requests.get(self._TICKER, timeout=5,
+                             headers={"User-Agent": "kalshi-btc-bot/1.0"})
+            price = float(r.json()["price"])
+        except Exception:
+            # Never let a feed change be able to stop the bot: fall back to the
+            # old endpoint rather than returning a stale self.last, which would
+            # freeze the regime engine and every gate that reads from it.
+            try:
+                r = requests.get(self._FALLBACK, timeout=5)
+                price = float(r.json()["data"]["amount"])
+            except Exception:
+                return self.last
+        if not price or price <= 0:
             return self.last
+        now = datetime.datetime.now()
+        self.last = price
+        self.prices.append((now, price))
+        self.prices = self.prices[-500:]
+        self._maybe_close_5min_bar(now, price)
+        return price
 
     def recent(self, seconds: int) -> list:
         cutoff = datetime.datetime.now() - datetime.timedelta(seconds=seconds)
