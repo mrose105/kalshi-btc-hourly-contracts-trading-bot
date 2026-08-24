@@ -120,7 +120,24 @@ class PositionManager:
             # crediting cash — sync_step() never calls portfolio.sync() for paper — so we
             # must credit/debit the settlement value ourselves via portfolio.sell() or
             # paper P&L silently loses the cost basis on every settled position.
-            _SETTLED = {"finalized", "settled", "closed", "determined"}
+            # "closed" is NOT settled. On Kalshi it means trading has stopped;
+            # the outcome is determined later. Including it here made the bot
+            # book an outcome from is_in_money(spot) at the moment it noticed
+            # the close, using OUR spot rather than Kalshi's settlement value.
+            #
+            # Observed 2026-08-23: KXBTC-26AUG2323-B77250 has close_time
+            # 23:00:00 and was still quoting 0.17/0.20 at 22:50:14, yet was
+            # booked settled at 22:50:20 and credited the full $1.00 (+$1.87).
+            # Spot was $77,359 against a band of [77,200, 77,300) — only $59
+            # outside, with ten minutes left. That outcome was not determined;
+            # it was a coin flip recorded as a certainty. It happened to win.
+            #
+            # A closed-but-undetermined market now simply waits. The _expired
+            # fallback below still catches the case where the status never
+            # updates: once close_time has passed AND both sides have stopped
+            # quoting, settle from spot at that point — which is at least the
+            # right moment, even if it is our index rather than Kalshi's.
+            _SETTLED = {"finalized", "settled", "determined"}
             _expired = _hours_from(close_time) < -0.05 and bid == 0 and ask == 0
             if status in _SETTLED or _expired:
                 itm_flag = is_in_money(pos["contract"], spot)
