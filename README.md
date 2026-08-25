@@ -210,7 +210,9 @@ result. Past roughly a few thousand dollars, Kelly sizing wants positions larger
 than Kalshi's real KXBTC book depth can absorb without severe exit slippage.
 Use capital sweeps before quoting scale-sensitive performance.
 
-> **Earlier figures in this README were void and have been replaced.** Runs before 2026-08-07 simulated a 250-wide RANGE band; the real KXBTC hourly band is **100 wide**, confirmed against ~20,000 `floor_strike`/`cap_strike` observations from the exchange. The wider band made every simulated contract 2.3–4.7× likelier to pay, inflating returns roughly 4×. Details in [`docs/QUANT_STANDARDS_AUDIT.md`](docs/QUANT_STANDARDS_AUDIT.md) §1d.
+> **Earlier figures in this README were void and have been replaced.** Runs before 2026-08-07 simulated a 250-wide RANGE band on *every* contract, while **97% of real KXBTC hourly bands are 100 wide** — measured across ~700,000 `floor_strike`/`cap_strike` observations.
+>
+> **But the width is not constant, and the bot must not assume it is.** The remaining 3% are 250 wide, and it varies by *window*, not by time to expiry: on 2026-08-25 the 14:00, 15:00, 16:00 and 18:00 windows were each 186 markets at 100 wide, while 17:00 was 78 markets at **250 wide for its entire life**, from four hours out to expiry. Kalshi holds coverage roughly constant (186x100 ≈ 78x250 ≈ $19k) and picks a grid per window. The ticker number is the band **midpoint**, not its floor. `STRIKE_CLUSTER_DIST` now scales with the contract's own width; the σ-based distance gates deliberately stay in dollars. See `test_band_width.py`. The wider band made every simulated contract 2.3–4.7× likelier to pay, inflating returns roughly 4×. Details in [`docs/QUANT_STANDARDS_AUDIT.md`](docs/QUANT_STANDARDS_AUDIT.md) §1d.
 
 **A backtest return is not a live forecast.** Read [`docs/BACKTEST_INTEGRITY.md`](docs/BACKTEST_INTEGRITY.md) before quoting any number here — it documents what the simulation still cannot represent, including that `build_ladder` synthesises its own quotes rather than replaying a recorded book.
 
