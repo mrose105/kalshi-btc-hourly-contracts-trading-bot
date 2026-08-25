@@ -24,17 +24,58 @@ from .config import (
 # priority list as parameters that still need a real out-of-sample sweep —
 # fixed pre-emptively so that future sweep doesn't silently no-op the same way.
 
-def _clustered(ticker: str, strike: float, existing: dict) -> bool:
+def _cluster_dist(contract: dict | None = None) -> float:
+    """Minimum strike separation, adapted to the grid Kalshi actually listed.
+
+    Kalshi does not always list the hourly on a 100-wide grid. Measured over
+    ~700k recorded market-observations, 97% of bands are 100 wide but 3% are
+    250 — and it varies by WINDOW, not by time to expiry: 26AUG2514/15/16 were
+    each 186 markets at 100 wide, while 26AUG2517 was 78 markets at 250 wide
+    for its whole life, from 4 hours out to expiry. Coverage is held roughly
+    constant (186x100 ~ 78x250 ~ $19k) and the grid is chosen per window.
+
+    A fixed 150 is 1.5 bands on the 100 grid — it blocks the adjacent strike,
+    which is the entire point. On a 250 grid adjacent strikes are 250 apart, so
+    150 can NEVER fire and the control silently disappears. That is the exact
+    failure it was added for: 2026-07-07, four RANGE positions opened within
+    two minutes on adjacent strikes (62550-62850), then one breakout busted all
+    four at once and filled every slot with dead positions.
+
+    So this gate scales with band width, because its job is "which band in the
+    ladder", not "how far will spot travel". The sigma-based distance gates
+    (BOUNDARY_NO_OTM_*, BOUNDARY_RISK_DIST, TIME_EXIT_NEAR_DIST) deliberately
+    stay in dollars: a $250 move is a $250 move whatever grid it is priced on,
+    and scaling those would change the risk profile rather than relabel it.
+
+    Falls back to the configured constant when the contract carries no band
+    geometry, so nothing changes for callers that never had it.
+    """
+    base = STRIKE_CLUSTER_DIST
+    if not contract:
+        return base
+    lo, hi = contract.get("low"), contract.get("high")
+    if lo is None or hi is None:
+        return base
+    width = abs(float(hi) - float(lo))
+    if width <= 0:
+        return base
+    # 1.5 x width reproduces the calibrated 150 exactly on the 100 grid.
+    return max(base, 1.5 * width)
+
+
+def _clustered(ticker: str, strike: float, existing: dict,
+               contract: dict | None = None) -> bool:
     """True if `ticker` (in the same expiry window, i.e. same ticker prefix
-    minus the strike suffix) has a strike within STRIKE_CLUSTER_DIST of an
+    minus the strike suffix) has a strike within the cluster distance of an
     already-open position. Prevents filling every MAX_POSITIONS slot with
     correlated same-direction bets that a single BTC move busts together."""
+    limit = _cluster_dist(contract)
     exp_key = ticker.rsplit("-", 1)[0]
     for tk, pos in existing.items():
         if tk.rsplit("-", 1)[0] != exp_key:
             continue
         other_strike = pos["contract"].get("strike", 0)
-        if abs(other_strike - strike) < STRIKE_CLUSTER_DIST:
+        if abs(other_strike - strike) < limit:
             return True
     return False
 
@@ -86,7 +127,7 @@ class SignalEngine:
         for c in ladder:
             if c["ticker"] in existing:
                 continue
-            if _clustered(c["ticker"], c["strike"], existing):
+            if _clustered(c["ticker"], c["strike"], existing, c):
                 continue
             if c["hours"] < MIN_HOURS or c["hours"] > MAX_HOURS:
                 continue
@@ -188,7 +229,7 @@ class SignalEngine:
         for c in ladder:
             if c["ticker"] in existing:
                 continue
-            if _clustered(c["ticker"], c["strike"], existing):
+            if _clustered(c["ticker"], c["strike"], existing, c):
                 continue
             if c["hours"] < MIN_HOURS or c["hours"] > MAX_HOURS:
                 continue
@@ -233,7 +274,7 @@ class SignalEngine:
         for c in ladder:
             if c["ticker"] in existing:
                 continue
-            if _clustered(c["ticker"], c["strike"], existing):
+            if _clustered(c["ticker"], c["strike"], existing, c):
                 continue
             if c["hours"] < NO_HOURS_MIN or c["hours"] > NO_HOURS_MAX:
                 continue
@@ -322,7 +363,7 @@ class SignalEngine:
         for c in ladder:
             if c["ticker"] in existing:
                 continue
-            if _clustered(c["ticker"], c["strike"], existing):
+            if _clustered(c["ticker"], c["strike"], existing, c):
                 continue
             if c["hours"] < BOUNDARY_NO_HOURS_MIN or c["hours"] > BOUNDARY_NO_HOURS_MAX:
                 continue
