@@ -1,20 +1,62 @@
 # Kalshi BTC Hourly Contracts Trading Bot
 
-A live quantitative trading bot for Kalshi's KXBTC hourly binary event markets.
+**A premium-selling strategy adapted to prediction markets.**
 
-**What actually runs today** is a single strategy: `BOUNDARY_NO` — a
-mean-reversion premium collector. When BTC sits at a range extreme
-(|z| ≥ 1.40) the market overprices continuation, so the bot buys NO on the
-out-of-the-money band in the breakout direction, inside the final 15 minutes,
-and exits on `edge_gone`, a 40% stop, or settlement. `ENABLE_YES` and
-`ENABLE_SNIPE` are **off**; the vol-compression YES thesis described further
-down is documented history, not live behaviour, and lost -$413 and -$670 in the
-real trade log.
+This is short-tail options selling expressed in binary event contracts. On
+Kalshi's hourly BTC markets there is no option chain to short — you cannot sell
+what you do not own — so the position is taken by *buying the NO side* of an
+out-of-the-money band, which is economically the same trade: you are paid now
+for the claim that BTC will not be in that band at expiry.
 
-**Status: paper.** `PAPER_TRADING = True`. Three of the shipped entry features
-— watchlist entry, the lag filter, and the 15-minute window — are measured on
-samples of n=11 to n=27 and are gated by tests that refuse to let them run
-against the real account. See "Risk Profile" for what that sample size means.
+Read it as selling a far-OTM strangle leg and holding it into expiry:
+
+| options | this bot |
+|---|---|
+| sell an OTM option, collect premium | buy NO on an OTM band at ~$0.81 |
+| premium collected | $1.00 − $0.81 = **$0.19** |
+| max loss | the $0.81 at risk |
+| strike | the band's `[lo, hi)` edge |
+| assignment | spot settles inside the band |
+| theta | the 15-minute window — time passing *is* the return |
+| sell into elevated fear | enter at \|z\| ≥ 1.40, where continuation is overpriced |
+
+Everything that follows in this README is a consequence of that payoff shape,
+so it is worth stating the defining number up front:
+
+> **Break-even win rate equals the entry cost.** At $0.81 you must be right
+> **81%** of the time to break even. Measured across 41 settlement-resolved
+> signals, the win rate is **80%**.
+
+That is the whole strategy in one line. It is the classic short-premium
+profile — a high hit rate, a small win, and a rare loss that erases several
+wins — and it sits *directly on* its own break-even. There is no comfortable
+margin, which is why this repo is obsessive about fees, spread, and entry
+price: a 2¢ worse fill moves break-even more than most edges are worth.
+
+The corollary is a rule this codebase enforces everywhere: **cheaper entry is
+the only lever that widens the margin, and it is not free.** Waiting for a
+discount lowers break-even and lowers the win rate at the same time — see
+"Risk Profile" and `docs/CONFIG_RATIONALE.md#watchlist_entry_dip` for what
+happened when that was measured.
+
+## What actually runs
+
+One strategy: `BOUNDARY_NO`. When BTC sits at a range extreme (|z| ≥ 1.40) in a
+RANGING or REVERTING regime, the market overprices continuation, so the bot
+buys NO on the out-of-the-money band in the breakout direction inside the final
+15 minutes, and exits on `edge_gone`, a 40% stop, or settlement.
+
+`ENABLE_YES` and `ENABLE_SNIPE` are **off**. The vol-compression YES thesis
+described further down is documented history, not live behaviour, and lost
+-$413 and -$670 in the real trade log. Note the direction: those lanes *bought*
+premium. This one sells it.
+
+**Status: paper.** `PAPER_TRADING = True`, and paper fills walk the real Kalshi
+order book rather than filling at a quoted price, so depth and partial fills
+are live even though the money is not. Several shipped entry features are
+measured on samples of n=11 to n=41 and are gated by tests that refuse to let
+them run against the real account. See "Risk Profile" for what that sample size
+means, and read it before quoting any figure here.
 
 ---
 
@@ -29,7 +71,7 @@ against the real account. See "Risk Profile" for what that sample size means.
 > regression check on the simulator, not as evidence about live performance.
 > See `docs/BACKTEST_INTEGRITY.md` before quoting any of it.
 >
-> **Known parity gaps, open as of 2026-08-24:**
+> **Known parity gaps, open as of 2026-08-25:**
 > `BacktestPortfolio` is a separate class from the live `Portfolio`. Fees are
 > charged in both (pinned by `test_fee_parity.py`), but these live-only
 > features have **no backtest implementation**: delayed entry, watchlist entry,
@@ -38,8 +80,10 @@ against the real account. See "Risk Profile" for what that sample size means.
 > measurement anyway, but it means the two paths are not the same code and
 > nothing automatically catches them drifting apart.
 > Also open: `spx_vol_calibration.py` is cited by `instrument.py` but does not
-> exist, and the SPX distance constants are still BTC values scaled by the
-> 0.0857 σ ratio rather than calibrated.
+> exist; the SPX distance constants are still BTC values scaled by the
+> 0.0857 σ ratio rather than calibrated; and `ladder.py` still uses
+> `from .config import (...)`, the frozen-import pattern with a documented
+> bug history here — runtime config changes never reach it.
 >
 > **And the YES lanes disagree with reality.** The +108% row below is the YES
 > and snipe lanes; the real trade log has them at **-$413.00 over 155 trades
@@ -236,7 +280,24 @@ BOUNDARY_NO selection that passes the **current** gate set on recorded
 universe data, each one resolved by where spot actually settled against its
 `[lo, hi)` band, with the Kalshi taker fee charged.
 
-**The sample is eleven trades.**
+> **Superseded, and the direction of the revision matters.** The tables below
+> are the 2026-08-23 run on **11** signals over 6 days. Re-measured 2026-08-25
+> across 7 days — **41 signals over 33 expiries** — the same policy comes out
+> at **-3.4% mean ROC** (expiry-clustered 95% CI [-17.4%, +10.5%], P(ROC>0) =
+> 32%) at an 80% win rate and $0.814 mean cost. The Monte Carlo below is
+> retained because its *shape* is the lesson — see the asymmetry note — but its
+> sign came from a sample four times too small.
+>
+> **The dip policy is worse, not better.** On the same 41-signal set, waiting
+> for a 5% discount fills 21 times at $0.690 for **-15.4%**, and at an
+> execution price 2¢ worse than the ladder (the measured decision-to-quote
+> drift) it fills 17 times for **-27.0%**, P(ROC>0) = 6%. Cost falls 11 points
+> exactly as intended — and the win rate falls **18**, from 80% to 53%, through
+> the 69% break-even a $0.69 entry needs. That is the same result that killed
+> scale-in and dip-adding: **the discount arrives on the contracts that are
+> about to lose.** Three independent confirmations now.
+
+**The original sample was eleven trades.**
 
 | per-trade, on capital at risk | |
 |---|---:|
