@@ -137,7 +137,23 @@ class Ladder:
                 if ya <= 0 or yb <= 0 or vol < MIN_VOLUME or ya > MAX_ASK:
                     continue
                 spread = ya - yb
-                if spread > MAX_SPREAD or spread / ya > MAX_SPREAD_PCT:
+                # The ladder feeds BOTH lanes, so it must not judge a row on one
+                # leg's economics. The dollar spread is the same either way, but
+                # a YES buyer risks ya while a NO buyer risks 1 - yb, and those
+                # differ wildly: yes 0.15/0.20 is 25% of the YES ask but 6% of
+                # the 0.85 NO cost. Filtering on ya alone dropped rows that were
+                # cheap to trade as NO — which, with ENABLE_YES off, is every row
+                # this bot actually uses. Keep a row if EITHER leg is tradeable;
+                # buy()/buy_no() then apply that lane's own test at execution.
+                #
+                # Cent-precision: float subtraction makes an exact 5c spread
+                # compare as 0.050000000000000044 for some cent pairs and
+                # 0.04999999999999999 for others, so 41% of the 95 possible 5c
+                # spreads were wrongly rejected. See portfolio.py.
+                _no_cost = 1.0 - yb
+                _yes_pct = spread / ya if ya > 0 else 1.0
+                _no_pct = spread / _no_cost if _no_cost > 0 else 1.0
+                if round(min(_yes_pct, _no_pct), 9) > MAX_SPREAD_PCT:
                     continue
                 # Pass the market payload so geometry comes from the exchange's
                 # floor/cap strikes rather than being guessed from the ticker.

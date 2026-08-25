@@ -255,6 +255,75 @@ def test_zero_true_prob_is_still_rejected_on_the_watchlist_path():
         assert ok is False, "true_prob=0 must never buy"
 
 
+# ---------------------------------------------------------------------------
+# THE SPREAD GATE, found live 2026-08-25 killing a -25.3% watchlist fill with
+#   "spread $0.050 (15%) over MAX_SPREAD $0.05/25%"
+# Two separate defects in one line: float precision, and measuring the spread
+# against the wrong leg.
+# ---------------------------------------------------------------------------
+
+
+def test_an_exact_five_cent_spread_is_not_a_float_coin_flip():
+    """0.33-0.28 = 0.050000000000000044; 0.38-0.33 = 0.04999999999999999.
+
+    Same five cents, opposite verdicts against a 0.05 bar. 41% of the 95
+    possible 5c spreads landed on the wrong side.
+    """
+    wrong = [(i / 100.0, (i + 5) / 100.0) for i in range(1, 96)
+             if ((i + 5) / 100.0 - i / 100.0) > 0.05]
+    assert wrong, "fixture assumption broken — no float error to guard against"
+    for b, a in wrong:
+        assert round(a - b, 9) <= 0.05, f"{b}/{a} still mis-compares"
+
+
+def test_no_path_measures_spread_against_the_no_cost():
+    """THE BUG. A NO buyer risks 1-yes_bid, not yes_ask.
+
+    yes 0.15/0.20 is a 25% spread on the YES ask but 6% of the 0.85 NO cost.
+    The old gate rejected hardest exactly where trading is cheapest.
+    """
+    with _paper_portfolio() as portfolio_module:
+        p = portfolio_module.Portfolio(client=None)
+        p.sync()
+        _bid, _ask = 0.15, 0.20           # 5c: 25% of yes_ask, 5.9% of NO cost
+        _tp = 0.05                        # ratio 3.0, net edge 0.10 — both fine
+        p._fresh_quote = lambda tk, attempts=3: (_bid, _ask)
+        reasons = []
+        p._log_reject = lambda tk, why: reasons.append(why)
+        p.buy_no({"ticker": "BTC-TEST-B60000", "signal": "BOUNDARY_NO",
+                  "hours": 0.2, "type": "RANGE", "low": 59950, "high": 60050},
+                 true_prob=_tp)
+        assert "spread" not in " | ".join(reasons).lower(), (
+            f"6% of capital at risk rejected as a 25% spread: {reasons}")
+
+
+def test_a_genuinely_expensive_spread_on_the_no_leg_still_rejects():
+    """PARITY. The fix must not disable the gate — only aim it correctly."""
+    with _paper_portfolio() as portfolio_module:
+        p = portfolio_module.Portfolio(client=None)
+        p.sync()
+        # NO cost 0.30, spread 0.12 -> 40% of capital at risk. Genuinely bad.
+        _bid, _ask = 0.70, 0.82
+        p._fresh_quote = lambda tk, attempts=3: (_bid, _ask)
+        reasons = []
+        p._log_reject = lambda tk, why: reasons.append(why)
+        ok = p.buy_no({"ticker": "BTC-TEST-B60000", "signal": "BOUNDARY_NO",
+                       "hours": 0.2, "type": "RANGE", "low": 59950,
+                       "high": 60050}, true_prob=0.05)
+        assert ok is False
+        assert "spread" in " | ".join(reasons).lower(), reasons
+
+
+def test_ladder_keeps_a_row_that_is_cheap_on_either_leg():
+    """The ladder feeds both lanes, so one leg's economics must not evict a row."""
+    src = open("kalshi_btc_bot/ladder.py").read()
+    body = src.split("spread = ya - yb")[1][:1200]
+    assert "min(_yes_pct, _no_pct)" in body, (
+        "ladder still filters on the YES leg alone — with ENABLE_YES off that "
+        "drops rows the only live lane would happily trade")
+    assert "round(" in body, "ladder spread compare must be cent-precise"
+
+
 def test_paper_buy_no_records_pre_fill_order_values():
     """Paper BUY_NO records attempted size, depth, and actual partial fill."""
     with _paper_portfolio() as portfolio_module:

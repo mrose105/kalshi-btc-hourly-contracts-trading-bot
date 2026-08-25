@@ -558,7 +558,19 @@ class Portfolio:
         if ask <= 0 or bid <= 0 or ask <= bid or ask > _C.MAX_ASK:
             return False
         spread = ask - bid
-        if spread > _C.MAX_SPREAD or spread / ask > _C.MAX_SPREAD_PCT:
+        # Cent precision. Kalshi quotes on a 1c grid but binary float
+        # subtraction does not: 0.33 - 0.28 is 0.050000000000000044 while
+        # 0.38 - 0.33 is 0.04999999999999999. Against MAX_SPREAD = 0.05 a
+        # spread of EXACTLY five cents was therefore accepted or rejected
+        # depending on which cents composed it — 41% of the 95 possible 5c
+        # spreads were wrongly rejected. Observed 2026-08-25 killing a
+        # watchlist fill at a -25.3% discount: "spread $0.050 over MAX_SPREAD
+        # $0.05". Same class as the taker_fee ceil bug (fees.py).
+        #
+        # This is the YES path, where `ask` IS the capital at risk, so both the
+        # absolute and percentage tests are meaningful here. The NO path below
+        # measures against the NO cost instead — see the note there.
+        if round(spread, 9) > _C.MAX_SPREAD or round(spread / ask, 9) > _C.MAX_SPREAD_PCT:
             return False
         p_info = None
         if dist is not None and spot is not None and vol is not None and regime is not None:
@@ -702,9 +714,38 @@ class Portfolio:
             # _fresh_quote already logged the failure reason
             return False
         spread = yes_ask - bid
-        if spread > _C.MAX_SPREAD or spread / yes_ask > _C.MAX_SPREAD_PCT:
-            self._log_reject(ticker, f"spread ${spread:.3f} ({spread/yes_ask:.0%}) "
-                                     f"over MAX_SPREAD ${_C.MAX_SPREAD:.2f}/{_C.MAX_SPREAD_PCT:.0%}")
+        # MEASURE THE SPREAD AGAINST WHAT THIS PATH ACTUALLY PAYS.
+        #
+        # The spread in dollars is identical on both legs (no_ask - no_bid =
+        # yes_ask - yes_bid), but what it COSTS depends on the capital at risk,
+        # and a NO buyer risks 1 - yes_bid, not yes_ask. Dividing by yes_ask
+        # measured the wrong leg — and BOUNDARY_NO targets yes_ask 0.10-0.65 by
+        # construction, so the denominator was always the small one and the
+        # ratio always inflated:
+        #
+        #     yes 0.15/0.20 -> NO cost 0.850, spread 5c = 25% of yes_ask
+        #                                                  6% of what you risk
+        #     yes 0.10/0.14 -> NO cost 0.900, spread 4c = 29% of yes_ask
+        #                                                  4% of what you risk
+        #
+        # So the gate rejected hardest exactly where trading is CHEAPEST: the
+        # high-cost, deep-OTM NOs this strategy is built to buy. An absolute
+        # cent cap has the same defect in a different form — 5c is 6% of an 85c
+        # NO and 33% of a 15c one — so on this path the percentage against the
+        # NO cost is the whole economic test and the absolute cap is dropped.
+        #
+        # Cent precision matters too: float subtraction makes an exact 5c
+        # spread 0.050000000000000044 for some cent pairs and 0.04999999999999999
+        # for others, so 41% of the 95 possible 5c spreads were wrongly
+        # rejected. Observed 2026-08-25 killing a watchlist fill at a -25.3%
+        # discount: "spread $0.050 over MAX_SPREAD $0.05". Same class as the
+        # taker_fee ceil bug (fees.py).
+        no_cost_q = 1.0 - bid
+        spread_pct = spread / no_cost_q if no_cost_q > 0 else 1.0
+        if round(spread_pct, 9) > _C.MAX_SPREAD_PCT:
+            self._log_reject(ticker, f"spread ${spread:.3f} ({spread_pct:.0%} of "
+                                     f"${no_cost_q:.3f} NO cost) over "
+                                     f"MAX_SPREAD_PCT {_C.MAX_SPREAD_PCT:.0%}")
             return False
         p_info = None
         if dist is not None and spot is not None and vol is not None and regime is not None:
