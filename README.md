@@ -58,6 +58,38 @@ measured on samples of n=11 to n=41 and are gated by tests that refuse to let
 them run against the real account. See "Risk Profile" for what that sample size
 means, and read it before quoting any figure here.
 
+### Currently collecting: signal data alongside the paper trade log
+
+The bot is running to **accumulate data, not to prove a return.** Two distinct
+records are being written in parallel, and they answer different questions:
+
+| record | stream | what only this can answer |
+|---|---|---|
+| **signal data** | `universe` — the *uncensored* ladder, written **before** any filter | which contracts existed, at what price, in what regime — so any gate can be re-evaluated counterfactually against what actually settled |
+| **paper trade log** | `orders`, `marks` | what a real order would have met: book depth at size, partial fills, the drift between the decision price and the executable one |
+
+As of 2026-08-25: **268,000 ladder polls / 47.3M market-observations** across 11
+days of `universe`, 22 days of `quotes` and `books`, 17 days of `orders` and
+`marks` — 90 files, 74 MB, from 2026-07-28.
+
+The signal record is the more valuable of the two and the reason every figure
+on this page is settlement-resolved rather than simulated. Because it is
+recorded pre-filter, a gate can be moved and the entire history re-scored
+against real outcomes — which is how the watchlist policy was measured, how the
+regime gate was shown to block only 15% of signals, and how the band-width
+change was caught.
+
+The paper log covers the gap the signal record cannot: **top-of-book replay
+assumes a fill.** Live paper trading walks the real book, so it is the only
+source for whether size 11 is actually available, how far an order walks, and
+how much the quote moves between decision and execution. Every *rejected* order
+attempt is recorded with the full book, so failures are as informative as fills.
+
+**Do not read P&L from the current run as evidence.** At roughly 20-40 signals
+per week the returns are noise; the fill distribution is the point. `recordings/`
+is gitignored and can never be reconstructed — Kalshi publishes no historical
+order book — so run `./backup_recordings.sh` before the machine sleeps.
+
 ---
 
 ## Backtest Results (60-day walk-forward, re-run 2026-08-24)
@@ -288,14 +320,47 @@ universe data, each one resolved by where spot actually settled against its
 > retained because its *shape* is the lesson — see the asymmetry note — but its
 > sign came from a sample four times too small.
 >
-> **The dip policy is worse, not better.** On the same 41-signal set, waiting
-> for a 5% discount fills 21 times at $0.690 for **-15.4%**, and at an
-> execution price 2¢ worse than the ladder (the measured decision-to-quote
-> drift) it fills 17 times for **-27.0%**, P(ROC>0) = 6%. Cost falls 11 points
-> exactly as intended — and the win rate falls **18**, from 80% to 53%, through
-> the 69% break-even a $0.69 entry needs. That is the same result that killed
-> scale-in and dip-adding: **the discount arrives on the contracts that are
-> about to lose.** Three independent confirmations now.
+> **The dip policy is worse, not better** — but not for the obvious reason, and
+> the full metric set is worth reading rather than the win rate alone:
+>
+> | | buy at arming | watchlist dip 5% |
+> |---|---:|---:|
+> | n / expiries | 41 / 33 | 21 |
+> | win rate | 80% | 62% |
+> | mean cost | $0.814 | $0.690 |
+> | **break-even WR** (= cost) | **81%** | **69%** |
+> | **margin (WR − break-even)** | **−0.9%** | **−7.1%** |
+> | mean ROC | −3.4% | −15.4% |
+> | **median ROC** | **+16.6%** | **+26.6%** |
+> | ROC std dev | 49.3% | 70.7% |
+> | Sharpe (per-sample) | −0.45 | −1.00 |
+> | profit factor | 0.87 | 0.65 |
+> | expectancy / trade | −$0.22 | −$0.95 |
+> | avg win / avg loss | +$1.79 / −$8.47 | +$2.84 / −$7.10 |
+> | win:loss ratio | 0.21 | **0.40** |
+> | max drawdown | −$23.41 | −$29.52 |
+>
+> The dip does exactly what it was designed to: **the payoff ratio nearly
+> doubles**, 0.21 → 0.40, because a cheaper entry wins more and loses less. It
+> is still not enough. `E = WR × avg_win − (1−WR) × avg_loss` gives
+> `0.80×1.79 − 0.20×8.47 = −$0.26` against `0.62×2.84 − 0.38×7.10 = −$0.94`:
+> the win side grows from $1.43 to $1.76, but 18 points of win rate means 90%
+> more losing trades, and each still costs ~7× what a win pays.
+>
+> **Note both medians are positive, and the dip's is higher.** Most individual
+> trades make money; the mean is dragged under by rare total losses. That is
+> the short-premium signature, and it is exactly how this strategy fools you —
+> watch it live and you see mostly winners getting bigger, while the left tail
+> quietly eats the account. Judge it on expectancy and profit factor, never on
+> hit rate or the median trade.
+>
+> At an execution price 2¢ worse than the ladder (the measured decision-to-quote
+> drift) the dip arm fills 17 times for **−27.0%**, P(ROC>0) = 6%.
+>
+> Same result that killed scale-in and dip-adding: **the discount arrives on the
+> contracts that are about to lose.** Three independent confirmations now. The
+> 95% CI on −15.4% is [−45.5%, +14.4%] and does not exclude zero — what makes it
+> convincing is the repetition, not this sample.
 
 **The original sample was eleven trades.**
 
