@@ -164,6 +164,97 @@ def test_live_buy_no_enforces_net_edge():
             f"rejected, but not by the net-edge gate — reasons were: {reasons}")
 
 
+# ---------------------------------------------------------------------------
+# THE RATIO GATE vs THE WATCHLIST, found live 2026-08-25.
+#
+# ratio = bid / true_p, and a dip IS yes_bid falling — so every cent of
+# discount the watchlist waits for lowers the ratio. The gate is
+# anti-correlated with the strategy it guards and can only ever refuse what
+# the watchlist finds. The first fill the watchlist ever produced:
+#
+#   ⏳→📉 WATCHLIST C-26AUG2509-B79150 $0.740 (ref $0.870, -14.9%) true=21%
+#   🚫 skipped — overpricing 1.19x fell under 1.60x (bid $0.240)
+#
+# Selection criteria lock at arming; valuation stays live. These tests pin
+# both halves of that split.
+# ---------------------------------------------------------------------------
+
+
+def _watchlist_contract(**kw):
+    c = {"ticker": "BTC-TEST-B60000", "signal": "BOUNDARY_NO", "hours": 0.2,
+         "type": "RANGE", "low": 59950, "high": 60050, "watchlist_ref": 0.870}
+    c.update(kw)
+    return c
+
+
+def test_watchlist_fill_is_exempt_from_the_ratio_recheck():
+    """THE BUG. A discounted fill must not be refused for being discounted."""
+    with _paper_portfolio() as portfolio_module:
+        p = portfolio_module.Portfolio(client=None)
+        p.sync()
+        # Reproduce the live numbers: ratio 1.19, far under the 1.60 bar, but
+        # net edge comfortably clear so only the ratio gate can reject.
+        _tp = 0.20
+        _bid = 0.28                      # ratio 1.40 < 1.60, net edge 0.08
+        _ask = 0.30
+        assert _bid / _tp < C.BOUNDARY_NO_OVERPRICING_MIN, "fixture must fail the ratio bar"
+        assert _bid - _tp >= C.BOUNDARY_NO_MIN_NET_EDGE, "fixture must clear net edge"
+        assert (_ask - _bid) <= C.MAX_SPREAD, "fixture must clear the spread gate"
+        p._fresh_quote = lambda tk, attempts=3: (_bid, _ask)
+        reasons = []
+        p._log_reject = lambda tk, why: reasons.append(why)
+        ok = p.buy_no(_watchlist_contract(), true_prob=_tp)
+        joined = " | ".join(reasons).lower()
+        assert "overpricing" not in joined, (
+            f"watchlist fill rejected by the ratio gate: {reasons}")
+        assert ok is not False or "overpricing" not in joined
+
+
+def test_a_normal_signal_is_still_held_to_the_ratio_gate():
+    """PARITY. The exemption must be scoped to watchlist fills only."""
+    with _paper_portfolio() as portfolio_module:
+        p = portfolio_module.Portfolio(client=None)
+        p.sync()
+        _tp, _bid, _ask = 0.20, 0.28, 0.30
+        p._fresh_quote = lambda tk, attempts=3: (_bid, _ask)
+        reasons = []
+        p._log_reject = lambda tk, why: reasons.append(why)
+        c = _watchlist_contract()
+        del c["watchlist_ref"]            # an ordinary BOUNDARY_NO signal
+        ok = p.buy_no(c, true_prob=_tp)
+        assert ok is False, "a non-watchlist signal must still face the ratio gate"
+        assert "overpricing" in " | ".join(reasons).lower(), reasons
+
+
+def test_watchlist_fill_still_faces_the_net_edge_gate():
+    """Valuation is NOT locked. Freezing it at arming is how you buy a knife."""
+    with _paper_portfolio() as portfolio_module:
+        p = portfolio_module.Portfolio(client=None)
+        p.sync()
+        # Deeply discounted, but spot walked into the band and true_prob rose:
+        # net edge is now negative. Must still refuse.
+        _tp, _bid, _ask = 0.30, 0.31, 0.33
+        assert _bid - _tp < C.BOUNDARY_NO_MIN_NET_EDGE
+        p._fresh_quote = lambda tk, attempts=3: (_bid, _ask)
+        reasons = []
+        p._log_reject = lambda tk, why: reasons.append(why)
+        ok = p.buy_no(_watchlist_contract(), true_prob=_tp)
+        assert ok is False, "a watchlist fill with no edge left was accepted"
+        assert "net edge" in " | ".join(reasons).lower(), reasons
+
+
+def test_zero_true_prob_is_still_rejected_on_the_watchlist_path():
+    """The exemption must not open a divide-by-zero hole."""
+    with _paper_portfolio() as portfolio_module:
+        p = portfolio_module.Portfolio(client=None)
+        p.sync()
+        p._fresh_quote = lambda tk, attempts=3: (0.28, 0.30)
+        reasons = []
+        p._log_reject = lambda tk, why: reasons.append(why)
+        ok = p.buy_no(_watchlist_contract(), true_prob=0.0)
+        assert ok is False, "true_prob=0 must never buy"
+
+
 def test_paper_buy_no_records_pre_fill_order_values():
     """Paper BUY_NO records attempted size, depth, and actual partial fill."""
     with _paper_portfolio() as portfolio_module:

@@ -723,11 +723,44 @@ class Portfolio:
         # overpricing that justified the fade could be entirely gone and the NO
         # was bought anyway. BOUNDARY_NO carries its own (lower) bar because
         # the z-score extreme supplies independent conviction.
+        # WATCHLIST FILLS ARE EXEMPT FROM THE RATIO RECHECK, and must be.
+        #
+        # The ratio gate is a SELECTION test — it is how a candidate is found.
+        # The watchlist exists because those selection gates going stale IS the
+        # discount: as spot drifts toward the band, true_prob rises, the ratio
+        # collapses, and find_boundary_no stops firing precisely while the
+        # contract gets cheap. Re-imposing the selection gate at execution
+        # undoes the entire feature.
+        #
+        # It is not a close call, it is arithmetic. From the identity below,
+        # ratio = bid / true_p, and a dip IS yes_bid falling. Every cent of
+        # discount the watchlist waits for lowers the ratio. So the deeper the
+        # discount, the more certain this gate rejects it — the gate is
+        # anti-correlated with the strategy it guards, and can only ever refuse
+        # what the watchlist finds.
+        #
+        # Observed 2026-08-25, the first fill the watchlist ever produced:
+        #   ⏳→📉 WATCHLIST C-26AUG2509-B79150 $0.740 (ref $0.870, -14.9%) true=21%
+        #   🚫 skipped — overpricing 1.19x fell under 1.60x (bid $0.240)
+        # A 14.9% discount the model still valued, thrown away for being
+        # discounted. It also made live unable to reproduce the policy that was
+        # measured: the n=14 / +12.0% replay applied no ratio recheck at fill.
+        #
+        # What is NOT exempt is the net-edge check below. That is a VALUATION
+        # test — whether the contract is worth its price at the moment of
+        # buying — and it stays live on the fresh quote. Freezing valuation at
+        # arming time is how you buy a knife: if spot walked into the band,
+        # true_prob genuinely rose and the NO is genuinely worth less. Lock the
+        # selection criteria, never the valuation.
+        _from_watchlist = contract.get("watchlist_ref") is not None
         min_ratio = (_C.BOUNDARY_NO_OVERPRICING_MIN
                      if contract.get("signal") == "BOUNDARY_NO"
                      else _C.NO_OVERPRICING_MIN)
-        if true_prob <= 0 or bid / true_prob < min_ratio:
-            _r = (bid / true_prob) if true_prob > 0 else 0
+        if true_prob <= 0:
+            self._log_reject(ticker, "true_prob <= 0 on the fresh quote")
+            return False
+        if not _from_watchlist and bid / true_prob < min_ratio:
+            _r = bid / true_prob
             self._log_reject(ticker, f"overpricing {_r:.2f}x fell under {min_ratio:.2f}x "
                                      f"on the fresh quote (bid ${bid:.3f})")
             return False
