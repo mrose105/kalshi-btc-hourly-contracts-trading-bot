@@ -13,8 +13,11 @@ Select with the KALSHI_INSTRUMENT env var:
     KALSHI_INSTRUMENT=BTC   (default — byte-identical to pre-instrument behavior)
     KALSHI_INSTRUMENT=SPX
 
-Adding an instrument means measuring its facts, not guessing them. See
-`spx_vol_calibration.py` for how the SPX vol cone below was derived.
+Adding an instrument means measuring its facts, not guessing them. Each
+profile below carries its own derivation inline — what was measured, over what
+window, and what is still a guess. Read those comments before trusting a
+number; the SPX distance constants in particular are NOT measured, they are
+BTC values scaled by a sigma ratio, and say so.
 """
 
 import os
@@ -125,7 +128,9 @@ SPX = Instrument(
     #          MIN_VOLUME filters naturally, and MIN_HOURS/MAX_HOURS confines it
     #          to the afternoon since everything expires at 16:00.
     series=("KXINXU", "KXINX"),
-    # PROVISIONAL — pending live tick-EWMA calibration, see spx_vol_calibration.py.
+    # PROVISIONAL — pending live tick-EWMA calibration. Derived offline from
+    # yfinance bars, not from the bot's own feed, so it is an estimate of the
+    # right order rather than a matched measurement.
     # Derived from 3,005 contiguous 5-minute ^GSPC bars over 2026-06-22..08-17:
     # rolling 1h realized vol ran p1=0.000571 (5.3% ann), p50=0.001792 (16.8%),
     # p99=0.006079 (56.9%), max=0.008076 (75.6%). Floor sits below the observed

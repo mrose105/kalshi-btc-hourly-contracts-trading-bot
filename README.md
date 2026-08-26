@@ -117,11 +117,10 @@ order book — so run `./backup_recordings.sh` before the machine sleeps.
 > against recorded ticks resolved by settlement instead — which is the better
 > measurement anyway, but it means the two paths are not the same code and
 > nothing automatically catches them drifting apart.
-> Also open: `spx_vol_calibration.py` is cited by `instrument.py` but does not
-> exist; the SPX distance constants are still BTC values scaled by the
-> 0.0857 σ ratio rather than calibrated; and `ladder.py` still uses
-> `from .config import (...)`, the frozen-import pattern with a documented
-> bug history here — runtime config changes never reach it.
+> Also open: the SPX distance constants are still BTC values scaled by the
+> 0.0857 σ ratio rather than calibrated, and the SPX vol cone is derived from
+> yfinance bars rather than the bot's own feed. Both say so in
+> `instrument.py`.
 >
 > **And the YES lanes disagree with reality.** The +108% row below is the YES
 > and snipe lanes; the real trade log has them at **-$413.00 over 155 trades

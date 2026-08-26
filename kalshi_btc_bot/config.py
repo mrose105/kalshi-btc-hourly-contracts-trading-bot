@@ -144,7 +144,7 @@ DELAYED_ENTRY_SIGNALS       = ("BOUNDARY_NO", "MISPRICE_NO")
 # ---------------------------------------------------------------------------
 # Watchlist entry — arm strict, fill on the MODEL's valuation
 # ---------------------------------------------------------------------------
-WATCHLIST_ENTRY_DIP         = 0.05                             # docs/CONFIG_RATIONALE.md#watchlist_entry_dip
+WATCHLIST_ENTRY_DIP         = 0.0                              # OFF — every dip level measured worse  → docs/CONFIG_RATIONALE.md#watchlist_entry_dip
 WATCHLIST_ENTRY_NET_EDGE    = 0.05
 
 # Regime

@@ -892,37 +892,47 @@ permanently inert. Setting BOTH to 0.0 is the real off switch.
 
 ## WATCHLIST_ENTRY_DIP
 
-0.0 = OFF = current behaviour, buy at the moment the signal arms.
-The problem this addresses: 256 of 257 signalled contracts (100%) drew down
-after entry, median MAE -13.6% vs MFE +4.6%. The gate fires on
-yes_bid/true_prob being high, which means NO is CHEAP — and it keeps getting
-cheaper. The bot buys the start of a repricing.
-Why the earlier delayed-entry attempt could not capture that: it required the
-signal to RE-FIRE at the dipped price. But the gates going stale IS the
-discount. As spot drifts toward the band, true_prob rises, the overpricing
-ratio collapses, and the signal stops firing exactly while the contract gets
-cheap. Reachable discount under "must still qualify": median 2.2%. Under the
-model's valuation alone: ~16%.
-So: arm on the FULL gate set, then fill only when
-1. price has dipped WATCHLIST_ENTRY_DIP below the arming cost, AND
-2. the model still values NO above that price by WATCHLIST_ENTRY_NET_EDGE.
-Measured 2026-08-23, settlement-resolved, net of fees @14 lots, 15-min
-window, ARMING ON THE POSTERIOR exactly as find_boundary_no does:
-policy                          n    WR    cost      ROC   VALID  P(>0)
-buy at arming (live)          110   80%  $0.803   -1.7%   -0.2%     --
-dip  5%, fill on posterior     14   79%  $0.689  +12.0%  +26.2%    79%
-dip 10%, fill on posterior     10   70%  $0.632   +8.2%     n<6    65%
-dip 15%, fill on posterior      9   67%  $0.603   +7.7%     n<6    65%
-Win rate falls 80% -> 79% while cost falls $0.803 -> $0.689, so break-even
-drops 11pp for a 1pp hit rate cost. That is the whole mechanism.
-A CORRECTION WORTH KEEPING. An earlier run of this measured +4.9% at n=39 and
-used the raw prior to ARM as well as to fill. Live arms on the posterior.
-Re-armed correctly the sample collapses from 39 to 14 — so the n=39 figure
-never described the live system. The fill pricer barely matters (+12.9% prior
-vs +12.0% posterior); the ARMING pricer changes everything.
-NOT AN ESTABLISHED EDGE, and shipped at the measured setting only because it
-is a paper measurement. n=14 across 14 expiries and 6 days, P(ROC>0) = 79%.
-That is 14 trades. Judge it on days this grid search never saw, not on this.
+**0.0 — OFF as of 2026-08-26.**
+
+The idea was that a cheaper entry lowers break-even, so waiting for a dip
+should widen a margin that has none. It does lower break-even. It lowers the
+win rate faster.
+
+Swept over 41 settlement-resolved armings, 33 expiries, fees charged,
+expiry-clustered split:
+
+     dip |  n   WR    cost      ROC    PF |    TUNE    VALID
+    0.0% | 41  80%  $0.814    -3.4%  0.87 |   -8.4%    +0.0%
+    2.5% | 25  68%  $0.725   -10.6%  0.72 |  -21.3%    -2.2%
+    5.0% | 21  62%  $0.690   -15.4%  0.65 |  -36.0%    -2.7%
+    7.5% | 18  56%  $0.668   -21.2%  0.55 |  -43.7%    -6.9%
+   10.0% | 18  56%  $0.660   -20.1%  0.58 |  -40.7%    -7.0%
+   12.5% | 15  47%  $0.613   -26.0%  0.51 |  -40.9%   -13.0%
+   15.0% | 13  38%  $0.586   -35.6%  0.41 |  -54.2%   -19.8%
+   20.0% | 11  36%  $0.545   -33.9%  0.45 |  -72.9%    -1.3%
+   25.0% |  9  33%  $0.513   -35.5%  0.45 | -103.6%   +19.0%
+   30.0% |  6  33%  $0.495   -38.3%  0.47 | -103.8%   +27.2%
+
+Monotonic. No level is positive on both halves. The apparent winners at
+25-30% are n=3-5 against a TUNE of -103%.
+
+WHY IT FAILS, which is the part worth keeping: the discount is not free
+information. It arrives on the contracts that were going to lose anyway. Cost
+falls 11 points and the win rate falls 18, straight through the 69% break-even
+a $0.69 entry needs.
+
+This is the THIRD independent confirmation of the same effect. Scale-in was
+rejected for it (P(win) decaying monotonically with dip depth, 67% -> 36% at
+-30%). Dip-adding was rejected for it. Now the watchlist. Treat "buy it
+cheaper" as a known-dead direction on this instrument unless something
+genuinely new is measured.
+
+An earlier run measured +12.0% at n=14 over 6 days and is superseded. It armed
+on a different pricer and covered a shorter window; 7 days and n=21 give
+-15.4%.
+
+Note it also spent its entire life inert before this — arming was gated behind
+DELAYED_ENTRY_DIP, so nothing was ever queued. See `pending.py::_arming_on`.
 
 ## LAG_FILTER_SECS
 
