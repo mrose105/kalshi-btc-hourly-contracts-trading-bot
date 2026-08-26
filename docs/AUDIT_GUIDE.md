@@ -94,10 +94,9 @@ tails, `df=3`), then blended with the market's own implied probability. That
 blend matters more than it looks — the model on its own is *worse* than the
 market price, so the market is doing real work inside that number.
 
-**5. Wait, maybe.** `pending.py`. Instead of buying immediately, the contract
-gets "armed" and only bought later if the price drops 5% and the model still
-likes it. **The measurements say this makes things worse and it should probably
-be off.** It's still on. Section 4.
+**5. Buy it now.** `pending.py` can hold a contract back and wait for a
+cheaper price, but that's switched off — every dip level measured worse than
+not waiting. Section 4.
 
 **6. Actually buy.** `portfolio.py::buy_no()` re-fetches a fresh quote,
 re-checks the edge, walks the real order book for depth, and places an
@@ -158,12 +157,13 @@ itself was fit on half the data and lost on the other half. If there's an edge
 here it needs information the price doesn't already contain — cross-venue
 timing, order flow, something structural. Not a better distribution.
 
-**The wait-for-a-dip feature is probably harmful and is still on.** Every dip
-level tested is worse than not waiting, and it gets monotonically worse the
-deeper you go — win rate falls from 80% to 33%. Three separate attempts at
-variations of "buy it cheaper" have reached the same conclusion: the discount
-shows up on the contracts that were going to lose anyway. It's still on because
-the live run is being used to collect fill data, not because it's defensible.
+**"Buy it cheaper" is a dead end, and I'd like someone to tell me why.** Every
+dip level measured worse than not waiting, monotonically — win rate falls from
+80% to 33% as the discount deepens. Three separate attempts at variations of
+this (scale-in, dip-adding, the watchlist) reached the same result on separate
+samples: the discount arrives on the contracts that were going to lose anyway.
+Switched off now. But cheaper entry is the *only* lever that widens a margin
+this thin, so if there's a version of it that works I haven't found it.
 
 **The exit changes are new and thinly evidenced.** I gated the thesis-exit and
 tightened the stop two days ago. 41 trades, confidence interval still touching
@@ -185,8 +185,18 @@ the exit logic was performing *worse* than just holding.
 
 **Band width isn't constant and the code mostly assumes it is.** Most hourly
 bands are $100 wide, ~3% are $250, and it varies hour to hour. One gate now
-scales with it. The others are still fixed dollar amounts on purpose — that
-call deserves a second look.
+scales with it. The others are deliberately still fixed dollar amounts — the
+reasoning is that "will spot move $250" is a volatility question and shouldn't
+change just because Kalshi drew the grid differently. That's a judgement call
+and worth arguing with.
+
+**The config-freezing bug was worse than I thought when I wrote this.** Eleven
+settings across five modules were bound at import, so any sweep against them
+silently did nothing. Fixed, and `test_frozen_config.py` now scans for it
+automatically — it found one more within a minute of being written. Checked
+rather than assumed: no past sweep went through those modules, so no earlier
+conclusion is void. But that's the kind of thing where I'd rather have a second
+pair of eyes than my own reassurance.
 
 ---
 
@@ -197,10 +207,12 @@ how the system is put together. Every one produced a confident number that was
 wrong and got past review at the time.
 
 **1. Config changes that don't change anything.** `from .config import X` copies
-the value once, at import. A sweep that sets `C.X` later never reaches it. A
-seven-value threshold sweep once produced seven identical results because none
-of them took effect. Read settings as `_C.X`.
-*Still wrong in `ladder.py`.*
+the value once, at import. A sweep that sets `C.X` later never reaches it — the
+code keeps working, but the tooling silently lies, and a sweep that never varied
+anything looks like a finished experiment saying "this parameter doesn't
+matter". A seven-value threshold sweep once produced seven identical results.
+Found and fixed three separate times before someone finally counted: eleven
+settings across five modules. `test_frozen_config.py` now checks for it.
 
 **2. A feature that's on but can't run.** `WATCHLIST_ENTRY_DIP` was set to 0.05
 so it looked live, but the code that arms it sat behind a different flag set to
