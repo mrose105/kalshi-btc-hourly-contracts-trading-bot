@@ -8,13 +8,11 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 from kalshi_es_analysis import KalshiClient
 
+from . import config as _C
 from .config import (
-    MAX_EXPOSURE_PCT, MAX_TRADE_PCT, NO_TRADE_PCT,
-    ENABLE_BOUNDARY_NO, ENABLE_MISPRICE_NO, ENABLE_SNIPE, ENABLE_YES,
-    NO_EXEMPT_FROM_COOLDOWN,
-    PAPER_TRADING,
-    POSITION_CHECK, PRICE_FETCH, SCAN_INTERVAL, SYNC_INTERVAL,
-    RECORD_BOOK_INTERVAL,
+    MAX_EXPOSURE_PCT, NO_TRADE_PCT, ENABLE_BOUNDARY_NO, ENABLE_MISPRICE_NO,
+    ENABLE_SNIPE, ENABLE_YES, NO_EXEMPT_FROM_COOLDOWN, POSITION_CHECK,
+    PRICE_FETCH, SCAN_INTERVAL, SYNC_INTERVAL, RECORD_BOOK_INTERVAL,
 )
 from .feed import SLOW_BARS
 from .instrument import ACTIVE as INSTRUMENT, make_feed
@@ -38,7 +36,7 @@ def main():
     ) if on]
     print("="*62)
     print("  🧠 KALSHI BTC QUANT v5.0")
-    print(f"  Sizing: {MAX_TRADE_PCT:.1%}/trade | Max exposure: {MAX_EXPOSURE_PCT:.0%} | "
+    print(f"  Sizing: {_C.MAX_TRADE_PCT:.1%}/trade | Max exposure: {MAX_EXPOSURE_PCT:.0%} | "
           f"NO sizing: {NO_TRADE_PCT:.1%}")
     print(f"  Signals: {' + '.join(signals_on)}")
     print(f"  YES exits: gamma_lock · peak_giveback · scalp · momentum · "
@@ -108,7 +106,7 @@ def main():
         feed.fetch()
 
     def sync_step():
-        if PAPER_TRADING:
+        if _C.PAPER_TRADING:
             # Mark-to-market, not cost basis — see Portfolio.market_value().
             # exposure() here made paper equity blind to unrealized loss, so the
             # SESSION_STOP_PCT drawdown breaker could not fire in the one mode

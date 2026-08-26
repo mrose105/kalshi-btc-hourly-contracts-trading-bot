@@ -74,7 +74,7 @@ def _ensure_log_schema() -> None:
 # and friends did vary what they claimed to vary. This closes a latent trap for
 # anything that sweeps against the LIVE portfolio, which nothing does yet.
 from . import config as _C
-from .config import PAPER_CAPITAL, PAPER_TRADING
+from .config import PAPER_CAPITAL
 from .fees import taker_fee
 from . import live_view
 from . import recorder
@@ -129,7 +129,7 @@ class Portfolio:
             "pnl":          round(pnl, 4) if pnl is not None else "",
             "peak_pnl_pct": round(peak_pnl_pct, 4) if peak_pnl_pct is not None else "",
             "reason":       reason,
-            "mode":         "paper" if PAPER_TRADING else "live",
+            "mode":         "paper" if _C.PAPER_TRADING else "live",
         }
         with open(_LOG_PATH, "a", newline="") as f:
             csv.DictWriter(f, fieldnames=_LOG_FIELDS).writerow(row)
@@ -173,7 +173,7 @@ class Portfolio:
                   f"${prev:.2f} → ${self.peak_total:.2f}")
 
     def sync(self):
-        if PAPER_TRADING:
+        if _C.PAPER_TRADING:
             with self.lock:
                 if self.start_total == 0.0:
                     self.real_cash   = PAPER_CAPITAL
@@ -242,7 +242,7 @@ class Portfolio:
             print(f"  🛑 Cash floor (${self.real_cash:.2f})")
             return False
         if (
-            not PAPER_TRADING
+            not _C.PAPER_TRADING
             and not self.positions
             and self.real_port > _C.UNTRACKED_EXPOSURE_LIMIT
         ):
@@ -283,7 +283,7 @@ class Portfolio:
         return max(0, min(max_trade, self.real_cash, exposure_room))
 
     def live_positions(self) -> list[dict]:
-        if PAPER_TRADING:
+        if _C.PAPER_TRADING:
             return []
         data = self.client._request("GET", "/portfolio/positions", params={"limit": 100})
         positions = []
@@ -295,7 +295,7 @@ class Portfolio:
         return positions
 
     def cancel_resting_orders(self) -> int:
-        if PAPER_TRADING:
+        if _C.PAPER_TRADING:
             return 0
         try:
             data = self.client._request("GET", "/portfolio/orders", params={"status": "resting"})
@@ -317,7 +317,7 @@ class Portfolio:
         return canceled
 
     def startup_safety_check(self) -> bool:
-        if PAPER_TRADING:
+        if _C.PAPER_TRADING:
             return True
         self.cancel_resting_orders()
         positions = self.live_positions()
@@ -583,7 +583,7 @@ class Portfolio:
             return False
         limit = ask
 
-        no_levels = self._orderbook(ticker)["no"] if PAPER_TRADING else []
+        no_levels = self._orderbook(ticker)["no"] if _C.PAPER_TRADING else []
 
         with self.lock:
             if ticker in self.positions:
@@ -608,7 +608,7 @@ class Portfolio:
                 return False
             wanted = count
 
-            if PAPER_TRADING:
+            if _C.PAPER_TRADING:
                 # Cap the fill to real resting depth (buying YES matches NO bids,
                 # effective yes price = 1 - no_price) instead of assuming the
                 # full Kelly-sized count fills at the flat quoted ask.
@@ -632,7 +632,7 @@ class Portfolio:
                 self.real_cash -= cost + (taker_fee(filled, fill_price)
                                           if _C.CHARGE_FEES else 0.0)
 
-        if not PAPER_TRADING:
+        if not _C.PAPER_TRADING:
             try:
                 result = self.client._request(
                     "POST",
@@ -690,7 +690,7 @@ class Portfolio:
             }
         edge     = true_prob - ask
         itm_str  = "✅ITM" if contract["itm"] else ("❌OTM " + str(round(contract["otm_dist"])))
-        mode     = "[PAPER] " if PAPER_TRADING else ""
+        mode     = "[PAPER] " if _C.PAPER_TRADING else ""
         tag      = "🎯SNIPE " if is_snipe else ""
         if live_view.ENABLED:
             live_view.log_trade(
@@ -844,7 +844,7 @@ class Portfolio:
         no_cost = 1.0 - bid                      # NO ask — what a buy actually costs
         no_bid  = 1.0 - yes_ask                  # NO bid — for reference/logging
 
-        yes_levels = self._orderbook(ticker)["yes"] if PAPER_TRADING else []
+        yes_levels = self._orderbook(ticker)["yes"] if _C.PAPER_TRADING else []
 
         with self.lock:
             if ticker in self.positions:
@@ -867,7 +867,7 @@ class Portfolio:
                 return False
             wanted = count
 
-            if PAPER_TRADING:
+            if _C.PAPER_TRADING:
                 # Buying NO matches resting YES bids (effective no price = 1 - yes_price).
                 filled, fill_price = self._walk_book(
                     yes_levels, count, transform=lambda p: 100 - p,
@@ -891,7 +891,7 @@ class Portfolio:
                 self.real_cash -= cost + (taker_fee(filled, fill_price)
                                           if _C.CHARGE_FEES else 0.0)
 
-        if not PAPER_TRADING:
+        if not _C.PAPER_TRADING:
             try:
                 result = self.client._request(
                     "POST",
@@ -936,7 +936,7 @@ class Portfolio:
                 "opened":         time.time(),
                 "is_no":          True,
             }
-        mode = "[PAPER] " if PAPER_TRADING else ""
+        mode = "[PAPER] " if _C.PAPER_TRADING else ""
         sig  = contract.get("signal", "MISPRICE_NO")
         if live_view.ENABLED:
             live_view.log_trade(
@@ -1002,7 +1002,7 @@ class Portfolio:
             requested = count
             is_no = pos.get("is_no", False)
 
-            if not PAPER_TRADING:
+            if not _C.PAPER_TRADING:
                 now = time.time()
                 last_attempt = pos.get("last_exit_attempt", 0)
                 if now - last_attempt < _C.EXIT_RETRY_COOLDOWN:
@@ -1019,7 +1019,7 @@ class Portfolio:
             if fresh_exit > bid:
                 bid = fresh_exit
 
-        if PAPER_TRADING:
+        if _C.PAPER_TRADING:
             # Closing a YES long matches resting YES bids directly (no price
             # transform); closing a NO long matches resting NO bids directly.
             levels = self._orderbook(ticker)["no" if is_no else "yes"]
@@ -1048,7 +1048,7 @@ class Portfolio:
                 self.real_cash += bid * count - (taker_fee(count, bid)
                                                  if _C.CHARGE_FEES else 0.0)
 
-        if not PAPER_TRADING:
+        if not _C.PAPER_TRADING:
             filled_count = 0
             proceeds  = 0.0
             side      = "no" if is_no else "yes"
@@ -1130,7 +1130,7 @@ class Portfolio:
         self.realized_pnl += pnl
 
         emoji = "✅" if pnl > 0 else "❌"
-        mode  = "[PAPER] " if PAPER_TRADING else ""
+        mode  = "[PAPER] " if _C.PAPER_TRADING else ""
         if live_view.ENABLED:
             live_view.log_trade(
                 f"📤 SELL {emoji} [{reason.strip():18}] {ticker[-18:]} "
@@ -1203,11 +1203,11 @@ class Portfolio:
             return
         total    = self.total_value()
         pnl      = total - self.start_total if self.start_total > 0 else 0
-        mode_tag = "📝 PAPER MODE" if PAPER_TRADING else "🔴 LIVE TRADING"
+        mode_tag = "📝 PAPER MODE" if _C.PAPER_TRADING else "🔴 LIVE TRADING"
         print(f"\n{'═'*62}")
         print(f"  💰 BTC QUANT v5.0 | {datetime.datetime.now().strftime('%H:%M:%S')} | {mode_tag}")
         print(f"{'─'*62}")
-        label = "Simulated" if PAPER_TRADING else "Real"
+        label = "Simulated" if _C.PAPER_TRADING else "Real"
         print(f"  Cash ({label}): ${self.real_cash:>7.2f} | Positions:     ${self.exposure():>7.2f}")
         pct = (pnl/self.start_total*100) if self.start_total > 0 else 0.0
         print(f"  Total:        ${total:>7.2f} | P&L:          ${pnl:>+7.2f} ({pct:>+.1f}%)")

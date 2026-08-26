@@ -12,15 +12,13 @@ def _hours_from(close_time: str) -> float:
 from .config import (
     BID_EXIT_THRESHOLD, BOUNDARY_RISK_DIST, BOUNDARY_RISK_HARD_STOP,
     BOUNDARY_RISK_MIN_LOSS, BOUNDARY_RISK_MINS, GAMMA_HIGH_THRESHOLD,
-    GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT,
-    NO_EDGE_GONE_RATIO, NO_PROFIT_CAPTURE, NO_STOP, NO_TIME_PROFIT,
-    MOMENTUM_LOCK_PCT, PAPER_TRADING, PEAK_GIVEBACK_FRACTION,
-    PEAK_GIVEBACK_HARD_LOSS_PCT, PEAK_GIVEBACK_MIN_BID, PEAK_GIVEBACK_MIN_BID_MULT,
-    PEAK_GIVEBACK_MIN_PEAK, PROFIT_EXIT_MEGA, SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT,
-    SNIPE_PEAK_GIVEBACK_MIN_BID, SNIPE_STOP_PCT, STOP_UNCOVERED_PCT,
+    GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT, NO_EDGE_GONE_RATIO,
+    MOMENTUM_LOCK_PCT, PEAK_GIVEBACK_HARD_LOSS_PCT, PEAK_GIVEBACK_MIN_BID,
+    PEAK_GIVEBACK_MIN_BID_MULT, PEAK_GIVEBACK_MIN_PEAK, PROFIT_EXIT_MEGA,
+    SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT, SNIPE_STOP_PCT, STOP_UNCOVERED_PCT,
     SNIPE_PROFIT_LOCK_MIN_BID, SNIPE_PROFIT_LOCK_PEAK,
-    SNIPE_PROFIT_LOCK_MIN_PNL, STOP_LOSS_PCT,
-    STOP_MIN_HOURS, STRONG_PROFIT_PCT, TIME_EXIT_MINS, TIME_EXIT_NEAR_DIST,
+    SNIPE_PROFIT_LOCK_MIN_PNL, STRONG_PROFIT_PCT, TIME_EXIT_MINS,
+    TIME_EXIT_NEAR_DIST,
 )
 from .contracts import is_in_money, otm_distance
 from . import config as _C   # module-qualified: `from .config import X` freezes
@@ -141,7 +139,7 @@ class PositionManager:
             _expired = _hours_from(close_time) < -0.05 and bid == 0 and ask == 0
             if status in _SETTLED or _expired:
                 itm_flag = is_in_money(pos["contract"], spot)
-                if PAPER_TRADING:
+                if _C.PAPER_TRADING:
                     is_no = pos.get("is_no", False)
                     won   = (not itm_flag) if is_no else itm_flag
                     # settle_paper_position() logs the outcome AND removes the
@@ -325,12 +323,12 @@ class PositionManager:
                 # price that does not exist at size is how a take-profit became
                 # -$1.82. Stops deliberately skip this check: if the executable
                 # price is worse, a stop is MORE valid, not less.
-                if no_pnl_pct >= NO_PROFIT_CAPTURE and not fresh:
+                if no_pnl_pct >= _C.NO_PROFIT_CAPTURE and not fresh:
                     ok, px = self._confirm_profit(ticker, pos, entry, no_bid_px)
                     if ok:
                         self.portfolio.sell(ticker, px, reason="misprice_captured ✅")
                         continue
-                if no_pnl_pct >= NO_TIME_PROFIT and hours < 0.08 and not fresh:
+                if no_pnl_pct >= _C.NO_TIME_PROFIT and hours < 0.08 and not fresh:
                     ok, px = self._confirm_profit(ticker, pos, entry, no_bid_px)
                     if ok:
                         self.portfolio.sell(ticker, px, reason="misprice_time 💰")
@@ -358,7 +356,7 @@ class PositionManager:
                     if ok:
                         self.portfolio.sell(ticker, px, reason="edge_gone ✅")
                         continue
-                if no_pnl_pct <= -NO_STOP and not fresh:
+                if no_pnl_pct <= -_C.NO_STOP and not fresh:
                     self.portfolio.sell(ticker, no_bid_px, reason="misprice_failed ❌")
                     continue
                 if no_pnl_pct <= -_C.MIN_HOLD_CATASTROPHE:
@@ -377,7 +375,7 @@ class PositionManager:
             # Mid-based pnl for stop-loss only. Marking a fresh position to bid
             # assumes we'd exit into the bid immediately — but on a 25% spread
             # that's an instant -25% "loss" that's really just paid-once entry
-            # cost, not price movement. STOP_LOSS_PCT is meant to catch actual
+            # cost, not price movement. _C.STOP_LOSS_PCT is meant to catch actual
             # adverse BTC moves, so measure against mid (fair value) — was live
             # 2026-07-23 four stops in 15 min, all peak_pnl=0, one at 12s hold.
             mid_pnl_pct  = (mid - entry) / entry if entry > 0 else 0
@@ -421,7 +419,7 @@ class PositionManager:
                     continue
 
             # TIER 0.75 — Peak giveback: once a real gain has formed, exit once
-            # price has faded back to PEAK_GIVEBACK_FRACTION of its own peak.
+            # price has faded back to _C.PEAK_GIVEBACK_FRACTION of its own peak.
             # Now applies to snipes too, but only while OTM — an ITM snipe is
             # on the settlement path and mid-hold fades are expected.
             # TIER 0.75b: a real crash can fall below _pg_min_bid in a single tick,
@@ -432,11 +430,11 @@ class PositionManager:
             # Never stricter than the absolute floor, but relaxes it for cheap
             # entries where a fixed 20c gate is unreachable or, worse, sits above
             # the tier's own trigger price so it could never fire at all.
-            _pg_abs     = SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe else PEAK_GIVEBACK_MIN_BID
+            _pg_abs     = _C.SNIPE_PEAK_GIVEBACK_MIN_BID if is_snipe else PEAK_GIVEBACK_MIN_BID
             _pg_min_bid = min(_pg_abs, PEAK_GIVEBACK_MIN_BID_MULT * entry) if entry > 0 else _pg_abs
             if ((not is_snipe or not itm)
                     and peak_pnl_pct >= PEAK_GIVEBACK_MIN_PEAK
-                    and ((bid >= _pg_min_bid and pnl_pct <= peak_pnl_pct * PEAK_GIVEBACK_FRACTION)
+                    and ((bid >= _pg_min_bid and pnl_pct <= peak_pnl_pct * _C.PEAK_GIVEBACK_FRACTION)
                          or pnl_pct <= -PEAK_GIVEBACK_HARD_LOSS_PCT)):
                 self.portfolio.sell(ticker, bid, reason="peak_giveback 📉")
                 continue
@@ -510,16 +508,16 @@ class PositionManager:
                     self.portfolio.sell(ticker, bid, reason="boundary_risk ⚠️")
                     continue
 
-                # TIER 6 — Stop loss (gated: only fires with > STOP_MIN_HOURS left).
+                # TIER 6 — Stop loss (gated: only fires with > _C.STOP_MIN_HOURS left).
                 # Short-duration contracts are binary — TIME_EXIT_MINS handles OTM exits
                 # and expiry_settle captures ITM wins. Stopping in the final bars kills
                 # positions that would resolve naturally.
                 # Uses mid_pnl_pct not pnl_pct so the spread cost paid at entry
                 # doesn't count as a "loss" against the stop threshold.
-                # STOP_MIN_HOURS keeps a long-held binary from being panic-sold
+                # _C.STOP_MIN_HOURS keeps a long-held binary from being panic-sold
                 # in its final bars while the payoff is still resolving. But
                 # MIN_HOURS (0.10 = 6 min) permits entries well inside that
-                # gate, so anything opened under STOP_MIN_HOURS never had stop
+                # gate, so anything opened under _C.STOP_MIN_HOURS never had stop
                 # coverage for a single tick of its life. 2026-07-28 session:
                 # the 4 entries with coverage netted +$53.53 (one stopping
                 # cleanly at -35%), the 2 without netted -$143.53, both riding
@@ -527,17 +525,17 @@ class PositionManager:
                 # never got; positions that genuinely aged into the window keep
                 # the original protection.
                 entry_hours   = pos.get("entry_hours")
-                never_covered = entry_hours is not None and entry_hours <= STOP_MIN_HOURS
+                never_covered = entry_hours is not None and entry_hours <= _C.STOP_MIN_HOURS
                 if never_covered:
                     # Catastrophe floor, not a stop. A tight stop this close to
                     # settlement would cut winners on ordinary non-monotonic
-                    # wobble, which is why STOP_MIN_HOURS exists — but a
+                    # wobble, which is why _C.STOP_MIN_HOURS exists — but a
                     # position opened inside the gate had no floor whatsoever.
                     # -65% cannot cut a winner; it only catches a near-total
                     # loss. No time_urgency scaling: this is a fixed backstop.
                     stop_thr, stop_ok = -STOP_UNCOVERED_PCT, True
                 else:
-                    stop_thr, stop_ok = -(STOP_LOSS_PCT / time_urgency), hours > STOP_MIN_HOURS
+                    stop_thr, stop_ok = -(_C.STOP_LOSS_PCT / time_urgency), hours > _C.STOP_MIN_HOURS
                 if (bid > 0 and mid_pnl_pct <= stop_thr and stop_ok
                         and not (itm and mins_left < TIME_EXIT_MINS)):
                     self.portfolio.sell(ticker, bid, reason=f"stop_{abs(stop_thr):.0%}")

@@ -1,10 +1,20 @@
 import datetime
 import time
 
-from .config import (
-    LADDER_CACHE_SECONDS, MAX_ASK, MAX_HOURS, MAX_SPREAD, MAX_SPREAD_PCT,
-    MIN_HOURS, MIN_VOLUME,
-)
+# Read config module-qualified, never `from .config import X`.
+#
+# `from .config import X` binds a name-local snapshot at import time, so any
+# later mutation of the module attribute — which is exactly what every sweep
+# and every test fixture does — silently never arrives. That is not
+# hypothetical here: sweep_no_thresholds() once ran a seven-value grid through
+# signals.py and produced byte-identical trades on all seven, because the
+# threshold it was setting had been frozen by an import of this shape
+# (2026-08-03, docs/QUANT_STANDARDS_AUDIT.md). signals.py and portfolio.py were
+# converted then; ladder.py was missed and stayed frozen until 2026-08-26.
+#
+# Nothing depended on it at the time, which is the point — it was one sweep
+# away from silently reporting that a ladder filter made no difference.
+from . import config as _C
 from . import recorder
 from .contracts import is_in_money, otm_distance, parse_contract
 from .instrument import ACTIVE as _INSTRUMENT
@@ -40,7 +50,7 @@ class Ladder:
 
     @staticmethod
     def _window_from(markets: list) -> str:
-        """Nearest expiry window inside [MIN_HOURS, MAX_HOURS] from a payload
+        """Nearest expiry window inside [_C.MIN_HOURS, _C.MAX_HOURS] from a payload
         that has ALREADY been fetched. Split out so get() can derive the window
         from its own /markets response instead of issuing a second identical
         request — find_window() and get() were calling the same endpoint with
@@ -52,7 +62,7 @@ class Ladder:
             try:
                 ct = datetime.datetime.fromisoformat(close.replace("Z", "+00:00"))
                 h  = (ct - now).total_seconds() / 3600
-                if MIN_HOURS <= h <= MAX_HOURS:
+                if _C.MIN_HOURS <= h <= _C.MAX_HOURS:
                     if best_t is None or h < best_t:
                         best_t = h
                         best_w = m["ticker"].split("-")[1]
@@ -79,7 +89,7 @@ class Ladder:
 
     def get(self, spot: float, force: bool = False) -> list:
         now = time.time()
-        if not force and now - self._cache_t < LADDER_CACHE_SECONDS:
+        if not force and now - self._cache_t < _C.LADDER_CACHE_SECONDS:
             return self._cache
         try:
             resolve_windows = not self._windows or now - self._window_t > 120
@@ -107,7 +117,7 @@ class Ladder:
             if not win_markets:
                 print(f"  ⏳ No active window (no open "
                       f"{'/'.join(_INSTRUMENT.series)} markets in "
-                      f"{MIN_HOURS:.2f}–{MAX_HOURS:.1f}h range)")
+                      f"{_C.MIN_HOURS:.2f}–{_C.MAX_HOURS:.1f}h range)")
                 return []
             recorder.record_universe(spot, self._window, win_markets)
 
@@ -134,7 +144,7 @@ class Ladder:
                 ya  = float(m.get("yes_ask_dollars") or 0)
                 yb  = float(m.get("yes_bid_dollars") or 0)
                 vol = float(m.get("volume_fp") or 0)
-                if ya <= 0 or yb <= 0 or vol < MIN_VOLUME or ya > MAX_ASK:
+                if ya <= 0 or yb <= 0 or vol < _C.MIN_VOLUME or ya > _C.MAX_ASK:
                     continue
                 spread = ya - yb
                 # The ladder feeds BOTH lanes, so it must not judge a row on one
@@ -153,7 +163,7 @@ class Ladder:
                 _no_cost = 1.0 - yb
                 _yes_pct = spread / ya if ya > 0 else 1.0
                 _no_pct = spread / _no_cost if _no_cost > 0 else 1.0
-                if round(min(_yes_pct, _no_pct), 9) > MAX_SPREAD_PCT:
+                if round(min(_yes_pct, _no_pct), 9) > _C.MAX_SPREAD_PCT:
                     continue
                 # Pass the market payload so geometry comes from the exchange's
                 # floor/cap strikes rather than being guessed from the ticker.

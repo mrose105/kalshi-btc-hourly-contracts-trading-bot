@@ -120,7 +120,7 @@ def test_larger_size_gets_a_worse_price():
 def test_stops_are_not_gated_by_the_depth_check():
     """A stop must fire regardless — worse depth makes it MORE valid."""
     src = open("kalshi_btc_bot/positions.py").read()
-    body = src.split("if no_pnl_pct <= -NO_STOP")[1].split("continue")[0]
+    body = src.split("if no_pnl_pct <= -_C.NO_STOP")[1].split("continue")[0]
     assert "_confirm_profit" not in body, (
         "the stop path must not call _confirm_profit — a worse executable "
         "price makes a stop more valid, not less")

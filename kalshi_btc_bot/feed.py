@@ -4,7 +4,10 @@ import requests
 import statistics
 from collections import deque
 
-from .config import PRICE_FETCH
+# Module-qualified, never `from .config import X` — that binds a snapshot at
+# import and a sweep setting config.X silently never arrives. See
+# test_frozen_config.py for the three times it has bitten here.
+from . import config as _C
 
 
 # ─────────────────────────────────────────────
@@ -183,11 +186,11 @@ class BTCFeed:
         fetch() returns the last known price without recording a tick when the
         HTTP call fails, so a dropped poll leaves a hole in self.prices. The
         next return then covers the whole outage but is treated as one
-        PRICE_FETCH interval. Squared into the EWMA that prices every contract,
+        _C.PRICE_FETCH interval. Squared into the EWMA that prices every contract,
         a single 5-min hole inflated vol 5.6x (9.5x for 15 min) and decayed
         only over the EWMA half-life — mispricing the entire ladder meanwhile.
         """
-        max_dt = PRICE_FETCH * 3
+        max_dt = _C.PRICE_FETCH * 3
         rets = []
         for i in range(1, len(ticks)):
             (t_prev, p_prev), (t_now, p_now) = ticks[i-1], ticks[i]

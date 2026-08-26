@@ -74,7 +74,8 @@ def test_the_stop_is_not_looser_than_the_premium_it_protects():
 def test_the_stop_still_exists():
     """The stop was the half that WORKED (+$6.19 vs holding). Never delete it."""
     assert C.NO_STOP is not None and C.NO_STOP > 0
-    assert "no_pnl_pct <= -NO_STOP" in SRC
+    assert "no_pnl_pct <= -_C.NO_STOP" in SRC, (
+        "the stop must read config module-qualified — a bare NO_STOP is a\n         frozen import and a sweep against it silently no-ops")
 
 
 def test_catastrophe_floor_still_bypasses_everything():

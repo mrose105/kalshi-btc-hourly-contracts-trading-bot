@@ -32,14 +32,14 @@ def _paper_portfolio():
     from kalshi_btc_bot import portfolio as portfolio_module
 
     old_config = C.PAPER_TRADING
-    old_module = portfolio_module.PAPER_TRADING
+    # portfolio.py now reads _C.PAPER_TRADING at call time, so setting the
+    # config module is enough. This used to patch portfolio's own frozen
+    # copy as well — a workaround for the very bug that was just fixed.
     C.PAPER_TRADING = True
-    portfolio_module.PAPER_TRADING = True
     try:
         yield portfolio_module
     finally:
         C.PAPER_TRADING = old_config
-        portfolio_module.PAPER_TRADING = old_module
 
 
 class _Quote:

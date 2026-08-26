@@ -69,8 +69,8 @@ def test_measured_drag_on_a_realistic_no_entry():
 
 def test_paper_entry_charges_the_fee():
     from kalshi_btc_bot import portfolio as pm
-    old_paper, old_cfg = pm.PAPER_TRADING, C.PAPER_TRADING
-    pm.PAPER_TRADING = C.PAPER_TRADING = True
+    old_cfg = C.PAPER_TRADING
+    C.PAPER_TRADING = True
     try:
         with _Fees(True):
             p = pm.Portfolio(client=None)
@@ -91,14 +91,14 @@ def test_paper_entry_charges_the_fee():
             assert abs(spent - (pos["cost"] + expected_fee)) < 1e-9, (
                 f"spent {spent}, cost {pos['cost']}, fee {expected_fee}")
     finally:
-        pm.PAPER_TRADING, C.PAPER_TRADING = old_paper, old_cfg
+        C.PAPER_TRADING = old_cfg
 
 
 def test_charge_fees_false_restores_old_accounting():
     """PARITY: the flag off must reproduce the historical fee-free behaviour."""
     from kalshi_btc_bot import portfolio as pm
-    old_paper, old_cfg = pm.PAPER_TRADING, C.PAPER_TRADING
-    pm.PAPER_TRADING = C.PAPER_TRADING = True
+    old_cfg = C.PAPER_TRADING
+    C.PAPER_TRADING = True
     try:
         with _Fees(False):
             p = pm.Portfolio(client=None)
@@ -114,7 +114,7 @@ def test_charge_fees_false_restores_old_accounting():
             spent = cash0 - p.real_cash
             assert abs(spent - p.positions["BTC-TEST-B64650"]["cost"]) < 1e-9
     finally:
-        pm.PAPER_TRADING, C.PAPER_TRADING = old_paper, old_cfg
+        C.PAPER_TRADING = old_cfg
 
 
 def test_settlement_is_free():
