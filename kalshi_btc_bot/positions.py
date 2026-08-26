@@ -335,7 +335,25 @@ class PositionManager:
                     if ok:
                         self.portfolio.sell(ticker, px, reason="misprice_time 💰")
                         continue
-                if overprice_r < NO_EDGE_GONE_RATIO and no_pnl_pct > 0 and not fresh:
+                # edge_gone is gated on a MINIMUM GAIN, not merely on being up.
+                #
+                # Measured 2026-08-25 across 41 settlement-resolved armings over
+                # 33 expiries: firing on any positive pnl produced 27 exits worth
+                # +$7.64 where holding the same 27 to settlement was worth
+                # +$19.21 — the tier cost $11.57, about $0.43 a trade. Only ~$1
+                # of that is the exit fee (settlement is free, an early exit is
+                # not); the rest is forfeited convergence. A NO that settles pays
+                # $1.00, and selling at 0.95 gives back the last five cents of a
+                # premium whose risk had already been carried.
+                #
+                # `no_pnl_pct > 0` is a near-vacuous condition on a position that
+                # decays toward $1.00 — almost every winner crosses it early,
+                # which is why this fired on 27 of 41. Requiring a real gain
+                # keeps the thesis-exit for cases where the edge genuinely
+                # collapsed while leaving ordinary convergence alone.
+                _eg_min = getattr(_C, "NO_EDGE_GONE_MIN_GAIN", 0.0)
+                if (overprice_r < NO_EDGE_GONE_RATIO
+                        and no_pnl_pct > _eg_min and not fresh):
                     ok, px = self._confirm_profit(ticker, pos, entry, no_bid_px)
                     if ok:
                         self.portfolio.sell(ticker, px, reason="edge_gone ✅")

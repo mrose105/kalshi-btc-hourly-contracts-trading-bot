@@ -106,8 +106,9 @@ NO_CASH_MIN_PCT             = 0.20                             # available cash 
 
 NO_PROFIT_CAPTURE           = 0.80                             # 80% gain → misprice_captured  → docs/CONFIG_RATIONALE.md#no_profit_capture
 NO_TIME_PROFIT              = 0.40                             # 40% gain + near expiry → misprice_time
-NO_STOP                     = 0.40                             # 40% loss → misprice_failed (sweep Jul 22: z2.5/stop0.40  → docs/CONFIG_RATIONALE.md#no_stop
+NO_STOP                     = 0.30                             # 30% loss → misprice_failed  → docs/CONFIG_RATIONALE.md#no_stop
 NO_EDGE_GONE_RATIO          = 1.05                             # overpricing ratio drops here → edge_gone
+NO_EDGE_GONE_MIN_GAIN       = 0.15                             # edge_gone needs a real gain, not just >0  → docs/CONFIG_RATIONALE.md#no_edge_gone_min_gain
 
 # ---------------------------------------------------------------------------
 # Minimum hold — don't round-trip on quote noise

@@ -535,7 +535,77 @@ Tightened to -20% to cut reversals sooner — BTC spiking into the range rarely 
 
 ## NO_STOP
 
-40% loss → misprice_failed (sweep Jul 22: z2.5/stop0.40 best overall return 1407% + best NO P&L)
+**0.30 as of 2026-08-26** (was 0.40).
+
+A stop must be read against the payoff it is protecting. This strategy risks
+~$0.81 to win ~$0.19, so a stop at X% of cost realises a loss of 0.81X against
+a maximum gain of 0.19:
+
+    stop 40%  ->  $0.32 lost  =  1.7x the entire premium  ->  erases 1.7 winners
+    stop 30%  ->  $0.24 lost  =  1.3x the premium         ->  erases 1.3 winners
+
+A stop that costs several times the max gain is structurally wrong for premium
+selling, and 40% was doing exactly that.
+
+Swept over 41 settlement-resolved armings across 33 expiries, 2026-08-18 to
+08-25, edge_gone disabled, fees charged, expiry-clustered bootstrap:
+
+    stop |  WR      ROC     PF    total          95% CI   P>0 |   TUNE    VALID
+     15% | 59%    +0.8%   1.13    +4.55   [-5.2%, +6.4%]  60% |  +2.4%    -0.4%
+     20% | 66%    -0.1%   1.09    +3.87   [-8.4%, +7.0%]  51% |  +4.6%    -3.4%
+     25% | 73%    +2.1%   1.34   +12.64   [-6.6%, +9.5%]  71% |  +5.9%    -0.5%
+     30% | 76%    +3.7%   1.44   +16.28  [-5.9%, +12.4%]  79% |  +5.9%    +2.1%
+     35% | 76%    -0.7%   1.03    +1.51  [-12.6%, +10.1%] 47% |  +0.9%    -1.8%
+     40% | 76%    -2.2%   0.94    -3.36   [-15.4%, +9.2%] 37% |  -2.6%    -2.0%
+     50% | 78%    -4.6%   0.81   -12.78   [-18.4%, +8.4%] 26% |  -5.6%    -3.9%
+    none | 78%    -5.4%   0.78   -15.35   [-19.4%, +7.9%] 23% |  -6.5%    -4.6%
+
+30% is the only level positive on BOTH halves of an expiry-clustered split.
+
+WHAT TO TRUST HERE, AND WHAT NOT TO. The direction is well supported: decay
+from 30% upward is monotonic (+3.7 -> -0.7 -> -2.2 -> -4.6 -> -5.4) and the
+economics above predict it independently. The exact value is not: n=41, the
+95% CI on +3.7% is [-5.9%, +12.4%] and includes zero, P(ROC>0) is 79% rather
+than 95%, and roughly 24 configurations were swept the same day across dip
+levels, exit variants and stop levels — enough tests that one surviving a
+split is unsurprising by chance. Treat 0.30 as "40% was too loose", not as an
+optimum. Re-measure before tightening further.
+
+Supersedes the Jul 22 sweep (z2.5 / stop 0.40, "best overall return 1407%"),
+which was run on the 250-wide RANGE band that does not trade — see
+BACKTEST_INTEGRITY.md section 4 and QUANT_STANDARDS_AUDIT.md section 1d.
+
+## NO_EDGE_GONE_MIN_GAIN
+
+0.0 restores the historical behaviour (fire on any positive pnl).
+
+`edge_gone` sells when the overpricing ratio collapses AND the position is up.
+The second condition was near-vacuous: a NO position decays toward $1.00, so
+almost every eventual winner crosses "up" early. It fired on 27 of 41 armings.
+
+Measured 2026-08-25, settlement-resolved, fees both sides:
+
+    those 27 exits    ->  +$7.64
+    holding the same  ->  +$19.21
+    tier cost         ->  -$11.57  (about $0.43/trade)
+
+Only ~$1 of that is the exit fee. Settlement is FREE and an early exit is not,
+but the bulk is forfeited convergence: selling at 0.95 gives back the last five
+cents of a premium whose risk had already been carried.
+
+Whole-ladder effect, same 41 armings:
+
+    edge_gone ON,  40% stop  ->  -3.8% ROC, PF 0.59, -$14.22
+    edge_gone OFF, 30% stop  ->  +3.7% ROC, PF 1.44, +$16.28
+
+0.15 keeps the thesis-exit available for cases where the edge genuinely
+collapsed while leaving ordinary convergence alone. Note that 0.15 measured
+better than 0.0 (-3.8%) or 0.30 (-2.4%) in the same sweep, and a non-monotonic
+interior optimum on n=41 is a noise signature — the defensible claim is "> 0",
+not "0.15 exactly".
+
+The 40% stop was measured as GOOD in the same run (+$6.19 vs holding). Only
+edge_gone leaks. Do not disable both.
 
 ## MIN_HOLD_SECS
 
