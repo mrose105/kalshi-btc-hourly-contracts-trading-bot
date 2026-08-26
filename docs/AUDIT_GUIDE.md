@@ -8,8 +8,8 @@ It's not a performance writeup. The returns are roughly break-even-to-negative
 and that's said plainly below, but the numbers aren't the point of this
 document. How it's built is.
 
-    branch   model-calibration-and-exit-fixes @ f69e7e5
-    tests    153 across 16 files
+    branch   model-calibration-and-exit-fixes @ b9cc5ee
+    tests    157 across 17 files
     data     93 recording files, 82 MB, back to 2026-07-28
     mode     paper — no real orders
 
@@ -256,7 +256,7 @@ Also: the number in the ticker is the **middle** of the band, not the bottom.
 
     for f in test_*.py; do python3 "$f" >/dev/null || echo "FAIL $f"; done
 
-153 tests, 16 files. Some are policy rather than behaviour: `test_no_exits.py`
+157 tests, 17 files. Some are policy rather than behaviour: `test_no_exits.py`
 and `test_watchlist_entry.py` refuse to let an unvalidated feature run while
 `PAPER_TRADING` is False.
 
@@ -297,7 +297,7 @@ book, so a lost day is gone for good.
     pending.py        257  arming and the wait-for-a-dip logic
     model.py          219  Student-t prior, market blend
     config.py         195  settings only
-    ladder.py         189  the pre-filter — frozen imports live here
+    ladder.py         189  the pre-filter
 
     README.md                      strategy, current numbers, known gaps
     docs/BACKTEST_INTEGRITY.md     ten ways a backtest number breaks. Start at 0
