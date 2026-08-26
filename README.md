@@ -39,6 +39,12 @@ discount lowers break-even and lowers the win rate at the same time — see
 "Risk Profile" and `docs/CONFIG_RATIONALE.md#watchlist_entry_dip` for what
 happened when that was measured.
 
+## Reviewing this repo
+
+Start with [`docs/AUDIT_GUIDE.md`](docs/AUDIT_GUIDE.md) — which claims to trust,
+which to doubt, the nine ways this codebase has produced confident wrong numbers,
+and how to re-derive any figure here from the recorded tape.
+
 ## What actually runs
 
 One strategy: `BOUNDARY_NO`. When BTC sits at a range extreme (|z| ≥ 1.40) in a
