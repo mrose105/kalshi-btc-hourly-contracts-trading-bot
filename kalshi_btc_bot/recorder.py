@@ -59,8 +59,8 @@ _lock = threading.Lock()
 # standalone poller, so the default (50) would leave hours of irreplaceable
 # data unflushed — and unlike quotes it can never be re-fetched, since Deribit
 # publishes no historical open interest.
-_FLUSH_EVERY = {"orders": 1, "walls": 1, "marks": 5, "books": 50,
-                "quotes": 200, "universe": 20}
+_FLUSH_EVERY = {"orders": 1, "walls": 1, "shadow": 1, "marks": 5,
+                "books": 50, "quotes": 200, "universe": 20}
 _counts: dict[str, int] = {}
 
 dropped = 0
@@ -341,3 +341,54 @@ def close() -> None:
 
 def stats() -> str:
     return f"recorded={written} dropped={dropped}"
+
+
+def record_shadow(ticker: str, spot: float, regime: dict, hours: float,
+                  decision: dict, fresh: tuple, book: dict, would_fill: dict,
+                  reason: str = "") -> None:
+    """A trade the LOOSER gate set would have taken, priced but not placed.
+
+    WHY THIS EXISTS. The `universe` stream already answers every SELECTION
+    question — it is recorded pre-filter, so any gate can be moved and the whole
+    history re-scored. What it cannot answer is anything about EXECUTION:
+    whether the quote was still there when the order landed, how far a size-11
+    order walks the book, what fraction of signals are fillable at all.
+
+    Those only exist when an order is actually attempted, which is why the live
+    paper run matters. But the live gates are deliberately tight — roughly six
+    signals a day — so execution data accrues far too slowly to say anything.
+    As of 2026-08-26 the entire measured estimate of decision-to-execution
+    slippage rests on ONE observation (a watchlist fill decided at $0.26 that
+    re-quoted at $0.24).
+
+    This stream closes that gap without trading a configuration nobody believes
+    in. For every candidate the looser set would take, it captures the same
+    three things a real order sees — the decision price, the FRESH quote from
+    the same endpoint buy_no() calls, and the full resting book — plus what a
+    walk of that book would have filled. That is the execution question,
+    answered at whatever rate the loose gates produce, while the real money
+    stays on the tight ones.
+
+    It is not a substitute for trading. There is no queue position here, no
+    market impact, and the fill is simulated against depth rather than taken.
+    But it turns "one observation" into a distribution, which is the difference
+    between a guess and a measurement.
+    """
+    if not ENABLED:
+        return
+    _emit("shadow", {
+        "t":    _now(),
+        "tk":   ticker,
+        "spot": round(spot, 2),
+        "h":    round(hours, 4),
+        "rg":   {"r": regime.get("regime"), "z": round(regime.get("zscore") or 0, 3),
+                 "v": regime.get("vol"), "m": round(regime.get("mom") or 0, 6)},
+        # what the LADDER said when the candidate was selected
+        "dec":  decision,
+        # what the SAME endpoint buy_no() uses says a moment later
+        "fresh": {"b": fresh[0], "a": fresh[1]} if fresh else None,
+        "book": book,
+        # what walking that book at the intended size would have got
+        "fill": would_fill,
+        "why":  reason,
+    })

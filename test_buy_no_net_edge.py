@@ -192,11 +192,19 @@ def test_watchlist_fill_is_exempt_from_the_ratio_recheck():
     with _paper_portfolio() as portfolio_module:
         p = portfolio_module.Portfolio(client=None)
         p.sync()
-        # Reproduce the live numbers: ratio 1.19, far under the 1.60 bar, but
-        # net edge comfortably clear so only the ratio gate can reject.
-        _tp = 0.20
-        _bid = 0.28                      # ratio 1.40 < 1.60, net edge 0.08
-        _ask = 0.30
+        # DERIVED from the shipped bar, never hardcoded. An earlier draft used
+        # 0.20/0.28 (ratio 1.40), which sat under the 1.60 bar of the day and
+        # sailed over it when the bar moved to 1.25 — the fixture stopped
+        # testing anything without failing. Same trap this file's docstring
+        # warns about.
+        #
+        # Need ratio < bar AND net_edge >= the bar, and net_edge =
+        # true_p * (ratio - 1), so true_p must be large enough to clear the
+        # edge test at a deliberately sub-bar ratio.
+        _ratio = C.BOUNDARY_NO_OVERPRICING_MIN * 0.9        # under the bar
+        _tp = round(C.BOUNDARY_NO_MIN_NET_EDGE / (_ratio - 1.0) * 1.15, 4)
+        _bid = round(_tp * _ratio, 4)
+        _ask = round(_bid + 0.02, 4)
         assert _bid / _tp < C.BOUNDARY_NO_OVERPRICING_MIN, "fixture must fail the ratio bar"
         assert _bid - _tp >= C.BOUNDARY_NO_MIN_NET_EDGE, "fixture must clear net edge"
         assert (_ask - _bid) <= C.MAX_SPREAD, "fixture must clear the spread gate"
@@ -215,8 +223,12 @@ def test_a_normal_signal_is_still_held_to_the_ratio_gate():
     with _paper_portfolio() as portfolio_module:
         p = portfolio_module.Portfolio(client=None)
         p.sync()
-        _tp, _bid, _ask = 0.20, 0.28, 0.30
+        _ratio = C.BOUNDARY_NO_OVERPRICING_MIN * 0.9        # under the bar
+        _tp = round(C.BOUNDARY_NO_MIN_NET_EDGE / (_ratio - 1.0) * 1.15, 4)
+        _bid = round(_tp * _ratio, 4)
+        _ask = round(_bid + 0.02, 4)
         p._fresh_quote = lambda tk, attempts=3: (_bid, _ask)
+        p._orderbook = lambda tk: {"yes": [[int(_bid * 100), 500]]}
         reasons = []
         p._log_reject = lambda tk, why: reasons.append(why)
         c = _watchlist_contract()

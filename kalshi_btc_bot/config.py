@@ -125,9 +125,19 @@ ENABLE_BOUNDARY_NO          = True                             # docs/CONFIG_RAT
 BOUNDARY_NO_ZSCORE_MIN      = 1.40                             # |z| must exceed this to count as a range extreme (Aug 17  → docs/CONFIG_RATIONALE.md#boundary_no_zscore_min
 BOUNDARY_NO_OTM_MIN         = _INST.boundary_no_otm_min        # don't go deeper than 250 OTM (premium too thin)
 BOUNDARY_NO_OTM_MAX         = _INST.boundary_no_otm_max        # small buffer — not right at the current boundary
-BOUNDARY_NO_OVERPRICING_MIN = 1.60                             # docs/CONFIG_RATIONALE.md#boundary_no_overpricing_min
+BOUNDARY_NO_OVERPRICING_MIN = 1.25                             # raising this selected for model error  → docs/CONFIG_RATIONALE.md#boundary_no_overpricing_min
 NO_EXEMPT_FROM_COOLDOWN     = True                             # let NO scans see cooled-off tickers.  → docs/CONFIG_RATIONALE.md#no_exempt_from_cooldown
 BOUNDARY_NO_MIN_NET_EDGE    = 0.05                             # minimum ABSOLUTE edge on the NO side: (1  → docs/CONFIG_RATIONALE.md#boundary_no_min_net_edge
+# ---------------------------------------------------------------------------
+# Shadow recorder — price the looser gate set, do not trade it
+# ---------------------------------------------------------------------------
+SHADOW_ENABLED              = True                             # off = zero extra API calls  → docs/CONFIG_RATIONALE.md#shadow_enabled
+SHADOW_HOURS_MAX            = 1.00                             # look at the whole hour, not the last 15 min
+SHADOW_OVERPRICING_MIN      = 1.25                             # vs 1.60 live
+SHADOW_ZSCORE_MIN           = 1.20                             # vs 1.40 live
+SHADOW_MAX_PER_SCAN         = 1                                # caps the added API load
+SHADOW_TICKER_COOLDOWN      = 120                              # seconds before re-sampling the same contract
+
 BOUNDARY_NO_HOURS_MIN       = 0.08
 BOUNDARY_NO_HOURS_MAX       = 0.25                             # 15 min; was 0.50  → docs/CONFIG_RATIONALE.md#boundary_no_hours_max
 BOUNDARY_NO_YES_ASK_MIN     = 0.10

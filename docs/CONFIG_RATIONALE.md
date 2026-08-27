@@ -680,31 +680,48 @@ as MISPRICE_NO, different entry gate (z-score extremes instead of raw overpricin
 
 ## BOUNDARY_NO_OVERPRICING_MIN
 
-2026-08-22: raised 1.15 -> 1.60. At 1.15 this gate was INERT: sweeping it
-from 1.00 to 1.15 admitted exactly the same 71 candidates, because
-BOUNDARY_NO_MIN_NET_EDGE was binding first. Raising it is the single largest
-improvement measured on this strategy.
-404 candidates / 118 expiries from the uncensored recordings, Student-t
-prior, held to settlement, NET OF FEES at 14 lots, split by expiry:
-net_edge  ratio      TUNE     VALID       ALL    n    WR
->=0.05    1.15     -10.0%     +0.3%     -5.5%   85   78%   <- was live
->=0.05    1.60      -1.4%     +3.2%     +0.8%   64   84%
->=0.00    1.60      -0.9%     +3.7%     +1.7%   98   88%   <- shipped
-1.60 is an INTERIOR optimum, not a grid edge — it falls off on both sides
-(1.45 -> -1.3%, 1.75 -> -4.5%, 2.00 -> -4.5%).
-Loss decomposition at 14 lots shows the costs are near-identical either way
-and the whole difference is selection quality:
-live gates      ratio 1.60
-edge at mid                 -2.8%           +4.0%
-crossing the spread         -1.4%           -1.3%
-Kalshi taker fee            -1.4%           -1.1%
-= net ROC                   -5.5%           +1.6%
-NOT VALIDATED AS AN EDGE. Selected from an 8-cell ratio grid on 118 expiries;
-multiple-comparison risk is real and n=98 is thin. It wins both windows
-independently and has an interior peak, which is the bar this repo uses to
-act — but it is a hypothesis to confirm on data recorded AFTER this change,
-not a proven edge. Everything else measured this week says the model does not
-beat the market price (see project memory / README).
+**1.25 as of 2026-08-26.** Was 1.15, raised to 1.60 on 08-22 to "raise the
+quality bar", now lowered again because that reasoning was backwards.
+
+The gate requires `yes_bid / true_prob >= X` — the market's price must exceed
+the model's probability by X. Raising it sounds like demanding a bigger
+mispricing. It is not, because the model is the thing being divided by, and the
+model is known to be miscalibrated:
+
+    the ratio is largest exactly where true_prob is most UNDERSTATED
+
+That is already documented as the foundational result of this repo (the model
+does not beat the market price; five independent tests). So a high bar does not
+select for better mispricings, it selects for **larger model errors**. Demanding
+1.60 was asking for the contracts the model gets most wrong.
+
+Swept over 91 armings across 61 expiries, 15-min window, z>=1.40,
+settlement-resolved, fees charged, expiry-clustered bootstrap:
+
+     ratio     n   /day     WR      ROC     PF               95% CI   P>0     TUNE    VALID
+      1.00    91   13.0    82%    +3.3%   1.22   [-6.1%, +12.4%]   76%    +1.0%    +5.1%
+      1.15    91   13.0    82%    +3.3%   1.22   [-6.1%, +12.4%]   76%    +1.0%    +5.1%
+      1.25    85   12.1    84%    +4.2%   1.29   [-5.3%, +13.8%]   81%    +1.7%    +6.0%
+      1.40    67     9.6    82%    +2.9%   1.17   [-8.9%, +14.1%]   70%    +0.1%    +5.4%
+      1.60    32     4.6    81%    -2.2%   0.93  [-20.0%, +13.8%]   40%   -13.3%    +3.6%
+      1.80    11     1.6    73%   -14.0%   0.55  [-43.3%, +15.9%]   16%   -29.1%    -1.5%
+      2.00     7     1.0    57%   -30.4%   0.32   [-68.1%, +9.4%]   10%   -40.8%   -16.6%
+
+Monotonic above 1.25 and positive on BOTH halves of the split from 1.00 to
+1.40. It also triples the trade rate, 4.6/day to 12.1.
+
+Note 1.00 / 1.10 / 1.15 are identical — 91 armings each. Below about 1.20 the
+ratio admits everything the net-edge gate already admits, so it stops binding
+at all. That is the same "provably inert" property the ORIGINAL 1.15 had, and
+why the 08-22 note called it inert. The correct reading was that the gate does
+little useful work, not that it needed to do more.
+
+1.25 rather than 1.15 keeps a token amount of separation between the two gates
+while sitting at the measured peak. Do not read 1.25 as an optimum — n=85, the
+CI includes zero, and it is the best cell of a sweep.
+
+Superseded: the 08-22 note claiming 1.15 was inert and 1.60 raised quality.
+Half right. It was inert; raising it made things worse, not better.
 
 ## NO_EXEMPT_FROM_COOLDOWN
 

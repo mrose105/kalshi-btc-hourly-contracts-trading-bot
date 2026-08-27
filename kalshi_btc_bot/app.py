@@ -23,6 +23,7 @@ from .positions import PositionManager
 from .regime import RegimeEngine
 from .signals import SignalEngine
 from .pending import PendingEntries
+from .shadow import ShadowRecorder
 from . import live_view
 from . import recorder
 
@@ -63,6 +64,7 @@ def main():
     signal_e  = SignalEngine(dist)
     pos_mgr   = PositionManager(client, portfolio, dist, feed, ladder=ladder_e)
     pending_e = PendingEntries()
+    shadow_e  = ShadowRecorder()
 
     print("  Bootstrapping 24h of 5-min bars for vol_ratio parity...")
     n_bars = feed.bootstrap_history(hours=24)
@@ -284,6 +286,19 @@ def main():
                           f"true={_row['true_prob']:.0%}")
                     live_view.log_event(_m) if live_view.ENABLED else print(f"     {_m}")
                     portfolio.buy_no(_row, _row["true_prob"], dist, spot, vol, regime)
+
+            # SHADOW — price what the LOOSER gate set would take, without
+            # trading it. Instrumentation only: `universe` already answers every
+            # selection question, but nothing answers the execution ones (is the
+            # quote still there, is there depth at size) without an order
+            # attempt. The live gates give ~6 signals a day, far too slow for
+            # that. This samples the same fresh quote and book a real order
+            # would meet, at the looser rate, while the money stays on the tight
+            # set. Wrapped because instrumentation must never break trading.
+            try:
+                shadow_e.scan(portfolio, dist, spot, vol, regime, ladder)
+            except Exception:
+                pass
 
             # SNIPE signal — deep-OTM lottery tickets, ROI-ranked, separate scan from
             # find_best() (see config.py SNIPE_* comment for why they'd otherwise be
