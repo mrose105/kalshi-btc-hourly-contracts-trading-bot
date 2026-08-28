@@ -277,7 +277,15 @@ def _boundary_ladder():
     # Both rows must clear BOUNDARY_NO_OVERPRICING_MIN against _FlatDist's
     # true_prob of 0.16, or find_boundary_no returns fewer candidates than the
     # test asserts: 0.30/0.16 = 1.88x, 0.28/0.16 = 1.75x.
-    return [row(72750, 0.30, 0.33), row(72850, 0.28, 0.31)]
+    # Bids/asks DERIVED from the shipped gates, never hardcoded. These were
+    # 0.30/0.33 and 0.28/0.31 — comfortably inside the 0.65 ask ceiling of the
+    # day, and instantly outside the 0.30 ceiling — so the fixture stopped
+    # producing candidates and every test here "failed" on a threshold move
+    # rather than on behaviour. Same trap as the ratio fixtures.
+    _ask = min(0.30, C.BOUNDARY_NO_YES_ASK_MAX)
+    _b1  = round(_ask - 0.02, 4)          # top candidate
+    _b2  = round(_ask - 0.04, 4)          # second, must rank below it
+    return [row(72750, _b1, _ask), row(72850, _b2, round(_ask - 0.02, 4))]
 
 
 class _FlatDist:

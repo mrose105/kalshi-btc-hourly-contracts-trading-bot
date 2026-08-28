@@ -141,7 +141,7 @@ SHADOW_TICKER_COOLDOWN      = 120                              # seconds before 
 BOUNDARY_NO_HOURS_MIN       = 0.08
 BOUNDARY_NO_HOURS_MAX       = 0.25                             # 15 min; was 0.50  → docs/CONFIG_RATIONALE.md#boundary_no_hours_max
 BOUNDARY_NO_YES_ASK_MIN     = 0.10
-BOUNDARY_NO_YES_ASK_MAX     = 0.65
+BOUNDARY_NO_YES_ASK_MAX     = 0.30                             # cheap NOs are near-coin-flips  → docs/CONFIG_RATIONALE.md#boundary_no_yes_ask_max
 
 # ---------------------------------------------------------------------------
 # Delayed entry — don't buy the signal, buy the dip after it

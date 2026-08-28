@@ -48,7 +48,15 @@ def _ladder():
                 "high": float(strike) + 50, "hours": 0.20,
                 "otm_dist": float(strike + 50 - SPOT),
                 "type": "RANGE", "itm": False, "vol": 900}
-    return [row(72750, 0.30, 0.33), row(72850, 0.28, 0.31)]
+    # Bids/asks DERIVED from the shipped gates, never hardcoded. These were
+    # 0.30/0.33 and 0.28/0.31 — comfortably inside the 0.65 ask ceiling of the
+    # day, and instantly outside the 0.30 ceiling — so the fixture stopped
+    # producing candidates and every test here "failed" on a threshold move
+    # rather than on behaviour. Same trap as the ratio fixtures.
+    _ask = min(0.30, C.BOUNDARY_NO_YES_ASK_MAX)
+    _b1  = round(_ask - 0.02, 4)          # top candidate
+    _b2  = round(_ask - 0.04, 4)          # second, must rank below it
+    return [row(72750, _b1, _ask), row(72850, _b2, round(_ask - 0.02, 4))]
 
 
 def _reg(z, dspot):
@@ -85,7 +93,8 @@ def test_allows_a_move_away_from_a_band_below_spot():
 def test_the_direction_flips_with_the_side_being_faded():
     """THE BUG THIS GUARDS. z>0 fades bands ABOVE spot, so a RISING spot is the
     adverse one. A filter that ignored side would reject the good entries."""
-    lad = [{"ticker": "KXBTC-26AUG2016-B73250", "ask": 0.33, "bid": 0.30,
+    _a = min(0.30, C.BOUNDARY_NO_YES_ASK_MAX)
+    lad = [{"ticker": "KXBTC-26AUG2016-B73250", "ask": _a, "bid": round(_a - 0.02, 4),
             "strike": 73250.0, "low": 73200.0, "high": 73300.0, "hours": 0.20,
             "otm_dist": -200.0, "type": "RANGE", "itm": False, "vol": 900}]
     eng = SignalEngine(_Flat())

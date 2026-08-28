@@ -1096,3 +1096,63 @@ regime.py annualize per-tick vol with sqrt(BARS_PER_HOUR); this was
 hardcoded 900 (4s ticks) after PRICE_FETCH dropped to 2s, silently
 understating hourly vol by sqrt(2) (~29%) and inflating every RANGE edge.
 
+## BOUNDARY_NO_YES_ASK_MAX
+
+**0.30 as of 2026-08-27.** Was 0.65, which never bound.
+
+This is a tail-selling strategy and it works in proportion to how far out the
+tail actually is. A cheap NO means yes_bid is HIGH, which means the band sits
+near spot and genuinely gets hit; an expensive NO is a far-OTM band that mostly
+does not. Since no_cost = 1 - yes_bid, the ask ceiling is what decides how
+close to a coin flip the bot is willing to go.
+
+Found by asking the opposite question — whether entries ABOVE $0.85 were the
+losers. They are the best group. Two independent datasets agree:
+
+  REAL trade log, 58 NO round trips across three config eras:
+    bucket        n    WR   b/e   margin     total    on risk     ret
+    $0.50-0.70    8   50%   65%   -14.7%    -$9.14    $75.84   -12.1%
+    $0.70-0.78   12   42%   75%   -33.4%   -$15.52   $114.02   -13.6%
+    $0.78-0.82   12   67%   79%   -12.4%    -$1.16   $113.88    -1.0%
+    $0.82-0.85   14   57%   83%   -25.4%    -$3.65   $133.77    -2.7%
+    $0.85-1.01   12   92%   87%    +4.8%    -$0.02   $113.73    -0.0%
+
+  REPLAY, 100 armings under the current gates, settlement-resolved:
+    $0.00-0.70    7   43%   66%   -22.7%   -$18.74   ROC -36.0%   PF 0.37
+    $0.70-0.75   17   76%   72%    +4.4%    +$5.42   ROC  +4.7%   PF 1.16
+    $0.75-0.80   25   84%   77%    +6.7%   +$14.96   ROC  +7.1%   PF 1.43
+    $0.80-0.85   31   84%   82%    +1.7%    +$2.30   ROC  +0.7%   PF 1.05
+    $0.85-0.90   19   95%   86%    +8.3%   +$15.49   ROC  +8.6%   PF 2.60
+
+Break-even rises with entry cost, so expensive entries SHOULD be harder. They
+are not, because the win rate rises faster than the bar does. That is the whole
+finding.
+
+Sweep of the ceiling, 100 armings / 70 expiries, expiry-clustered:
+
+    ask_max    n   /day    WR   cost     ROC     PF           95% CI   P>0    TUNE   VALID
+       0.65  100   12.5   82%  0.790   +2.0%   1.13   [-7.1%,+11.3%]  68%   +2.9%   +1.3%
+       0.40  100   12.5   82%  0.790   +2.0%   1.13   (identical)
+       0.35   97   12.1   82%  0.795   +2.0%   1.13   [-7.2%,+10.6%]  66%   +1.7%   +2.1%
+       0.30   88   11.0   85%  0.805   +4.5%   1.31   [-4.9%,+13.1%]  84%   +1.3%   +6.9%
+       0.25   67    8.4   87%  0.824   +3.6%   1.28   [-5.9%,+12.6%]  78%   -0.8%   +6.8%
+       0.20   36    4.5   92%  0.852   +6.5%   1.78   [-5.5%,+16.1%]  87%   +1.2%   +9.9%
+       0.15    8    1.0  100%  0.877  +13.1%   9.99  [+12.2%,+13.8%] 100%     nan  +13.1%
+
+0.40 / 0.50 / 0.65 are byte-identical at n=100: nothing clearing the other
+gates ever had an ask above 0.40, so the old ceiling never bound. Third inert
+gate found in this codebase after the 1.15 overpricing bar and the 1.40
+z-score, and the same signature every time — identical results across a range.
+
+0.30 doubles ROC, lifts PF 1.13 -> 1.31, and is positive on BOTH halves of the
+split at a cost of 12 of 100 armings. 0.25 fails the split (TUNE -0.8%). 0.20
+is better still but cuts volume to 4.5/day. IGNORE 0.15 — 100% win rate on n=8
+with a CI excluding zero is eight coin flips landing the same way, not an edge.
+
+RELATED, and the reason to believe the direction: waiting for a dip moves you
+DOWN this cost axis, from ~$0.81 toward ~$0.69 — exactly the direction this
+table says is worse. The dip-buying failure and this finding are the same
+gradient observed twice. See #watchlist_entry_dip.
+
+n=88 and the CI includes zero. 0.30 means "0.65 never bound and the cheap end
+loses", not that 0.30 is optimal.
