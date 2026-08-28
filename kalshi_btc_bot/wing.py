@@ -1,5 +1,17 @@
 """Pair each BOUNDARY_NO fill with a YES leg one strike toward spot.
 
+DISABLED 2026-08-28. WING_ENABLED defaults False and should stay there until
+this is re-measured. Every figure below was produced by resolving contracts
+from the last `universe` observation, which is ~T-5min rather than settlement
+(see test_expiring_window.py). Re-run against the quotes stream before
+believing any of it: the companion ATM study went from 93% win / +99.8% ROC to
+40% / -26.7% under the same correction, and the "wing toward spot" leg has not
+been re-measured at all.
+
+The code is kept because the structure is worth re-testing once the recorder
+has captured real final-minute data. It is not kept because the numbers hold.
+
+
 MEASURED 2026-08-27 on 99 settlement-resolved signals across 71 expiries. The
 NO leg and a YES leg on the adjacent band, attributed separately:
 

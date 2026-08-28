@@ -131,7 +131,7 @@ BOUNDARY_NO_MIN_NET_EDGE    = 0.05                             # minimum ABSOLUT
 # ---------------------------------------------------------------------------
 # Paired wing — a YES leg one strike toward spot, alongside each BOUNDARY_NO
 # ---------------------------------------------------------------------------
-WING_ENABLED                = True                             # measured +9.8% vs +3.6% NO alone  → docs/CONFIG_RATIONALE.md#wing_enabled
+WING_ENABLED                = False                            # OFF — the measurement behind it was retracted  → docs/CONFIG_RATIONALE.md#wing_enabled
 WING_SIZE_RATIO             = 1.0                              # wing contracts as a multiple of the NO leg
 
 # ---------------------------------------------------------------------------
