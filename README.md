@@ -309,104 +309,75 @@ Use capital sweeps before quoting scale-sensitive performance.
 8. **Synthetic posterior disabled** — synthetic Kalshi quotes are no longer treated as Bayesian market evidence.
 9. **Fill-time revalidation** — next-bar fills recompute probability and edge at the open before entering.
 
-## Risk Profile — 10,000-path Monte Carlo
+## Risk Profile — 10,000-path Monte Carlo (at $500)
 
 Bootstrapping the *backtest* would resample the YES lanes, which are off. So
-the Monte Carlo runs on the live strategy's own distribution instead: every
-BOUNDARY_NO selection that passes the **current** gate set on recorded
-universe data, each one resolved by where spot actually settled against its
-`[lo, hi)` band, with the Kalshi taker fee charged.
+this runs on the live strategy's own distribution: every `BOUNDARY_NO`
+selection passing the **current** gate set on recorded universe data, each
+resolved by where spot actually settled against its `[lo, hi)` band, with the
+Kalshi taker fee charged. 88 armings across 66 expiries, 2026-08-18 to 08-26.
 
-> **Superseded, and the direction of the revision matters.** The tables below
-> are the 2026-08-23 run on **11** signals over 6 days. Re-measured 2026-08-25
-> across 7 days — **41 signals over 33 expiries** — the same policy comes out
-> at **-3.4% mean ROC** (expiry-clustered 95% CI [-17.4%, +10.5%], P(ROC>0) =
-> 32%) at an 80% win rate and $0.814 mean cost. The Monte Carlo below is
-> retained because its *shape* is the lesson — see the asymmetry note — but its
-> sign came from a sample four times too small.
->
-> **The dip policy is worse, not better** — but not for the obvious reason, and
-> the full metric set is worth reading rather than the win rate alone:
->
-> | | buy at arming | watchlist dip 5% |
-> |---|---:|---:|
-> | n / expiries | 41 / 33 | 21 |
-> | win rate | 80% | 62% |
-> | mean cost | $0.814 | $0.690 |
-> | **break-even WR** (= cost) | **81%** | **69%** |
-> | **margin (WR − break-even)** | **−0.9%** | **−7.1%** |
-> | mean ROC | −3.4% | −15.4% |
-> | **median ROC** | **+16.6%** | **+26.6%** |
-> | ROC std dev | 49.3% | 70.7% |
-> | Sharpe (per-sample) | −0.45 | −1.00 |
-> | profit factor | 0.87 | 0.65 |
-> | expectancy / trade | −$0.22 | −$0.95 |
-> | avg win / avg loss | +$1.79 / −$8.47 | +$2.84 / −$7.10 |
-> | win:loss ratio | 0.21 | **0.40** |
-> | max drawdown | −$23.41 | −$29.52 |
->
-> The dip does exactly what it was designed to: **the payoff ratio nearly
-> doubles**, 0.21 → 0.40, because a cheaper entry wins more and loses less. It
-> is still not enough. `E = WR × avg_win − (1−WR) × avg_loss` gives
-> `0.80×1.79 − 0.20×8.47 = −$0.26` against `0.62×2.84 − 0.38×7.10 = −$0.94`:
-> the win side grows from $1.43 to $1.76, but 18 points of win rate means 90%
-> more losing trades, and each still costs ~7× what a win pays.
->
-> **Note both medians are positive, and the dip's is higher.** Most individual
-> trades make money; the mean is dragged under by rare total losses. That is
-> the short-premium signature, and it is exactly how this strategy fools you —
-> watch it live and you see mostly winners getting bigger, while the left tail
-> quietly eats the account. Judge it on expectancy and profit factor, never on
-> hit rate or the median trade.
->
-> At an execution price 2¢ worse than the ladder (the measured decision-to-quote
-> drift) the dip arm fills 17 times for **−27.0%**, P(ROC>0) = 6%.
->
-> Same result that killed scale-in and dip-adding: **the discount arrives on the
-> contracts that are about to lose.** Three independent confirmations now. The
-> 95% CI on −15.4% is [−45.5%, +14.4%] and does not exclude zero — what makes it
-> convincing is the repetition, not this sample.
+Capital is `PAPER_CAPITAL = $500` and sizing follows the live path — 2.5% of
+equity per trade (`MAX_TRADE_PCT`), which is **$12.50, or 15 contracts** at the
+$0.805 mean entry.
 
-**The original sample was eleven trades.**
-
-| per-trade, on capital at risk | |
+| per trade | |
 |---|---:|
-| n | **11** |
-| mean | +17.8% |
-| median | +28.2% |
-| std dev | 61.2% |
-| win rate | 82% |
-| best / worst | +96% / -103% |
+| n / expiries | **88 / 66** |
+| win rate | 85% |
+| mean entry | $0.805 |
+| **break-even WR** (= entry cost) | **81%** |
+| mean ROC | **+4.5%** |
+| median ROC | +20.0% |
+| std dev | 44.9% |
 
-10,000 resampled paths, 2% of bankroll risked per trade:
+Expiry-clustered bootstrap over the 66 expiry means:
 
-| horizon | p5 | median | p95 | median max DD | p95 max DD | worst DD |
-|---|---:|---:|---:|---:|---:|---:|
-| 25 trades | -1.8% | +9.3% | +20.2% | -4.1% | -8.3% | -17.7% |
-| 100 trades | +15.7% | +41.6% | +72.1% | -6.4% | -11.7% | -22.4% |
+| method | 95% CI |
+|---|---|
+| percentile | [−6.3%, +13.1%] |
+| **BCa** (bias-corrected, accelerated) | **[−7.8%, +12.3%]** |
 
-**Do not read the 100-trade row as a forecast.** It reports P(profit) = 100%,
-which is an artifact of the method: a bootstrap cannot resample a regime its
-eleven source trades never contained. What the table legitimately shows is
-*path* risk conditional on the per-trade distribution being right — and the
-per-trade distribution is 11 observations with a 61% standard deviation. The
-82% win rate has a 95% binomial interval of roughly [48%, 98%].
+**Note BCa widens the downside** rather than narrowing it — −7.8% against
+−6.3%. That is the correction doing its job: the distribution is heavily
+left-skewed (median +20.0% against a mean of +4.5%), and a percentile interval
+assumes a symmetry that is not there. The honest interval is the wider one, and
+**it still contains zero.**
 
-The asymmetry is the part that generalises. Entries cost ~$0.80, so a win
-returns ~+25% and a loss costs ~-100%: break-even needs 80% wins. The measured
-82% sits directly on that line. That is the whole risk picture — this strategy
-does not have room to be slightly wrong about its win rate.
+10,000 compounding paths, resampled by expiry cluster:
 
-### The Monte Carlo still understates risk in four ways
+| horizon | p5 | p25 | median | p75 | p95 | median DD | p95 DD | P(profit) |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| 1 day (12 trades) | $473 | $497 | **$506** | $520 | $537 | −2.5% | −7.1% | 70% |
+| 1 week (60) | $462 | $504 | **$535** | $565 | $608 | −6.8% | −13.8% | 77% |
+| 1 month (250) | $490 | $582 | **$654** | $733 | $855 | −11.7% | −21.3% | 94% |
 
-1. **n=11.** Everything above inherits an eleven-trade sample. It propagates
-   that uncertainty; it does not reduce it.
-2. **IID resampling destroys loss clustering.** Losses correlate in reality —
-   same regime, adjacent strikes, one BTC move busting several positions.
-3. **No capacity model.** Kelly sizing past a few thousand dollars wants
-   positions deeper than the real KXBTC book absorbs.
-4. **Settlement-resolved, not execution-resolved.** Top-of-book fills with the
-   one-contract fee; no latency, no partial fills, no slippage on exit.
+### How much of this to believe
+
+**The point estimate is positive for the first time.** Every earlier version of
+this table was negative; the gates fixed on 2026-08-26/27 (overpricing ratio
+1.60 → 1.25, ask ceiling 0.65 → 0.30, `edge_gone` gated, stop 0.40 → 0.30) are
+what moved it. That is real, and it is also the problem: **five sweeps were run
+the day these numbers were produced.** The best cell of a sweep is a biased
+estimate of what the next month does.
+
+**The CI includes zero.** At n=88 with a 44.9% standard deviation, the data
+cannot distinguish +4.5% from flat.
+
+**P(profit) = 94% at one month is not a forecast.** A bootstrap cannot resample
+a regime its 88 source trades never contained. Those trades span nine days of
+one instrument in one vol environment.
+
+**And it lost to buying BTC, badly.** Over the same window BTC went
+$64,423 → $78,527, **+21.9%**. $500 held in spot is $609; the median simulated
+path here is $535 over a *month*. This is a market-neutral strategy being
+measured during a strong rally, which is the least flattering comparison
+available — but the answer is still that holding the underlying beat it.
+
+**The median/mean gap is the thing to watch in live trading.** +20.0% median
+against +4.5% mean means most trades look good while rare losses do the damage.
+Watching the tape will feel better than the account does. Judge it on
+expectancy and profit factor, never on hit rate or the typical trade.
 
 `SESSION_STOP_PCT` (3%) gates *new entries* only — it never closes open
 positions, so it does not floor these drawdowns.

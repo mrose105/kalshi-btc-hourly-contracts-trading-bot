@@ -791,33 +791,57 @@ entries and rejected the four thinnest.
 
 ## BOUNDARY_NO_HOURS_MAX
 
-2026-08-22: 0.50 -> 0.25. Entry timing was the measured defect, not exits.
-256 of 257 signalled contracts (100%) drew down after entry. Median MAE
--13.6% against a median MFE of +4.6% — the typical adverse move is 3x the
-typical favourable one. That is systematic, not noise: the gate fires on
-yes_bid/true_prob being high, which means NO is CHEAP, and it keeps getting
-cheaper. The bot was catching the START of a repricing, not the end.
-Same signals, entered only inside a tighter clock (net of fees @14 lots,
-split by expiry):
-enter when <=   n    WR    cost      ROC    TUNE   VALID
-30 min (was)   257   79%  $0.820   -4.5%   -5.0%   -4.0%
-20 min         157   80%  $0.815   -2.8%   -4.2%   -1.6%
-15 min         111   80%  $0.803   -1.5%   -4.0%   +0.5%
-10 min          52   77%  $0.784   -3.4%   -8.4%   +0.6%
-WHAT THIS IS AND IS NOT. It is NOT a better entry price — cost moves $0.820
--> $0.803, under two cents, and win rate is flat at 80%. What improves is
-that there is less time left for spot to reach the band. This buys less
-EXPOSURE, not more edge. Read it as risk reduction.
-Two other fixes for the same defect were tested and REJECTED:
-- wait for the repricing to stop (no new low for N ticks): filters almost
-nothing (n 256 -> 254 at 20s) and ROC is unchanged. The drawdown
-oscillates rather than sliding, so there is no moment it is visibly over.
-- require the gate to hold for N consecutive ticks: removes 11% of signals
-and moves ROC 0.1pp. The transient that caused the 2026-08-23 -$4.07 loss
-lasted ~20 ticks, not one.
-The only thing that removed the bad entries wholesale was dropping the
-REVERTING drift term in model.py — which also removed 93% of ALL signals,
-because that term is what generates them. See project memory.
+**0.25 (15 min) — re-confirmed 2026-08-27 under the corrected gates.**
+
+Entries run from BOUNDARY_NO_HOURS_MIN (0.08h = 4.8 min) to here, a 10.2-minute
+slice — 17% of an hourly contract's life, and the single biggest cut in the
+funnel at -84% of rows. The floor exists so an entry cannot land inside its own
+exit window: time_forced_no fires under 2 minutes and NO_TIME_PROFIT under 5.
+
+An earlier sweep suggested opening the window to 60 minutes (-1.6% against
+-2.2% at 15 min), and that result is VOID. It ran at ratio 1.60 and ask ceiling
+0.65 — the first selecting for model error, the second admitting the cheap-NO
+population that measured -36% ROC. Both interact with time to expiry, because a
+band further from expiry has more time to be reached and prices closer to a
+coin flip. Correcting them flips the ordering completely.
+
+Re-swept at ratio 1.25 / ask 0.30, settlement-resolved, expiry-clustered:
+
+     max    n   /day    WR    cost     ROC     PF    total          95% CI   P>0    TUNE   VALID
+     15m   88   11.0   85%   0.805   +4.5%   1.31  +$35.07  [-4.6%,+13.5%]  83%   +1.9%   +6.6%
+     21m  136   17.0   82%   0.808   +0.5%   1.03   +$6.67   [-7.4%,+8.0%]  56%   -7.2%   +6.1%
+     30m  178   22.2   80%   0.812   -2.4%   0.88  -$37.88   [-8.7%,+3.8%]  23%   -7.8%   +2.2%
+     45m  225   28.1   82%   0.818   -1.3%   0.93  -$27.02   [-6.3%,+3.7%]  32%   -5.3%   +2.6%
+     60m  277   34.6   82%   0.822   -1.0%   0.94  -$28.03   [-5.3%,+3.0%]  30%   -3.1%   +1.0%
+
+15m is the only row positive on both halves of the split, the only one with
+P(ROC>0) above 56%, and the only one that makes money. 60 minutes buys 3x the
+trades and turns +$35 into -$28.
+
+Sliced rather than accumulated, so a good early bucket cannot carry the average:
+
+    entry at        n     WR    cost      ROC     PF     total
+    4.8-15 min     52    85%   0.814    +2.6%   1.17   +$12.15
+    15-24 min      57    81%   0.817    -2.7%   0.87   -$12.89
+    24-36 min      45    82%   0.827    -1.1%   0.90    -$7.40
+    36-63 min     123    82%   0.825    -1.8%   0.90   -$19.89
+
+Only the final 15 minutes makes money. Every other slice of the hour is
+negative, consistently, at -1% to -3%.
+
+WHY, most likely: this sells premium, and premium decays fastest into expiry.
+Inside the last 15 minutes an OTM band that has not been reached is running out
+of time to be reached, and the position converges to $1.00. Earlier in the hour
+the same band still has real probability of being touched, and is priced for
+it — you collect less and carry the risk longer.
+
+DO NOT re-open this window without re-running the sweep. It has now been tested
+twice and reversed once, purely because two other gates were wrong at the time.
+
+This is also the gate that explains the live exit mix: entering inside the last
+15 minutes means most positions run into time_forced_no rather than any
+thesis exit. Both trades on 2026-08-26 exited that way, at 0.9518 and 0.98
+against a mean of 0.8857 for the edge_gone exits they replaced.
 
 ## DELAYED_ENTRY_DIP
 
