@@ -96,6 +96,10 @@ class Ladder:
 
             all_markets: list = []
             win_markets: list = []
+            # Markets in a window that is CLOSING — inside MIN_HOURS, so no
+            # longer tradeable and no longer "the nearest window in range".
+            # Recorded but never returned as candidates. See below.
+            expiring_markets: list = []
             for series in _INSTRUMENT.series:
                 markets = self._fetch_series(series)
                 all_markets.extend(markets)
@@ -111,6 +115,42 @@ class Ladder:
                 # cannot be used to evaluate the filters themselves.
                 win_markets.extend(m for m in markets
                                    if window in m.get("ticker", ""))
+
+                # THE LAST SIX MINUTES. _window_from() only considers windows
+                # inside [MIN_HOURS, MAX_HOURS], so once a window is under
+                # MIN_HOURS (6 min) it stops being "nearest in range" and the
+                # recorder never sees it again. Positions were always priced
+                # correctly — self._quotes is built from all_markets — but the
+                # `universe` stream, which every counterfactual study in this
+                # repo treats as ground truth, structurally could not observe a
+                # contract's final six minutes.
+                #
+                # That is not a gap at the edge of the data, it is a gap over
+                # the most important part of it: time_forced_no fires at T-2min,
+                # and settlement happens at T-0. Resolving contracts from the
+                # last universe observation therefore read spot at ~T-5min and
+                # called it settlement — measured 2026-08-28, median 307s early,
+                # ZERO contracts observed within 60s of close. That made an ATM
+                # study circular (93% "win rate" collapsed to 40% once resolved
+                # from the quotes stream) and overstated every NO win rate.
+                #
+                # Entries are unaffected: these rows go to the recorder only,
+                # never into `ladder`, and MIN_HOURS/BOUNDARY_NO_HOURS_MIN gate
+                # entry independently. This buys back exit-side visibility
+                # without opening a trading window nobody asked for.
+                for m in markets:
+                    ct = m.get("close_time", "")
+                    if not ct or window in m.get("ticker", ""):
+                        continue
+                    try:
+                        h = (datetime.datetime.fromisoformat(
+                                ct.replace("Z", "+00:00"))
+                             - datetime.datetime.now(datetime.timezone.utc)
+                             ).total_seconds() / 3600
+                    except Exception:
+                        continue
+                    if 0 <= h < _C.MIN_HOURS:
+                        expiring_markets.append(m)
             if resolve_windows:
                 self._window_t = now
 
@@ -119,7 +159,11 @@ class Ladder:
                       f"{'/'.join(_INSTRUMENT.series)} markets in "
                       f"{_C.MIN_HOURS:.2f}–{_C.MAX_HOURS:.1f}h range)")
                 return []
-            recorder.record_universe(spot, self._window, win_markets)
+            # Record the tradeable window PLUS anything in its final minutes.
+            # The ladder itself stays win_markets-only, so nothing new becomes
+            # a candidate.
+            recorder.record_universe(spot, self._window,
+                                     win_markets + expiring_markets)
 
             # Publish the raw window so PositionManager can price open positions
             # from this one bulk response instead of a single-ticker fetch each.

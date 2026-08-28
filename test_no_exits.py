@@ -53,22 +53,36 @@ def test_zero_restores_the_old_behaviour():
 
 
 def test_shipped_values():
-    assert C.NO_EDGE_GONE_MIN_GAIN == 0.15
-    assert C.NO_STOP == 0.30, "the 40% stop realised 1.7x the premium per loss"
+    """REVERTED 2026-08-28. Both 08-27 values rested on biased settlement."""
+    assert C.NO_EDGE_GONE_MIN_GAIN == 0.0, (
+        "gating edge_gone cost $52 measured against TRUE settlement — the "
+        "08-27 measurement that justified 0.15 resolved contracts at ~T-5min")
+    assert C.NO_STOP == 0.40
 
 
-def test_the_stop_is_not_looser_than_the_premium_it_protects():
-    """The economic constraint, independent of any sweep.
+def test_the_stop_costs_more_than_one_winner_and_that_is_known():
+    """An argument I got wrong on 2026-08-27, kept here so it is not remade.
 
-    Entry ~$0.81 wins ~$0.19. A stop at X of cost realises 0.81X. Above ~0.35
-    a single stop-out erases more than 1.5 winners, and the measured ROC decays
-    monotonically from 30% upward (+3.7 -> -0.7 -> -2.2 -> -4.6 -> -5.4).
+    The reasoning was: entry ~$0.81 wins ~$0.19, so a 40% stop realises $0.32,
+    which is 1.7x the premium — therefore tighten the stop. The arithmetic is
+    correct and the conclusion does not follow.
+
+    It counts what a stop-out costs and ignores what stopping COSTS YOU: trades
+    that would have recovered. Measured against true settlement across 14 real
+    stop-outs, the stop turned -$23.81 into -$57.20 — it destroyed $33.39 by
+    banking losses on positions that came back. Half of stopped positions
+    recover; the stop is not predictive, it is just early.
+
+    So this test no longer asserts a bound. It asserts the relationship is
+    UNDERSTOOD and that the catastrophe floor still sits below the stop.
     """
     entry, premium = 0.81, 0.19
     loss = entry * C.NO_STOP
-    assert loss / premium < 1.5, (
-        f"stop {C.NO_STOP:.0%} realises ${loss:.2f}, {loss/premium:.1f}x the "
-        f"${premium:.2f} premium — one loss erases that many winners")
+    assert loss / premium > 1.0, (
+        "a stop that costs less than one winner would be firing on noise")
+    assert C.MIN_HOLD_CATASTROPHE > C.NO_STOP, (
+        "the catastrophe floor must sit below the ordinary stop or it can "
+        "never fire")
 
 
 def test_the_stop_still_exists():
@@ -93,7 +107,9 @@ def test_profit_tiers_are_untouched():
 
 
 def test_unvalidated_exit_change_may_not_run_with_real_money():
-    """n=41, 95% CI [-5.9%, +12.4%] includes zero, ~24 configs swept that day."""
+    """Any deviation from the reverted baseline is unvalidated until it is
+    measured against settlement resolved from the QUOTES stream, not from the
+    last universe observation. See test_expiring_window.py."""
     if C.NO_STOP != 0.40 or C.NO_EDGE_GONE_MIN_GAIN > 0:
         assert C.PAPER_TRADING is True, (
             "the 2026-08-26 exit changes are measured on 41 armings with a CI "

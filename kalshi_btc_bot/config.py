@@ -106,9 +106,9 @@ NO_CASH_MIN_PCT             = 0.20                             # available cash 
 
 NO_PROFIT_CAPTURE           = 0.80                             # 80% gain → misprice_captured  → docs/CONFIG_RATIONALE.md#no_profit_capture
 NO_TIME_PROFIT              = 0.40                             # 40% gain + near expiry → misprice_time
-NO_STOP                     = 0.30                             # 30% loss → misprice_failed  → docs/CONFIG_RATIONALE.md#no_stop
+NO_STOP                     = 0.40                             # REVERTED to 0.40 — the tightening rested on biased settlement  → docs/CONFIG_RATIONALE.md#no_stop
 NO_EDGE_GONE_RATIO          = 1.05                             # overpricing ratio drops here → edge_gone
-NO_EDGE_GONE_MIN_GAIN       = 0.15                             # edge_gone needs a real gain, not just >0  → docs/CONFIG_RATIONALE.md#no_edge_gone_min_gain
+NO_EDGE_GONE_MIN_GAIN       = 0.0                              # REVERTED — gating it cost $52  → docs/CONFIG_RATIONALE.md#no_edge_gone_min_gain
 
 # ---------------------------------------------------------------------------
 # Minimum hold — don't round-trip on quote noise
@@ -128,6 +128,12 @@ BOUNDARY_NO_OTM_MAX         = _INST.boundary_no_otm_max        # small buffer �
 BOUNDARY_NO_OVERPRICING_MIN = 1.25                             # raising this selected for model error  → docs/CONFIG_RATIONALE.md#boundary_no_overpricing_min
 NO_EXEMPT_FROM_COOLDOWN     = True                             # let NO scans see cooled-off tickers.  → docs/CONFIG_RATIONALE.md#no_exempt_from_cooldown
 BOUNDARY_NO_MIN_NET_EDGE    = 0.05                             # minimum ABSOLUTE edge on the NO side: (1  → docs/CONFIG_RATIONALE.md#boundary_no_min_net_edge
+# ---------------------------------------------------------------------------
+# Paired wing — a YES leg one strike toward spot, alongside each BOUNDARY_NO
+# ---------------------------------------------------------------------------
+WING_ENABLED                = True                             # measured +9.8% vs +3.6% NO alone  → docs/CONFIG_RATIONALE.md#wing_enabled
+WING_SIZE_RATIO             = 1.0                              # wing contracts as a multiple of the NO leg
+
 # ---------------------------------------------------------------------------
 # Shadow recorder — price the looser gate set, do not trade it
 # ---------------------------------------------------------------------------

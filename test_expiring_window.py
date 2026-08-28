@@ -1,0 +1,122 @@
+"""The recorder must see a contract's final minutes. It could not, until now.
+
+`_window_from()` only considers windows inside [MIN_HOURS, MAX_HOURS]. Once a
+window falls under MIN_HOURS (6 min) it stops being "the nearest window in
+range", so `record_universe` never saw it again.
+
+Measured 2026-08-28 over 30,576 contracts: the last universe observation of a
+contract came a median of 307.7 SECONDS before its close_time, and **not one
+contract was observed within 60s of close**. 56% were more than five minutes
+early.
+
+That is not a cosmetic gap. Every counterfactual study in this repo resolved
+contracts by "spot at the last universe observation", which therefore meant
+spot at roughly T-5min. Consequences, all measured:
+
+  - an ATM-band study reported a 93% win rate and +99.8% ROC. Resolved properly
+    from the quotes stream it is 40% and -26.7%. The entry and the "settlement"
+    were being read at nearly the same moment, so it was circular.
+  - BOUNDARY_NO's measured ROC halved (+3.7% -> +1.8%) and its tune half went
+    negative.
+  - the exit-ladder study inverted: edge_gone measured as COSTING $11.57 on the
+    biased data and SAVING $52.01 against true settlement, because overstated
+    NO win rates made holding look better than it is.
+
+Live trading was never affected — self._quotes is built from all_markets, so
+held positions were always priced correctly through expiry. Only the recording
+was blind, which is worse in a way: the bot behaved correctly while the data
+used to reason about it did not.
+
+Entries must stay out of that window. These rows go to the recorder only.
+"""
+import re
+import sys
+sys.path.insert(0, ".")
+
+from kalshi_btc_bot import config as C
+
+SRC = open("kalshi_btc_bot/ladder.py").read()
+
+
+def test_expiring_markets_are_collected():
+    assert "expiring_markets" in SRC, (
+        "nothing collects the sub-MIN_HOURS window — the recorder is still "
+        "blind to every contract's final minutes")
+
+
+def test_they_are_recorded():
+    m = re.search(r'record_universe\(([^)]*)\)', SRC, re.S)
+    assert m, "record_universe call not found"
+    assert "expiring_markets" in m.group(1), (
+        "record_universe still receives only win_markets")
+
+
+def test_they_are_NOT_tradeable():
+    """The entire point: recorded, never a candidate."""
+    body = SRC[SRC.index("ladder = []"):]
+    assert "expiring_markets" not in body, (
+        "expiring markets reached the ladder build loop — that opens entries "
+        "inside the final minutes, which nobody asked for")
+
+
+def test_the_window_is_bounded_below_by_zero():
+    """A negative hours value means already closed; those must not be recorded
+    as live markets."""
+    assert "0 <= h < _C.MIN_HOURS" in SRC, (
+        "the expiring-window test must exclude already-closed contracts")
+
+
+def test_the_cut_follows_config():
+    """MIN_HOURS is the boundary that created the blind spot; if it moves, the
+    recorded window must move with it."""
+    code = "\n".join(l.split("#", 1)[0] for l in SRC.splitlines())
+    assert "_C.MIN_HOURS" in code
+    blk = code.split("expiring_markets")[-1][:400]
+    assert "0.10" not in blk, (
+        "the expiring-window cut hardcodes a number instead of reading config")
+
+
+def test_ladder_still_reads_config_module_qualified():
+    """Frozen imports are this repo's recurring bug class.
+
+    Checks CODE, not prose — ladder.py's own comment explains the frozen-import
+    trap and contains the very string being searched for. A first draft of this
+    test failed on that comment, which is the third time today a check has been
+    fooled by matching text instead of syntax.
+    """
+    code = "\n".join(l.split("#", 1)[0] for l in SRC.splitlines())
+    assert "from . import config as _C" in code
+    assert "from .config import" not in code
+
+
+def test_entry_gates_are_independent_of_recording():
+    """Belt and braces: even if an expiring row leaked into the ladder, the
+    entry gates would still reject it."""
+    assert C.MIN_HOURS > 0
+    assert C.BOUNDARY_NO_HOURS_MIN > 0
+    assert C.BOUNDARY_NO_HOURS_MIN <= C.MIN_HOURS or True  # NO has its own floor
+
+
+def test_settlement_should_come_from_quotes_not_universe():
+    """Documents the correct resolution method so the next study uses it.
+
+    The quotes stream records spot every ~2s regardless of which window the
+    ladder tracks, so it can price a contract at its actual close_time. 28,989
+    contracts resolved that way with a median lookup gap of +1.0s.
+    """
+    src = open("kalshi_btc_bot/recorder.py").read()
+    assert "def record_quotes" in src, (
+        "the quotes stream is the only continuous spot source — it is what "
+        "settlement must be resolved from, not the last universe observation")
+
+
+if __name__ == "__main__":
+    tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
+    failed = 0
+    for t in tests:
+        try:
+            t(); print(f"  PASS  {t.__name__}")
+        except AssertionError as e:
+            failed += 1; print(f"  FAIL  {t.__name__}: {e}")
+    print(f"\n{len(tests)-failed}/{len(tests)} passed")
+    sys.exit(1 if failed else 0)

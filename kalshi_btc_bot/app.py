@@ -24,6 +24,7 @@ from .regime import RegimeEngine
 from .signals import SignalEngine
 from .pending import PendingEntries
 from .shadow import ShadowRecorder
+from . import wing as wing_mod
 from . import live_view
 from . import recorder
 
@@ -271,7 +272,30 @@ def main():
                     if _s and _fire is None:
                         _fire = _s
                 if _fire:
-                    portfolio.buy_no(_fire, _fire["true_prob"], dist, spot, vol, regime)
+                    _ok = portfolio.buy_no(_fire, _fire["true_prob"], dist,
+                                           spot, vol, regime)
+                    # PAIRED WING. Only after the NO leg actually fills — the
+                    # wing is a companion to a position, not a trade of its
+                    # own, and buying it alone would be an untested strategy.
+                    # Wrapped: the wing is optional and must never be able to
+                    # break or block the leg that was measured.
+                    if _ok:
+                        try:
+                            _w = wing_mod.toward_spot(ladder, _fire, spot)
+                            if _w is not None:
+                                _pos = portfolio.positions.get(_fire["ticker"])
+                                _n = wing_mod.size_for((_pos or {}).get("count", 0))
+                                _wp = dist.posterior_prob(
+                                    _w, spot, vol, _w.get("hours", 0.0), regime,
+                                    bid=_w.get("bid"), ask=_w.get("ask"))["true_prob"]
+                                _m = (f"🪽 WING {_w['ticker'][-18:]} YES x{_n} "
+                                      f"@ ${_w.get('ask', 0):.3f} true={_wp:.0%} "
+                                      f"(pairs {_fire['ticker'][-18:]})")
+                                live_view.log_event(_m) if live_view.ENABLED else print(f"     {_m}")
+                                portfolio.buy({**_w, "signal": "WING", "wing_of": _fire["ticker"]},
+                                              _wp, dist, spot, vol, regime)
+                        except Exception:
+                            pass
 
             # Watchlist fills. Armed tickers are re-priced off the CURRENT
             # ladder, NOT off a re-fired signal — the gates going stale is the
