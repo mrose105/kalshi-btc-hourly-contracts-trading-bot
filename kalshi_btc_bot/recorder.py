@@ -151,6 +151,12 @@ def record_quotes(spot: float, regime: dict, ladder: list) -> None:
             "vc": regime.get("vol_compression"),
             "z":  regime.get("zscore"),
             "m":  regime.get("mom"),
+            # accel = momentum(w/2) - momentum(w). It is the ONLY input to
+            # the BREAKOUT branch, and BREAKOUT is the one regime whose
+            # `direction` means "decelerating" rather than "price falling".
+            # regime.py has always published it; the quotes stream never
+            # kept it, so BREAKOUT could not be studied beyond n=6.
+            "ac": regime.get("accel"),
         },
         "l": [{
             "tk":   c.get("ticker"),

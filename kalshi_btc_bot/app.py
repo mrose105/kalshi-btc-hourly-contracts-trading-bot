@@ -144,7 +144,8 @@ def main():
         header = (f"[{t}] BTC=${spot:,.0f} | "
                   f"{regime['regime']} {regime['direction']} "
                   f"conf={regime['conf']:.0%} | "
-                  f"mom={regime['mom']:+.3%} z={regime['zscore']:+.2f} | "
+                  f"mom={regime['mom']:+.3%} accel={regime['accel']:+.3%} "
+                  f"z={regime['zscore']:+.2f} | "
                   f"cash=${portfolio.real_cash:.2f} "
                   f"pos=${live_view.mark_to_market(portfolio.positions) if live_view.ENABLED else portfolio.exposure():.2f} "
                   f"n={len(portfolio.positions)}")
