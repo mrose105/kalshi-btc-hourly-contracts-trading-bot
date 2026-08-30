@@ -88,6 +88,55 @@ Both profit-taking exits are net positive; **all the damage is 15 stop-outs at
 short-premium shape, and it is why hit rate and median trade are both
 misleading here — judge on expectancy and profit factor.
 
+## The stop cannot do what its name implies (measured 2026-08-30)
+
+`NO_STOP = 0.40` is not a risk control that caps losses at 40%. It is a
+tripwire that fires **after** the damage, because the price does not pass
+through -40% continuously.
+
+Decomposed across all 15 `misprice_failed` exits, using the marks stream
+against the actual fill:
+
+```
+overshoot already present when observed : -3.2%
+further slippage from observed to fill  : -0.2%
+median gap between checks               :  2s
+```
+
+**Execution is fine.** The fill lands 0.2% from the quote the bot saw. The
+entire overshoot happens between two checks two seconds apart:
+
+```
+contract          prev chk   trigger chk
+26AUG2802-B79750     +0.0%       -37.5%    <- 37 points in 2 seconds
+26AUG2715-B80150    -14.8%       -50.0%
+26AUG2214-B77250    -17.4%       -44.9%
+26AUG2718-B80150     -9.1%       -36.4%
+median               -26.5%       -43.2%    <- 16.7 points in one tick
+```
+
+The median position was at -26.5% two seconds before stopping out at -43.2%.
+One was at break-even. Near expiry these contracts gap: spot crosses into the
+band, the YES ask reprices in a single tick, and `1 - ask` collapses. There is
+no price at -40% to sell at.
+
+**What follows from this:**
+
+1. The ~$4 of apparent leakage across 15 stops is not recoverable. No polling
+   frequency helps when the move is one tick, and the fill is already at the
+   quote.
+2. **Backtested stop levels imply an exit precision that does not exist.** A
+   -25% stop would mostly have been jumped too — the median trade was still at
+   -26.5% on the prior check. Treat any future stop sweep with this in mind;
+   it is a specific reason to distrust the tighter-stop result that was already
+   reverted once (3fb56d5, reverted in 3b8459a for a different reason).
+3. It explains the payoff shape from the microstructure side. Losses average
+   -$4.14 against +$0.83 wins not because the stop is set badly, but because
+   this instrument delivers its losses instantaneously.
+
+Not acting on it. The honest conclusion is "the stop cannot do what its name
+implies", not "change the number".
+
 ## Known-bad reasoning patterns (all learned the hard way)
 
 1. **Dips select losers.** Confirmed three independent times — scale-in,
