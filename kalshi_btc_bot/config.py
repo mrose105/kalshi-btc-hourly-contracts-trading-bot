@@ -127,7 +127,7 @@ BOUNDARY_NO_OTM_MIN         = _INST.boundary_no_otm_min        # don't go deeper
 BOUNDARY_NO_OTM_MAX         = _INST.boundary_no_otm_max        # small buffer — not right at the current boundary
 BOUNDARY_NO_OVERPRICING_MIN = 1.25                             # raising this selected for model error  → docs/CONFIG_RATIONALE.md#boundary_no_overpricing_min
 NO_EXEMPT_FROM_COOLDOWN     = True                             # let NO scans see cooled-off tickers.  → docs/CONFIG_RATIONALE.md#no_exempt_from_cooldown
-BOUNDARY_NO_MIN_NET_EDGE    = 0.05                             # minimum ABSOLUTE edge on the NO side: (1  → docs/CONFIG_RATIONALE.md#boundary_no_min_net_edge
+BOUNDARY_NO_MIN_NET_EDGE    = 0.04                             # minimum ABSOLUTE edge on the NO side: (1  → docs/CONFIG_RATIONALE.md#boundary_no_min_net_edge
 # ---------------------------------------------------------------------------
 # Paired wing — a YES leg one strike toward spot, alongside each BOUNDARY_NO
 # ---------------------------------------------------------------------------

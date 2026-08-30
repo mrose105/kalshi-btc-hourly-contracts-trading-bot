@@ -748,6 +748,34 @@ strong repeat signals. Set False to restore.
 
 ## BOUNDARY_NO_MIN_NET_EDGE
 
+**0.05 -> 0.04, measured 2026-08-30.** The old bar was rejecting trades by
+fractions of a cent on the fresh quote — observed live skipping net edge
+$0.043 and $0.042 against a $0.050 bar, twice in three seconds on the same
+contract.
+
+Swept against 327 candidates over 129 expiries, settlement resolved from the
+QUOTES stream at true close_time (never `universe` — see the blind spot in
+3b8459a / b2052b3), expiry-split into tune and validate halves:
+
+    net-edge  ratio    n    WR      ROC     PF    total     TUNE    VALID
+       0.050   1.25   19   89%    +9.4%   1.83   +15.18    -0.3%   +22.8%  <- was
+       0.040   1.25   35   91%    +8.7%   1.96   +26.85    +5.4%   +11.8%  <- now
+       0.030   1.25   55   87%    +1.6%   1.08    +5.36    -3.2%    +7.3%
+       0.020   1.25   81   89%    +1.5%   1.10    +8.81    +0.4%    +2.6%
+
+0.04 nearly doubles the trade count while holding ROC (+8.7% vs +9.4%),
+RAISES profit factor (1.96 vs 1.83), and is positive on both halves — which
+0.05 is not (tune -0.3%). Below 0.04 it collapses: +8.7% -> +1.6% -> +1.5%,
+with 0.03 negative on tune. A clean gradient either side, not an isolated
+spike, which is what makes 0.04 credible rather than cherry-picked.
+
+The RATIO bar was checked in the same sweep and stays at 1.25: at 0.04 net
+edge, loosening it to 1.15 buys 6 more trades and costs 3 points of ROC
+(+8.7% -> +5.8%). It is doing real work. The net-edge bar was the tight one.
+
+Caveat: n=35, and 12 combinations were swept. The gradient and the
+both-halves result are what carry this, not the point estimate.
+
 minimum ABSOLUTE edge on the NO side:
 HELD AT 0.05 alongside the raised BOUNDARY_NO_OVERPRICING_MIN (1.60).
 2026-08-22, measured at ratio >= 1.60, net of fees, split by expiry:
