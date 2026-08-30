@@ -103,6 +103,52 @@ misleading here — judge on expectancy and profit factor.
 5. **`ps`/`pgrep` cannot check liveness** — blocked in the sandbox, and a
    blocked check reads as a dead process. Use `recordings/` mtime.
 
+## Open thread — volume as a selector (2026-08-29, revisit in a few days)
+
+Untested hypothesis that produced the most interesting result in a while, and
+the only one pointing at *buying* premium rather than selling it. Not
+actionable yet; it needs more windows, not more slicing.
+
+Pick the highest-**volume** RANGE contract in the window and buy YES at the
+ask. Settlement resolved from the **quotes** stream at `close_time` (never
+`universe` — see the blind spot above). 263 windows, 11 contracts, fees both
+sides:
+
+```
+strategy                  n     WR    ask      ROC     PF     total
+highest volume          263    36%   0.32   -14.0%   1.19   +$74.10
+nearest to spot (ATM)   263    27%   0.30   -22.3%   0.80  -$106.90
+```
+
+**Volume is not a proxy for proximity** — the two selectors agree on only 36%
+of windows, and they land $181 apart. That is the finding worth keeping.
+
+By entry price, the cheap end is where the losses are — the same conclusion
+`d62fc9d` reached independently from the NO side, so two separate tests now say
+Kalshi's far tails are overpriced to a buyer:
+
+```
+ask 0.00-0.15   n=92   WR  5%   ROC -50.1%
+ask 0.15-0.25   n=24   WR  8%   ROC -68.0%
+ask 0.25-0.35   n=43   WR 35%   ROC +15.8%
+ask 0.35-0.50   n=41   WR 56%   ROC +32.2%   PF 1.71
+ask 0.50-1.01   n=63   WR 78%   ROC  +8.6%
+```
+
+**Does NOT pass the split.** The 0.35–0.50 bucket is TUNE n=16 / −1.6% against
+VALID n=25 / +53.8%. A negative tune half beside a +54% validation half at that
+sample size is the exact shape that has fooled this repo before.
+
+Note ROC −14.0% coexists with **+$74.10** total. Both are right: ROC is per
+dollar at risk, so a 6¢ contract losing everything reads −100% while risking
+$0.66. At fixed contract count the dollars are what reach the account. Which
+metric governs depends on whether sizing is by contract count or by capital —
+that question is unresolved and matters here more than anywhere else.
+
+**To revisit:** re-run on windows recorded after `d9afc8e` (the first data that
+sees contracts through to expiry), and require the price bucket to hold on both
+halves before acting.
+
 ## Open items
 
 - **macOS sleep is eating data.** 22% of the last 7 days lost to 12 gaps,
