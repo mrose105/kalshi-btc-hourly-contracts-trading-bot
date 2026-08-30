@@ -819,6 +819,40 @@ entries and rejected the four thinnest.
 
 ## BOUNDARY_NO_HOURS_MAX
 
+**0.25 -> 0.30 (15 -> 18 min), measured 2026-08-30.** The 15-minute value was
+chosen on 2026-08-27 under the OLD thresholds — net edge 0.05, before the
+0.04 change. Re-swept at current gates against 762 candidates over 247
+expiries, settlement resolved from the QUOTES stream, expiry-split:
+
+    cumulative      n     ROC     PF     total   P(ROC>0)   TUNE    VALID
+    4.8-15 min    131   +5.7%   1.45    +$65        95%    +0.5%   +7.8%
+    4.8-18 min    188   +7.1%   1.65   +$118        99%    +4.3%  +15.0%
+    4.8-20 min    220   +4.7%   1.35    +$89        96%
+    4.8-22 min    248   +3.3%   1.23    +$72        90%
+
+18 dominates 15 on every metric — ROC, profit factor, dollars, and P(ROC>0).
+Then it falls off a cliff, and the fine slices show exactly where:
+
+    5-10 min    n=60   +10.5%  PF 2.22   TUNE +13.5%  VALID  +8.6%
+    10-15 min   n=71    +1.6%  PF 1.10   TUNE  -2.5%  VALID  +5.6%
+    15-18 min   n=57   +10.3%  PF 2.47   TUNE  +4.3%  VALID +15.0%
+    18-20 min   n=32    -9.5%  PF 0.60   TUNE -31.8%
+    20-24 min   n=63   -13.8%  PF 0.49   TUNE -24.2%
+    24-33 min  n=224    -4.6%  PF 0.76   TUNE  -2.0%  VALID  -8.7%
+
+The 15-18 slice is one of the two strongest in the hour and was being thrown
+away. Everything past 18 is negative with a negative tune half.
+
+Do NOT widen further to "collect more data". Past 20 minutes the population
+runs -4.6% to -13.8%; that is paying for losses, not for information. The
+`universe` stream already records the uncensored ladder, so any window can be
+evaluated counterfactually without trading it — the 762 candidates above were
+measured that way, none of them traded.
+
+Caveat: the 18-20 cliff rests on n=32. What carries the change is that 4.8-18
+beats 4.8-15 on every metric simultaneously, and that both halves of the split
+agree, not the sharpness of the edge.
+
 **0.25 (15 min) — re-confirmed 2026-08-27 under the corrected gates.**
 
 Entries run from BOUNDARY_NO_HOURS_MIN (0.08h = 4.8 min) to here, a 10.2-minute
