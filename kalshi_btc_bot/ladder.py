@@ -181,16 +181,42 @@ class Ladder:
             if resolve_windows:
                 self._window_t = now
 
+            # RECORD BEFORE THE EARLY RETURN. This ordering is the whole fix.
+            #
+            # Kalshi opens ONE hourly window at a time: the next hour sits in
+            # `initialized`, not `open`, so it is absent from a status=open
+            # fetch until the current hour actually closes. Measured live
+            # 2026-08-30 — status=open returned exactly three windows, the
+            # current hourly at 24 min, the DAILY at 324 min and the weekly,
+            # with every future hourly still `initialized`.
+            #
+            # So for the last ~6 minutes of every hour there is no tradeable
+            # window at all: the current hourly is under MIN_HOURS, the next is
+            # not open yet, and the daily is past MAX_HOURS. _window_from()
+            # returns "", win_markets is empty, and this guard fired — throwing
+            # away the expiring_markets that 3b8459a had just carefully
+            # collected, at precisely the moment they were the only thing left.
+            #
+            # Two fixes stacked on top of a discard. 3b8459a added the expiring
+            # window; d9afc8e made the fetch big enough to carry it; both were
+            # correct and neither could work while the recorder was skipped.
+            # Measured after d9afc8e: universe writes stopped a consistent
+            # 4.4-5.0 min before every close while the `quotes` stream kept
+            # scanning normally — 87 universe polls against 262 quotes polls
+            # across one boundary, then a 6.3 minute hole spanning the expiry.
+            #
+            # Recording is not trading. Rows still only enter `ladder` via
+            # win_markets, so an empty tradeable window still returns [] and
+            # nothing new becomes a candidate.
+            if win_markets or expiring_markets:
+                recorder.record_universe(spot, self._window,
+                                         win_markets + expiring_markets)
+
             if not win_markets:
                 print(f"  ⏳ No active window (no open "
                       f"{'/'.join(_INSTRUMENT.series)} markets in "
                       f"{_C.MIN_HOURS:.2f}–{_C.MAX_HOURS:.1f}h range)")
                 return []
-            # Record the tradeable window PLUS anything in its final minutes.
-            # The ladder itself stays win_markets-only, so nothing new becomes
-            # a candidate.
-            recorder.record_universe(spot, self._window,
-                                     win_markets + expiring_markets)
 
             # Publish the raw window so PositionManager can price open positions
             # from this one bulk response instead of a single-ticker fetch each.

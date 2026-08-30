@@ -110,6 +110,69 @@ def test_settlement_should_come_from_quotes_not_universe():
         "settlement must be resolved from, not the last universe observation")
 
 
+# ---------------------------------------------------------------------------
+# THE DISCARD, found 2026-08-30.
+#
+# Kalshi opens ONE hourly window at a time — the next hour is `initialized`,
+# not `open`, so a status=open fetch cannot see it until the current hour
+# closes. For the last ~6 minutes of every hour there is therefore NO tradeable
+# window: the current hourly is under MIN_HOURS, the next is not open, and the
+# daily is past MAX_HOURS. win_markets goes empty and `return []` fired — after
+# expiring_markets had been collected, and BEFORE record_universe ran.
+#
+# So both prior fixes were correct and neither could work. 3b8459a added the
+# expiring window; d9afc8e made the fetch large enough to carry it; this guard
+# threw the result away at exactly the moment it was the only thing left.
+# Measured: universe writes stopped a consistent 4.4-5.0 min before every close
+# while `quotes` kept scanning (87 vs 262 polls across one boundary).
+# ---------------------------------------------------------------------------
+
+
+def _code_lines():
+    """get() with comments stripped.
+
+    Matching raw text here is a trap this repo has already fallen into: an
+    explanatory comment inside get() mentions `recorder.record_universe`
+    hundreds of characters before the real call, so a plain .find() locates the
+    prose and the ordering assertion passes on code that is ordered wrongly.
+    """
+    body = open("kalshi_btc_bot/ladder.py").read().split("def get(")[1]
+    return "\n".join(l for l in body.split("\n")
+                      if not l.strip().startswith("#"))
+
+
+def test_recording_happens_before_the_empty_window_early_return():
+    """THE BUG. Order is load-bearing, not cosmetic."""
+    body = _code_lines()
+    rec = body.find("recorder.record_universe")
+    guard = body.find("if not win_markets:")
+    assert rec != -1 and guard != -1, "could not locate both statements"
+    assert rec < guard, (
+        "record_universe runs AFTER the `if not win_markets: return []` guard, "
+        "so the expiring window is discarded in exactly the minutes it is the "
+        "only data there is")
+
+
+def test_it_records_when_only_the_expiring_window_is_left():
+    """The empty-tradeable-window case must still write to the recorder."""
+    body = _code_lines()
+    i = body.find("recorder.record_universe")
+    pre = body[max(0, i - 200):i]
+    assert "expiring_markets" in pre, (
+        "the record call is not guarded on expiring_markets, so a poll with no "
+        "tradeable window records nothing")
+
+
+def test_an_empty_tradeable_window_still_returns_no_candidates():
+    """PARITY: recording is not trading. Nothing new may become tradeable."""
+    body = _code_lines()
+    guard = body.find("if not win_markets:")
+    tail = body[guard:guard + 320]
+    assert "return []" in tail, "empty tradeable window must still return []"
+    assert "win_markets + expiring_markets" in body, (
+        "the recorder must still receive both lists")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0
