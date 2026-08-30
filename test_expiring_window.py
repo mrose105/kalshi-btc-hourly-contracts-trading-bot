@@ -173,6 +173,48 @@ def test_an_empty_tradeable_window_still_returns_no_candidates():
         "the recorder must still receive both lists")
 
 
+def test_quotes_map_is_published_before_the_early_return():
+    """Same discard, different victim.
+
+    There is no tradeable window for the last ~6 minutes of every hour, so the
+    `if not win_markets: return []` guard fires then. `self._quotes` used to be
+    assigned BELOW it, going stale in exactly that window.
+
+    Prices stayed CORRECT — PositionManager._quote() rejects a snapshot older
+    than QUOTE_MAX_AGE and falls back to a per-ticker fetch — but that is the
+    83ms path instead of the 28ms one, running while time_forced_no fires at
+    T-2min and while this instrument delivers its losses in a single tick
+    (median stop went -26.5% -> -43.2% in one 2s check). At MAX_POSITIONS=4 on
+    a 2s cycle that is ~720 avoidable calls per dead window.
+    """
+    body = _code_lines()
+    q = body.find("self._quotes =")
+    guard = body.find("if not win_markets:")
+    assert q != -1 and guard != -1, "could not locate both statements"
+    assert q < guard, (
+        "self._quotes is assigned AFTER the early return, so the bulk quote "
+        "map goes stale for the last ~6 minutes of every hour")
+
+
+def test_the_quotes_map_is_built_from_all_markets():
+    """Not win_markets. A held position can drift out of the filtered ladder,
+    and the expiring window is never in win_markets by definition."""
+    body = _code_lines()
+    seg = body[body.find("self._quotes ="):body.find("self._quotes_t")]
+    assert "all_markets" in seg, (
+        "quotes map must come from all_markets or it cannot price the "
+        "expiring window or an out-of-ladder position")
+
+
+def test_the_stale_guard_still_exists_downstream():
+    """PARITY: the fallback must remain. This change reduces how often it
+    fires; it must not become the only thing standing between a stale
+    snapshot and a mispriced exit."""
+    src = open("kalshi_btc_bot/positions.py").read()
+    assert "QUOTE_MAX_AGE" in src
+    assert "_quotes_t" in src
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

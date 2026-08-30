@@ -212,12 +212,6 @@ class Ladder:
                 recorder.record_universe(spot, self._window,
                                          win_markets + expiring_markets)
 
-            if not win_markets:
-                print(f"  ⏳ No active window (no open "
-                      f"{'/'.join(_INSTRUMENT.series)} markets in "
-                      f"{_C.MIN_HOURS:.2f}–{_C.MAX_HOURS:.1f}h range)")
-                return []
-
             # Publish the raw window so PositionManager can price open positions
             # from this one bulk response instead of a single-ticker fetch each.
             # Measured 2026-08-13: /markets?limit=200 is 28ms for ALL markets,
@@ -225,6 +219,23 @@ class Ladder:
             # N*83ms of avoidable latency inside a 2s cycle, plus 30*N calls a
             # minute of rate-limit budget. Keyed by ticker, with the fetch time
             # so a stale snapshot can be rejected rather than silently trusted.
+            #
+            # ALSO ABOVE THE EARLY RETURN, for the same reason the recorder is.
+            # There is no tradeable window for the last ~6 minutes of every hour
+            # (see the note above), and this used to sit BELOW the guard — so
+            # `_quotes` went stale exactly then. PositionManager._quote() caught
+            # it, falling back to a per-ticker fetch on QUOTE_MAX_AGE, so prices
+            # stayed CORRECT; but that is the slow path (83ms vs 28ms) running
+            # in the worst window there is: time_forced_no fires at T-2min, and
+            # losses on this instrument arrive in a single tick — measured
+            # 2026-08-30, the median stopped-out position moved from -26.5% to
+            # -43.2% in one 2-second check. At MAX_POSITIONS=4 on a 2s cycle
+            # that was ~720 avoidable calls per dead window, ~120/min of
+            # rate-limit budget, precisely while the book was gapping.
+            #
+            # Built from all_markets, which is every market fetched, so it
+            # covers the expiring window and any position whose ask has drifted
+            # past MAX_ASK out of the filtered ladder.
             self._quotes = {
                 m.get("ticker"): (
                     float(m.get("yes_bid_dollars") or 0),
@@ -235,6 +246,12 @@ class Ladder:
                 for m in all_markets
             }
             self._quotes_t = now
+
+            if not win_markets:
+                print(f"  ⏳ No active window (no open "
+                      f"{'/'.join(_INSTRUMENT.series)} markets in "
+                      f"{_C.MIN_HOURS:.2f}–{_C.MAX_HOURS:.1f}h range)")
+                return []
 
             ladder = []
             for m in win_markets:
