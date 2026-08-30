@@ -179,6 +179,7 @@ LAG_FILTER_SECS             = 20                               # lookback, match
 LAG_FILTER_MAX_ADVERSE      = 25.0                             # $ of spot movement TOWARD the band; 0 = off
 
 MOMENTUM_WINDOW_SECS        = 600
+ZSCORE_WINDOW_SECS          = 300                              # was hardcoded in regime.py  → docs/CONFIG_RATIONALE.md#zscore_window_secs
 MOMENTUM_WINDOW_SCALED      = False                            # docs/CONFIG_RATIONALE.md#momentum_window_scaled
 TREND_BARS                  = 3
 TREND_THRESHOLD             = 0.0015

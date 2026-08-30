@@ -27,7 +27,7 @@ class RegimeEngine:
         mom   = feed.momentum(_w)
         accel = feed.momentum(max(1, _w // 2)) - mom
         vol   = feed.ewma_volatility()   # EWMA replaces plain rolling stdev
-        z     = feed.zscore(300)
+        z     = feed.zscore(_C.ZSCORE_WINDOW_SECS)
         cn, cd= feed.consecutive()
 
         if (abs(accel) > _C.BREAKOUT_ACCEL

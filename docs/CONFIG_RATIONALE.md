@@ -1044,6 +1044,43 @@ NOT VALIDATED. n=27 armed / 11 with the watchlist, and $25 came from a
 five-value grid. What makes it worth shipping over the other candidates is
 that it has a measured MECHANISM rather than a grid search behind it.
 
+## ZSCORE_WINDOW_SECS
+
+Lookback for `feed.zscore()`, the |z| that gates every BOUNDARY_NO entry.
+
+**Was hardcoded as `feed.zscore(300)` at regime.py:30.** Moved to config
+2026-08-30 purely so it can be swept — the default is the same 300s, so
+behaviour is byte-identical. A sweep against a literal silently does nothing,
+which is the frozen-import failure this repo has already paid for: seven values
+of `NO_OVERPRICING_MIN` once produced byte-identical trades because signals.py
+had bound a name-local snapshot at import time.
+
+It is a DIFFERENT window from `MOMENTUM_WINDOW_SECS` (600s), so `mom` and `z`
+on the dashboard measure 10 and 5 minutes respectively and routinely disagree
+without contradicting each other.
+
+**What the number means, and why it is not what it looks like.** This is the
+z-score of the price LEVEL — how far the last tick sits from the window mean,
+in sample stdevs of that same window. Not a z-score of returns.
+
+Measured over 138,150 live ticks:
+
+    p50  1.12      p75  1.67      p90  2.19      p95  2.53      p99  3.30
+
+    |z| >= 1.40 (the entry bar):     36% of ticks
+    if z were normally distributed:  16%
+
+The typical tick already sits 1.1 sigma from its own mean, and the entry bar
+admits a THIRD of all ticks. That is structural rather than a miscalibration:
+this is the endpoint of a random walk measured against that walk's own running
+mean, and the mean LAGS — dragged by where price has been, while the last tick
+is wherever price got to. The distribution is far fatter than normal theory.
+
+So `BOUNDARY_NO_ZSCORE_MIN = 1.40` is a coarse filter, not a rare-event
+detector, and raising it measured as inert for exactly this reason: the density
+right there is enormous. The real rationing comes from the 15-minute window
+(-84% of rows) and the yes_ask band (-97% of what survives).
+
 ## MOMENTUM_WINDOW_SCALED
 
 2026-08-11 sweep (momentum_window_sweep.py, 40d tune / 19d held out), real-time
