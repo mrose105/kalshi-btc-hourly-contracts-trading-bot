@@ -70,11 +70,38 @@ class Ladder:
                 pass
         return best_w
 
+    # Kalshi truncates /markets at `limit` and returns a cursor when there is
+    # more. At limit=200 that silently cut the response in half: ONE hourly
+    # window is up to 188 markets, so the second window got whatever was left —
+    # measured at exactly 12 rows, and only in 2% of polls (200 - 188 = 12).
+    #
+    # That is what actually defeated the expiring-window fix in 3b8459a. The
+    # code below correctly ASKS for the closing window; the transport could not
+    # carry it. Windows therefore went dark a median of 303s before close —
+    # against MIN_HOURS = 300s, which is why it looked like the same
+    # [MIN_HOURS, MAX_HOURS] bug wearing a different hat.
+    #
+    # Measured 2026-08-29: limit=200 -> 200 rows / 2 windows / cursor present;
+    # limit=1000 -> 318 rows / 3 windows / no cursor, 65ms vs 48ms. All open
+    # KXBTC markets fit in one page with room to spare, for tens of ms inside a
+    # 2s cycle. The cursor loop below is belt-and-braces: if Kalshi ever lists
+    # enough windows to overflow 1000, this pages instead of silently truncating
+    # again. _MAX_PAGES bounds the worst case so a runaway cursor cannot stall
+    # the trading loop.
+    _MAX_PAGES = 4
+
     def _fetch_series(self, series: str) -> list:
-        data = self.client._request("GET", "/markets",
-                 params={"limit": 200, "series_ticker": series,
-                         "status": "open"}, timeout=10)
-        return data.get("markets", [])
+        out: list = []
+        params = {"limit": 1000, "series_ticker": series, "status": "open"}
+        for _ in range(self._MAX_PAGES):
+            data = self.client._request("GET", "/markets", params=dict(params),
+                                        timeout=10)
+            out.extend(data.get("markets") or [])
+            cursor = data.get("cursor")
+            if not cursor:
+                break
+            params["cursor"] = cursor
+        return out
 
     def find_window(self) -> str:
         try:
