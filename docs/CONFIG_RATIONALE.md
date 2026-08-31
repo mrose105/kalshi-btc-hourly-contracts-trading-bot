@@ -535,7 +535,26 @@ Tightened to -20% to cut reversals sooner — BTC spiking into the range rarely 
 
 ## NO_STOP
 
-**0.30 as of 2026-08-26** (was 0.40).
+**0.40 as of 2026-08-28.** Reverted from 0.30; both halves of `3fb56d5` went
+back.
+
+REVERSED BY `3b8459a`, for the same reason as NO_EDGE_GONE_MIN_GAIN: the sweep
+below resolved settlement from a stream that stopped recording ~307s before
+every close, so every win rate it rests on is overstated.
+
+The economic argument does not survive either, and the arithmetic was never the
+problem — the framing was. "A 40% stop realises 1.7x the premium, so one loss
+erases 1.7 winners" counts what a stop-out costs and ignores what stopping costs
+in the positions that recover. Across 14 real stop-outs the stop turned -$23.81
+into -$57.20, destroying $33.39. About half of stopped positions come back: the
+stop is not predictive, only early. test_no_exits.py no longer asserts the 1.7x
+bound and records why.
+
+So 0.40 is a tripwire, not a tuned level, and it is deliberately not a tight one
+near expiry — inside the entry gate only the MIN_HOLD_CATASTROPHE floor (0.65)
+applies, by design.
+
+--- RETRACTED 2026-08-26 SWEEP BELOW, KEPT FOR THE RECORD ---
 
 A stop must be read against the payoff it is protecting. This strategy risks
 ~$0.81 to win ~$0.19, so a stop at X% of cost realises a loss of 0.81X against
@@ -577,7 +596,35 @@ BACKTEST_INTEGRITY.md section 4 and QUANT_STANDARDS_AUDIT.md section 1d.
 
 ## NO_EDGE_GONE_MIN_GAIN
 
-0.0 restores the historical behaviour (fire on any positive pnl).
+**0.0 as of 2026-08-28** (0.15 for the two days between). `edge_gone` fires on
+any positive pnl — the historical behaviour.
+
+REVERSED BY `3b8459a`. Everything below the line was measured against settlement
+labels the recorder could not actually see. Until that commit the `universe`
+stream went dark a median of 307s before each close — zero contracts were ever
+observed within 60s of expiry — so "held to settlement" was resolved from spot
+at roughly T-5min. That overstated NO win rates, which made holding look better
+than it is, which is the entire case for gating this tier.
+
+Re-measured against true fills from the `quotes` stream — the only source
+continuous through expiry — the sign flips:
+
+    biased labels     edge_gone COSTS  -$11.57  over 41 armings
+    true settlement   edge_gone SAVES  +$52.01  over 43 real exits
+
+The tier is not leaking; it is the profitable half of the ladder. Gating it cost
+$52. Keep 0.0, and re-derive from `quotes`, never from `universe`, before
+touching it again — see test_expiring_window.py.
+
+Corroborated live 2026-08-31 on KXBTC-26AUG3109-B77950: bought $0.77 with the
+ask ~1.5x the model, sold 2m39s later at $0.90, +$1.56 (+16.9%). Note what it
+did NOT do — with the model at 5.1% against a $0.93 NO bid the ratio was 1.38,
+above NO_EDGE_GONE_RATIO, so it held. It fired eight seconds later when spot
+rallied back toward the band edge and the model repriced UP to meet the market.
+The tier sells convergence, not profit, and it reads a `true_prob` recomputed
+every 2s scan (positions.py:250-253, 282).
+
+--- RETRACTED 2026-08-25 STUDY BELOW, KEPT FOR THE RECORD ---
 
 `edge_gone` sells when the overpricing ratio collapses AND the position is up.
 The second condition was near-vacuous: a NO position decays toward $1.00, so
