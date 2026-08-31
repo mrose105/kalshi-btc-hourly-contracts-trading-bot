@@ -215,6 +215,28 @@ def test_the_stale_guard_still_exists_downstream():
     assert "_quotes_t" in src
 
 
+def test_an_empty_window_does_not_match_every_ticker():
+    """THE PYTHON GOTCHA. `"" in "anything"` is True.
+
+    _window_from() returns "" whenever nothing sits in [MIN_HOURS, MAX_HOURS] —
+    which IS the last ~6 minutes of every hour, since the closing hourly is
+    under MIN_HOURS and the next is still `initialized`. With a bare
+    `window in ticker`, an empty window matched every market, so the continue
+    fired for all of them and expiring_markets came out empty in the exact
+    window it exists to cover.
+
+    It failed intermittently rather than always, which is why b2052b3 looked
+    fixed: the window is cached for 120s, so when that cache still held the OLD
+    window the rows were captured as win_markets instead. Measured 2026-08-30,
+    some hours recorded to 4s before close while others left a 6.1 min hole.
+    """
+    assert "" in "KXBTC-26AUG3019-B78550", "premise of the bug"
+    body = _code_lines()
+    assert 'window and window in m.get("ticker"' in body, (
+        "the expiring-window guard does not check that `window` is non-empty, "
+        "so an empty window skips every market")
+
+
 if __name__ == "__main__":
     tests = [v for k, v in sorted(globals().items()) if k.startswith("test_")]
     failed = 0

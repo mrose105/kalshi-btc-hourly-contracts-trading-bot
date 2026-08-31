@@ -167,7 +167,22 @@ class Ladder:
                 # without opening a trading window nobody asked for.
                 for m in markets:
                     ct = m.get("close_time", "")
-                    if not ct or window in m.get("ticker", ""):
+                    # `window and ...` is load-bearing. _window_from() returns
+                    # "" when nothing is in [MIN_HOURS, MAX_HOURS] — which is
+                    # exactly the last ~6 minutes of every hour, since the
+                    # closing hourly is under MIN_HOURS and the next is still
+                    # `initialized`. And `"" in "KXBTC-..."` is True in Python,
+                    # so an empty window matched EVERY ticker, the continue
+                    # fired for all of them, and expiring_markets came out empty
+                    # in the one window it exists to cover.
+                    #
+                    # It worked intermittently, which is worse than never: the
+                    # window is cached for 120s, so whenever that cache still
+                    # held the OLD window the rows were captured as win_markets
+                    # instead. Measured 2026-08-30 after b2052b3 shipped — some
+                    # hours recorded to 4s before close, others left a 6.1 min
+                    # hole, purely on cache phase.
+                    if not ct or (window and window in m.get("ticker", "")):
                         continue
                     try:
                         h = (datetime.datetime.fromisoformat(
