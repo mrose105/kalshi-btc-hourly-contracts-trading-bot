@@ -73,5 +73,56 @@ check("wing.py reads config module-qualified (no frozen import)",
       "_C.WING_SIZE_RATIO" in open("kalshi_btc_bot/wing.py").read()
       or 'getattr(_C, "WING_SIZE_RATIO"' in open("kalshi_btc_bot/wing.py").read())
 
+
+# ── band selection: the occupied band, not its neighbour ────────────────────
+# Rebuilt 2026-09-01. "One strike toward spot" landed on the occupied band only
+# when spot happened to sit in it and on the neighbour otherwise — measured
+# +0.0036 vs -0.0331, opposite sides of zero, with the neighbour the common case.
+print()
+_orig_enabled = C.WING_ENABLED
+C.WING_ENABLED = True
+try:
+    def band(tk, lo, hi, ask=0.30):
+        return {"ticker": tk, "low": lo, "high": hi, "ask": ask, "bid": ask - 0.02}
+
+    ladder = [band("B77450", 77400, 77500), band("B77550", 77500, 77600),
+              band("B77650", 77600, 77700), band("B77750", 77700, 77800)]
+    no_leg = ladder[0]                      # NO leg well below spot
+
+    w = wing_mod.toward_spot(ladder, no_leg, spot=77650.0)
+    check("picks the band spot is INSIDE",
+          w is not None and w["ticker"] == "B77650",
+          f"got {w and w['ticker']}")
+
+    # Spot inside the band ADJACENT to the NO leg: old rule would step one
+    # strike and land on B77550 regardless; new rule must land on the occupied.
+    w = wing_mod.toward_spot(ladder, no_leg, spot=77550.0)
+    check("does not step by strike count when spot sits elsewhere",
+          w is not None and w["ticker"] == "B77550",
+          f"got {w and w['ticker']}")
+
+    # The occupied band missing from the ladder must decline, NOT fall back to
+    # a neighbour — the fallback is the measured-negative population.
+    sparse = [band("B77450", 77400, 77500), band("B77750", 77700, 77800)]
+    w = wing_mod.toward_spot(sparse, sparse[0], spot=77650.0)
+    check("declines when the occupied band is absent (no neighbour fallback)",
+          w is None, f"got {w and w['ticker']}")
+
+    # Never buy the NO leg's own band back.
+    w = wing_mod.toward_spot(ladder, ladder[2], spot=77650.0)
+    check("never returns the NO leg's own band", w is None,
+          f"got {w and w['ticker']}")
+
+    # Ask ceiling still applies.
+    pricey = [band("B77650", 77600, 77700, ask=C.MAX_ASK + 0.05)]
+    check("respects MAX_ASK",
+          wing_mod.toward_spot(pricey, no_leg, spot=77650.0) is None)
+
+    C.WING_ENABLED = False
+    check("returns None when the wing is disabled",
+          wing_mod.toward_spot(ladder, no_leg, spot=77650.0) is None)
+finally:
+    C.WING_ENABLED = _orig_enabled
+
 print(f"\n{len(PASS)}/{len(PASS) + len(FAIL)} passed")
 sys.exit(1 if FAIL else 0)

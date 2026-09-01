@@ -436,6 +436,19 @@ def main() -> None:
                 continue
             yes_won = 1.0 if float(c["low"]) <= ss < float(c["high"]) else 0.0
             sd = side_for(c, float(spot), regime["zscore"])
+            # WHAT THE WING ACTUALLY BUYS vs WHERE THE EDGE SITS.
+            # wing.toward_spot() picks one strike TOWARD spot from the NO leg,
+            # which is usually the band ADJACENT to the one spot occupies, not
+            # the occupied band itself. The only positive cell in this study is
+            # the occupied band. Separate them explicitly.
+            lo_c, hi_c = float(c["low"]), float(c["high"])
+            width = max(1.0, hi_c - lo_c)
+            if lo_c <= float(spot) < hi_c:
+                obs["OCCUPIED band (spot inside)"].append(
+                    (float(c["ask"]), yes_won, c["ticker"].rsplit("-", 1)[0]))
+            elif abs(c["otm_dist"]) <= width:
+                obs["ADJACENT band (1 strike away)"].append(
+                    (float(c["ask"]), yes_won, c["ticker"].rsplit("-", 1)[0]))
             rec = (float(c["ask"]), yes_won, c["ticker"].rsplit("-", 1)[0])
             obs[b].append(rec)
             obs[f"{b} {sd}"].append(rec)
@@ -501,7 +514,8 @@ def main() -> None:
 
     print()
     for cell in ("$0-100 behind", "$0-100 in", "$0-100 ahead",
-                 "CAME-FROM (spot path)"):
+                 "CAME-FROM (spot path)",
+                 "OCCUPIED band (spot inside)", "ADJACENT band (1 strike away)"):
         rows = obs.get(cell) or []
         if len(rows) < 40:
             continue

@@ -52,38 +52,59 @@ from . import config as _C
 
 
 def toward_spot(ladder: list, no_contract: dict, spot: float) -> dict | None:
-    """The band one strike from `no_contract`, in the direction of spot.
+    """The band spot is CURRENTLY INSIDE, or None.
 
-    Returns None when the ladder cannot supply it, which is a normal outcome —
-    the wing is optional and its absence must never block the NO leg.
+    Selected by where spot actually is — `low <= spot < high` — not by counting
+    strikes from the NO leg.
+
+    WHY THIS CHANGED, 2026-09-01. The rule used to step exactly one strike from
+    the NO band toward spot. BOUNDARY_NO_DIST gates the NO leg to roughly
+    $100-200 OTM, so one strike lands ~$0-100 out — which is the occupied band
+    only when spot happens to sit in it, and its NEIGHBOUR otherwise. Which one
+    you got was geometry, not intent, and the two do not measure the same:
+
+        OCCUPIED band (spot inside)     n=250  138 expiries  mean +0.0036
+                                               95% CI [-0.0641, +0.0718]
+        ADJACENT band (1 strike away)   n=703  188 expiries  mean -0.0331
+                                               95% CI [-0.0646, +0.0004]
+
+    Net of per-observation fees, settlement resolved from the quotes stream
+    (wing_calibration.py). 3.7c apart and on opposite sides of zero, and the
+    ADJACENT band was the common case — 703 observations against 250, because
+    the neighbour is nearly always on the ladder while the occupied band often
+    is not.
+
+    Returning None when the occupied band is absent is the point of the change,
+    not a limitation: the old fallback to a neighbour is precisely the negative
+    population. The wing is optional and its absence must never block the NO
+    leg (app.py wraps this call), so declining is always safe.
+
+    THIS IS NOT AN EDGE CLAIM. +0.0036 with an interval spanning zero is the
+    least-bad cell, not a proven one, and the $0-100 aggregate that contains it
+    is significantly NEGATIVE at [-0.0526, -0.0006]. The justification is
+    "stop systematically buying the worse population", not "capture the better
+    one". See docs/CONFIG_RATIONALE.md#wing_enabled.
     """
     if not getattr(_C, "WING_ENABLED", False):
         return None
     try:
-        lo = no_contract.get("low")
-        hi = no_contract.get("high")
-        if lo is None or hi is None or spot is None:
+        if spot is None:
             return None
-        rows = sorted(
-            (c for c in ladder
-             if c.get("low") is not None and c.get("high") is not None),
-            key=lambda c: c["low"])
-        idx = next((i for i, c in enumerate(rows)
-                    if c.get("ticker") == no_contract.get("ticker")), None)
-        if idx is None:
-            return None
-        # The NO band sits away from spot; step back one strike toward it.
-        step = -1 if lo >= spot else 1
-        j = idx + step
-        if not (0 <= j < len(rows)):
-            return None
-        wing = rows[j]
-        # Never buy the wing on a band that is itself the NO band's far side,
-        # and never pay more than the YES entry ceiling.
-        ask = wing.get("ask") or 0
-        if ask <= 0 or ask > _C.MAX_ASK:
-            return None
-        return wing
+        for c in ladder:
+            lo, hi = c.get("low"), c.get("high")
+            if lo is None or hi is None:
+                continue
+            if not (float(lo) <= float(spot) < float(hi)):
+                continue
+            # Never buy the NO leg's own band back, and never pay more than the
+            # YES entry ceiling.
+            if c.get("ticker") == no_contract.get("ticker"):
+                return None
+            ask = c.get("ask") or 0
+            if ask <= 0 or ask > _C.MAX_ASK:
+                return None
+            return c
+        return None
     except Exception:
         return None
 
