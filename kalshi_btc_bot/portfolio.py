@@ -548,11 +548,26 @@ class Portfolio:
         return None
 
     def buy(self, contract: dict, true_prob: float, dist=None, spot: float = None,
-            vol: float = None, regime: dict = None, is_snipe: bool = False) -> bool:
+            vol: float = None, regime: dict = None, is_snipe: bool = False,
+            count_override: int = None) -> bool:
         """Buy YES contracts. Position size is Kelly-derived (quarter-Kelly, capped)
         for normal entries, or fixed SNIPE_TRADE_PCT for is_snipe entries — Kelly
         sizing off a noisy deep-OTM tail probability isn't trustworthy enough to
-        let it drive size on a lottery-ticket bet."""
+        let it drive size on a lottery-ticket bet.
+
+        `count_override` forces an exact contract count, for a caller whose size
+        is decided elsewhere. The wing is the case that needs it: app.py computed
+        wing.size_for(no_count) and then never passed it anywhere, so the value
+        reached only the log string while Kelly did the real sizing. Observed
+        live 2026-09-01 12:52:26 — the panel said "YES x13", the fill was 29,
+        because Kelly saw true=48% against a $0.41 ask and leaned in. That made
+        the wing $11.89 of capital against its own NO leg's $9.62, inverting the
+        1:2 split wing.py documents and rendering WING_SIZE_RATIO inert.
+
+        The override is still subject to every guard below it — cash, budget,
+        MAX_POSITIONS, and the real depth walk — so it can only ever size DOWN
+        from what it asks for, never past a limit.
+        """
         ticker    = contract["ticker"]
         bid, ask  = self._fresh_quote(ticker)
         if ask <= 0 or bid <= 0 or ask <= bid or ask > _C.MAX_ASK:
@@ -597,8 +612,15 @@ class Portfolio:
             budget    = self.budget(trade_pct=kelly_pct)
             count     = int(budget / limit) if limit > 0 else 0
 
+            if count_override is not None:
+                # Caller-decided size. Budget still binds — an override cannot
+                # spend more than Kelly's own allowance would have, so a wing
+                # can never become the larger position by asking for it.
+                count  = max(0, int(count_override))
+                budget = max(budget, self.budget(trade_pct=_C.MAX_TRADE_PCT))
+
             # Kelly rounds to 0 — fall back to 1 contract within MAX_TRADE_PCT
-            if count <= 0:
+            if count <= 0 and count_override is None:
                 fallback_pct = _C.SNIPE_TRADE_PCT if is_snipe else _C.MAX_TRADE_PCT
                 budget = self.budget(trade_pct=fallback_pct)
                 count  = int(budget / limit) if limit > 0 else 0

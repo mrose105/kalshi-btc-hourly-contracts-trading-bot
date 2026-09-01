@@ -293,8 +293,12 @@ def main():
                                       f"@ ${_w.get('ask', 0):.3f} true={_wp:.0%} "
                                       f"(pairs {_fire['ticker'][-18:]})")
                                 live_view.log_event(_m) if live_view.ENABLED else print(f"     {_m}")
+                                # _n is the SIZE, not decoration. It used to reach
+                                # only the log line above while Kelly sized the
+                                # actual fill — see Portfolio.buy(count_override).
                                 portfolio.buy({**_w, "signal": "WING", "wing_of": _fire["ticker"]},
-                                              _wp, dist, spot, vol, regime)
+                                              _wp, dist, spot, vol, regime,
+                                              count_override=_n)
                         except Exception:
                             pass
 
