@@ -118,6 +118,36 @@ try:
     check("respects MAX_ASK",
           wing_mod.toward_spot(pricey, no_leg, spot=77650.0) is None)
 
+    # ── TRENDING: the landing zone, one strike FORWARD of the occupied band ──
+    up = {"regime": "TRENDING", "direction": "UP"}
+    dn = {"regime": "TRENDING", "direction": "DN"}
+    rev = {"regime": "REVERTING", "direction": "DN"}
+
+    w = wing_mod.toward_spot(ladder, no_leg, spot=77550.0, regime=up)
+    check("TRENDING UP buys one strike ABOVE the occupied band",
+          w is not None and w["ticker"] == "B77650", f"got {w and w['ticker']}")
+
+    w = wing_mod.toward_spot(ladder, no_leg, spot=77650.0, regime=dn)
+    check("TRENDING DN buys one strike BELOW the occupied band",
+          w is not None and w["ticker"] == "B77550", f"got {w and w['ticker']}")
+
+    w = wing_mod.toward_spot(ladder, no_leg, spot=77550.0, regime=rev)
+    check("REVERTING still buys the occupied band",
+          w is not None and w["ticker"] == "B77550", f"got {w and w['ticker']}")
+
+    w = wing_mod.toward_spot(ladder, no_leg, spot=77750.0, regime=up)
+    check("TRENDING declines at the top of the ladder", w is None,
+          f"got {w and w['ticker']}")
+
+    w = wing_mod.toward_spot(ladder, ladder[3], spot=77650.0, regime=up)
+    check("TRENDING never returns the NO leg's own band", w is None,
+          f"got {w and w['ticker']}")
+
+    w = wing_mod.toward_spot(ladder, no_leg, spot=77650.0,
+                             regime={"regime": "TRENDING", "direction": "NEUTRAL"})
+    check("TRENDING NEUTRAL falls back to the occupied band",
+          w is not None and w["ticker"] == "B77650", f"got {w and w['ticker']}")
+
     C.WING_ENABLED = False
     check("returns None when the wing is disabled",
           wing_mod.toward_spot(ladder, no_leg, spot=77650.0) is None)

@@ -51,7 +51,8 @@ its own — it has only ever been measured as a passenger on BOUNDARY_NO.
 from . import config as _C
 
 
-def toward_spot(ladder: list, no_contract: dict, spot: float) -> dict | None:
+def toward_spot(ladder: list, no_contract: dict, spot: float,
+                regime: dict | None = None) -> dict | None:
     """The band spot is CURRENTLY INSIDE, or None.
 
     Selected by where spot actually is — `low <= spot < high` — not by counting
@@ -90,6 +91,46 @@ def toward_spot(ladder: list, no_contract: dict, spot: float) -> dict | None:
     try:
         if spot is None:
             return None
+
+        # TRENDING: buy the LANDING ZONE, not the band spot is leaving.
+        #
+        # Fading is the reverting/ranging trade. In a trend the band spot sits
+        # in is the one it is about to vacate, so buying it is betting against
+        # the regime the engine just identified. One strike FORWARD in the
+        # direction of travel is where spot is heading — the landing zone.
+        #
+        # DORMANT AS WRITTEN, and deliberately so. find_boundary_no() returns
+        # early unless the regime is RANGING or REVERTING (signals.py), and the
+        # wing only exists as a companion to a BOUNDARY_NO fill, so this branch
+        # cannot currently be reached. Reaching it means letting the wing fire
+        # independently of the NO leg, which is a strategy change with no
+        # measurement behind it and needs its own decision. The code is here so
+        # that decision is a one-line gate rather than a rewrite.
+        _r = (regime or {}).get("regime", "")
+        _d = (regime or {}).get("direction", "")
+        if _r == "TRENDING" and _d in ("UP", "DN"):
+            occupied = next((c for c in ladder
+                             if c.get("low") is not None and c.get("high") is not None
+                             and float(c["low"]) <= float(spot) < float(c["high"])), None)
+            if occupied is None:
+                return None
+            rows = sorted((c for c in ladder if c.get("low") is not None),
+                          key=lambda c: float(c["low"]))
+            idx = next((i for i, c in enumerate(rows)
+                        if c.get("ticker") == occupied.get("ticker")), None)
+            if idx is None:
+                return None
+            j = idx + (1 if _d == "UP" else -1)
+            if not (0 <= j < len(rows)):
+                return None
+            landing = rows[j]
+            if landing.get("ticker") == no_contract.get("ticker"):
+                return None
+            ask = landing.get("ask") or 0
+            if ask <= 0 or ask > _C.MAX_ASK:
+                return None
+            return landing
+
         for c in ladder:
             lo, hi = c.get("low"), c.get("high")
             if lo is None or hi is None:

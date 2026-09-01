@@ -282,23 +282,39 @@ def main():
                     # break or block the leg that was measured.
                     if _ok:
                         try:
-                            _w = wing_mod.toward_spot(ladder, _fire, spot)
+                            _w = wing_mod.toward_spot(ladder, _fire, spot, regime)
                             if _w is not None:
                                 _pos = portfolio.positions.get(_fire["ticker"])
                                 _n = wing_mod.size_for((_pos or {}).get("count", 0))
                                 _wp = dist.posterior_prob(
                                     _w, spot, vol, _w.get("hours", 0.0), regime,
                                     bid=_w.get("bid"), ask=_w.get("ask"))["true_prob"]
-                                _m = (f"🪽 WING {_w['ticker'][-18:]} YES x{_n} "
-                                      f"@ ${_w.get('ask', 0):.3f} true={_wp:.0%} "
-                                      f"(pairs {_fire['ticker'][-18:]})")
-                                live_view.log_event(_m) if live_view.ENABLED else print(f"     {_m}")
-                                # _n is the SIZE, not decoration. It used to reach
-                                # only the log line above while Kelly sized the
+                                # LOG THE OUTCOME, NOT THE INTENTION. This used
+                                # to print before buy(), so the panel showed
+                                # "🪽 WING ... x11" for wings that were never
+                                # bought — observed 2026-09-01 18:44:15, logged
+                                # against no fill in trades.csv because true=28%
+                                # against a $0.29 ask is -1c of edge and buy()'s
+                                # MIN_EDGE gate declined it. While the wing is
+                                # being evaluated live that overstates how often
+                                # it fires, which is the one thing the
+                                # observation exists to measure.
+                                #
+                                # _n is the SIZE, not decoration. It used to
+                                # reach only the log line while Kelly sized the
                                 # actual fill — see Portfolio.buy(count_override).
-                                portfolio.buy({**_w, "signal": "WING", "wing_of": _fire["ticker"]},
-                                              _wp, dist, spot, vol, regime,
-                                              count_override=_n)
+                                _filled = portfolio.buy(
+                                    {**_w, "signal": "WING", "wing_of": _fire["ticker"]},
+                                    _wp, dist, spot, vol, regime,
+                                    count_override=_n)
+                                _got = (portfolio.positions.get(_w["ticker"]) or {}).get("count", 0)
+                                _m = (f"🪽 WING {_w['ticker'][-18:]} YES x{_got} "
+                                      f"@ ${_w.get('ask', 0):.3f} true={_wp:.0%} "
+                                      f"(pairs {_fire['ticker'][-18:]})") if _filled else (
+                                      f"🪽 wing declined {_w['ticker'][-18:]} "
+                                      f"ask=${_w.get('ask', 0):.3f} true={_wp:.0%} "
+                                      f"edge={_wp - _w.get('ask', 0):+.3f}")
+                                live_view.log_event(_m) if live_view.ENABLED else print(f"     {_m}")
                         except Exception:
                             pass
 
