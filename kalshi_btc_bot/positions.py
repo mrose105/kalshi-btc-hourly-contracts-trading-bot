@@ -12,7 +12,7 @@ def _hours_from(close_time: str) -> float:
 from .config import (
     BID_EXIT_THRESHOLD, BOUNDARY_RISK_DIST, BOUNDARY_RISK_HARD_STOP,
     BOUNDARY_RISK_MIN_LOSS, BOUNDARY_RISK_MINS, GAMMA_HIGH_THRESHOLD,
-    GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT, NO_EDGE_GONE_RATIO,
+    GAMMA_LOCK_MIN_BID, GAMMA_LOCK_MIN_PROFIT,
     MOMENTUM_LOCK_PCT, PEAK_GIVEBACK_HARD_LOSS_PCT, PEAK_GIVEBACK_MIN_BID,
     PEAK_GIVEBACK_MIN_BID_MULT, PEAK_GIVEBACK_MIN_PEAK, PROFIT_EXIT_MEGA,
     SCALP_LOCK_MIN_BID, SCALP_LOCK_PCT, SNIPE_STOP_PCT, STOP_UNCOVERED_PCT,
@@ -350,7 +350,7 @@ class PositionManager:
                 # keeps the thesis-exit for cases where the edge genuinely
                 # collapsed while leaving ordinary convergence alone.
                 _eg_min = getattr(_C, "NO_EDGE_GONE_MIN_GAIN", 0.0)
-                if (overprice_r < NO_EDGE_GONE_RATIO
+                if (overprice_r < _C.NO_EDGE_GONE_RATIO
                         and no_pnl_pct > _eg_min and not fresh):
                     ok, px = self._confirm_profit(ticker, pos, entry, no_bid_px)
                     if ok:

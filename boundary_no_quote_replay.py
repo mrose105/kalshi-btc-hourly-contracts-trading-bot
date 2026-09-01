@@ -19,6 +19,7 @@ import glob
 import gzip
 import json
 import random
+import zlib
 from dataclasses import dataclass
 
 from kalshi_btc_bot import config as C
@@ -50,7 +51,16 @@ class Selection:
 
 
 def tolerant_jsonl_gz(path: str) -> list[dict]:
-    """Read an append-in-progress gzip JSONL file without losing prior rows."""
+    """Read an append-in-progress gzip JSONL file without losing prior rows.
+
+    Also survives a CORRUPT member, not just a truncated one. A file whose
+    writer was killed mid-block (macOS sleep, or the process being stopped)
+    raises zlib.error rather than EOFError, and catching only EOFError turned
+    that into a hard crash that took the whole replay down — for recordings that
+    are unrecoverable, so dropping the day is not an option. Measured
+    2026-08-31: recordings/*_2026-08-23 and the in-progress current day both hit
+    this. Keep whatever decompressed cleanly and stop at the damage.
+    """
     rows = []
     try:
         with gzip.open(path, "rt") as fh:
@@ -59,7 +69,7 @@ def tolerant_jsonl_gz(path: str) -> list[dict]:
                     rows.append(json.loads(line))
                 except (json.JSONDecodeError, TypeError):
                     break
-    except EOFError:
+    except (EOFError, zlib.error, OSError):
         pass
     return rows
 

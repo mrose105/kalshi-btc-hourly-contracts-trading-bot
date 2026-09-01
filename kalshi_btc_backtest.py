@@ -1117,7 +1117,7 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                  use_vol_surface: bool = False,
                  no_threshold: float = None,
                  start_date: str = None, end_date: str = None,
-                 enable_yes: bool = True, enable_snipe: bool = True):
+                 enable_yes: bool = None, enable_snipe: bool = None):
     """start_date/end_date (YYYY-MM-DD): fetch an explicit, fixed calendar
     window instead of `days` back from now. Exists so a parameter sweep can
     tune on one window and validate on a genuinely separate one — `days`
@@ -1128,6 +1128,15 @@ def run_backtest(days: int = 7, capital: float = 50.0,
     except ImportError:
         print("yfinance not installed. Run: pip install yfinance")
         sys.exit(1)
+
+    # None = follow the bot. Both used to default True while live has run
+    # ENABLE_YES=False and ENABLE_SNIPE=False, so any caller that did not pass
+    # them measured a YES book the bot does not trade. Explicit True/False still
+    # overrides, for sweeps that deliberately isolate one side.
+    if enable_yes is None:
+        enable_yes = C.ENABLE_YES
+    if enable_snipe is None:
+        enable_snipe = C.ENABLE_SNIPE
 
     if min_edge is not None:
         C.MIN_EDGE = min_edge
@@ -1304,7 +1313,29 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                           f"edge={sig['edge']:.1%} vr={regime_bt.get('vol_ratio',1):.2f} "
                           f"{itm_tag}{comp_tag}{vte_tag}")
 
-            if no_threshold is not None:
+            # GATED ON THE SAME FLAGS THE BOT READS, not on whether the caller
+            # happened to pass --no-threshold.
+            #
+            # This whole block used to sit under `if no_threshold is not None:`,
+            # and run_backtest defaults that to None. So every caller that did
+            # not pass a GENERIC MISPRICE_NO overpricing bar silently simulated
+            # zero NO trades — including BOUNDARY_NO, which is the only NO
+            # strategy live (ENABLE_MISPRICE_NO is False, ENABLE_BOUNDARY_NO is
+            # True). One argument about one strategy switched off a different
+            # one entirely.
+            #
+            # It failed silently and plausibly, which is the dangerous part.
+            # stop_loss_counterfactual.py printed "Real stop trades: 0, Shadows
+            # forked: 0, Net effect +0.00" on 2026-08-31 and read as a null
+            # result rather than as a harness that never ran the strategy. With
+            # enable_yes defaulting True while live runs ENABLE_YES=False, what
+            # it actually measured was 49 YES trades of a book the bot does not
+            # trade.
+            #
+            # Same class as RANGE_WIDTH and the momentum window: the backtest
+            # modelling a configuration live does not run. Reading C directly
+            # means the two can no longer drift apart by default.
+            if C.ENABLE_MISPRICE_NO:
                 no_sig = signal_e.find_no_scalp(
                     spot, regime_bt["vol"], regime_bt, ladder, portfolio.positions,
                     portfolio.cash, portfolio.capital,
@@ -1312,6 +1343,7 @@ def run_backtest(days: int = 7, capital: float = 50.0,
                 if no_sig:
                     pending.append(("no", no_sig))
 
+            if C.ENABLE_BOUNDARY_NO:
                 bno_sig = signal_e.find_boundary_no(
                     spot, regime_bt["vol"], regime_bt, ladder, portfolio.positions,
                     portfolio.cash, portfolio.capital,
@@ -1536,11 +1568,13 @@ if __name__ == "__main__":
                         help="Run NO-only: disables YES/SNIPE and enables boundary-NO scan with generic MISPRICE_NO isolated")
     args = parser.parse_args()
 
-    enable_yes = not args.no_yes and not args.no_only
-    enable_snipe = not args.no_snipe and not args.no_only
+    # A flag forces the side OFF; its absence means "follow the bot" (None), not
+    # "force ON". These used to evaluate to True whenever the flag was absent,
+    # so the default CLI run simulated a YES book that live has not traded since
+    # ENABLE_YES went False.
+    enable_yes   = False if (args.no_yes   or args.no_only) else None
+    enable_snipe = False if (args.no_snipe or args.no_only) else None
     no_threshold = args.no_threshold
-    if args.no_only and no_threshold is None:
-        no_threshold = 999.0
 
     if args.z_sweep:
         zscores = _parse_float_grid(args.z_values) if args.z_values else None

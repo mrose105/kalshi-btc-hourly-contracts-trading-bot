@@ -51,10 +51,19 @@ def main():
             root_holder["root"] = self
             self._is_root = True
 
+    # Which stop tier to fork on. The YES ladder closes with "stop_loss"; the NO
+    # ladder closes with "no_stop" (kalshi_btc_backtest.py, NO exit ladder). This
+    # script only ever knew the YES name, so pointed at the live book — which has
+    # run ENABLE_YES=False since the NO-only paper test — it forked nothing and
+    # printed a +0.00 null result. Follow whichever side is enabled.
+    STOP_REASON = "stop_loss" if B.C.ENABLE_YES else "no_stop"
+    WANT_NO     = not B.C.ENABLE_YES
+
     def patched_close(self, ticker, bid, reason, bar_ts):
-        if reason == "stop_loss" and getattr(self, "_is_root", False):
+        if reason == STOP_REASON and getattr(self, "_is_root", False):
             pos = self.positions.get(ticker)
-            if pos is not None and not pos.get("is_snipe") and not pos.get("is_no"):
+            if (pos is not None and not pos.get("is_snipe")
+                    and bool(pos.get("is_no")) == WANT_NO):
                 shp = B.BacktestPortfolio(capital=args.capital, use_kelly=True)
                 shp.positions[ticker] = dict(pos)
                 shp.positions[ticker]["_no_stop"] = True
@@ -64,8 +73,8 @@ def main():
                     "itm_entry": pos["contract"]["itm"], "count": pos["count"],
                     "portfolio": shp,
                 })
-        if reason == "stop_loss" and getattr(self, "_no_stop_active", None) is ticker:
-            return  # shadow's own stop_loss tier -- skip, let it ride
+        if reason == STOP_REASON and getattr(self, "_no_stop_active", None) is ticker:
+            return  # shadow's own stop tier -- skip, let it ride
         return orig_close(self, ticker, bid, reason, bar_ts)
 
     def patched_update(self, *a, **kw):
@@ -106,9 +115,9 @@ def main():
     B.BacktestPortfolio.manage_exits = orig_manage
 
     root = root_holder["root"]
-    real_stop_trades = {t["ticker"]: t for t in root.trades if t["reason"] == "stop_loss"}
+    real_stop_trades = {t["ticker"]: t for t in root.trades if t["reason"] == STOP_REASON}
 
-    print(f"\nReal stop_loss trades: {len(real_stop_trades)}  Shadows forked: {len(shadows)}")
+    print(f"\nReal {STOP_REASON} trades: {len(real_stop_trades)}  Shadows forked: {len(shadows)}")
 
     rows = []
     still_open = 0
