@@ -1326,3 +1326,55 @@ gradient observed twice. See #watchlist_entry_dip.
 
 n=88 and the CI includes zero. 0.30 means "0.65 never bound and the cheap end
 loses", not that 0.30 is optimal.
+
+## WING_ENABLED
+
+**True as of 2026-09-01 — PAPER OBSERVATION ONLY. This is not an edge claim.**
+
+The wing buys a YES leg one strike toward spot alongside each BOUNDARY_NO fill.
+It is enabled to watch how the second leg interacts with the live exit ladder —
+position slots, `MAX_POSITIONS`, strike clustering, cooldowns, and whether the
+two legs fight each other on exit. It must not be read as acting on the
+rationale in `wing.py`'s docstring, which is retracted.
+
+MEASURED NEGATIVE, twice. `wing_calibration.py`, 2026-09-01, resolving
+settlement from the quotes stream (the only source continuous through expiry)
+over 949 band-observations at BOUNDARY_NO-qualifying moments across 187
+independent expiries:
+
+    distance    implied   realized   YES edge   YES net (per-obs fees)
+    $0-100        0.259      0.263     +0.005                  -0.014
+    $100-200      0.112      0.046     -0.066                  -0.076
+
+    $0-100 clustered by expiry: mean -0.0276/$1, 95% CI [-0.0526, -0.0006]
+
+The original claim — $0-100 implied 0.326 against realized 0.416, a +7.8c
+underpricing — does NOT replicate. It was produced by resolving contracts from
+the last `universe` observation at ~T-5min, before 3b8459a let the recorder see
+the final six minutes. Same correction that took the companion ATM study from
+93% win / +99.8% ROC to 40% / -26.7%.
+
+The near band is priced almost exactly right: 0.259 implied against 0.263
+realized. There is no 7.8c to harvest, and after the taker fee the whole bucket
+is significantly negative.
+
+Directional split (does the band spot CAME FROM pay, per the mean-reversion
+thesis?) — none of the three cells is significant:
+
+    behind (came from)   n=328   mean -0.0210   CI [-0.0699, +0.0306]
+    in     (spot inside) n=250   mean +0.0036   CI [-0.0641, +0.0718]
+    ahead  (running to)  n=371   mean -0.0349   CI [-0.0859, +0.0208]
+
+Note `behind` prices at 0.234 and pays 0.244 — the reversion is already in the
+price, not mispriced. NOTE ALSO that this split classifies bands by the SIGN of
+the z-score, which is a proxy for "the band spot came from", not the thing
+itself. The spot-path version of that question is a separate, still-open test.
+
+WHAT WOULD TURN THIS INTO AN EDGE CLAIM: a positive, fee-adjusted, expiry-
+clustered interval that excludes zero, on the spot-path definition, out of
+sample. Until then this flag is an observation harness. Turn it off when the
+observation is over.
+
+Prior state: OFF since 2026-08-28 (`aa53649`), after being committed live by
+accident on the retracted analysis. Do not let that happen twice — this flag is
+now deliberately on, and the reason is above.

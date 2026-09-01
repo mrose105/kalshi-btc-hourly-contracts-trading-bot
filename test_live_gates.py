@@ -165,8 +165,13 @@ def test_we_never_fade_something_the_model_calls_a_coin_flip():
 def test_edge_gone_ratio_is_read_by_the_exit_path():
     src = open("kalshi_btc_bot/positions.py").read()
     assert "NO_EDGE_GONE_RATIO" in src
-    assert "overprice_r < NO_EDGE_GONE_RATIO" in src, (
-        "the edge_gone tier no longer compares against the configured ratio")
+    # Module-qualified ONLY. `from .config import NO_EDGE_GONE_RATIO` freezes
+    # the value at import, so a sweep setting config.NO_EDGE_GONE_RATIO silently
+    # no-ops — test_frozen_config.py caught exactly that here on 2026-09-01,
+    # after no_exit_replay.py's --edge-gone-ratio flag was found to do nothing.
+    assert "overprice_r < _C.NO_EDGE_GONE_RATIO" in src, (
+        "the edge_gone tier no longer compares against the configured ratio, "
+        "or reads it through a frozen import")
 
 
 def test_edge_gone_ratio_sits_above_parity():

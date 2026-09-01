@@ -166,22 +166,39 @@ def normalize_universe(row: dict, now: dt.datetime) -> list[dict]:
 
 def join_regimes(universe: list[dict], quotes: list[dict],
                  tolerance_secs: int) -> list[dict]:
-    """Attach the nearest contemporaneous regime snapshot to each raw universe row."""
+    """Attach the latest regime snapshot AT OR BEFORE each universe row.
+
+    AS-OF, never nearest. The previous version took whichever neighbour was
+    closer, which meant a snapshot from the FUTURE whenever one happened to be
+    nearer — measured 2026-08-30, that was 96.5% of 38,583 joins. The leak was
+    small on clean data (median 0.00s, max 0.75s: the recorder writes universe
+    and quotes within the same scan cycle) and a z-score computed over minutes
+    cannot move on 0.75s of extra price, which is why nothing visibly broke.
+
+    It was unbounded during a recording GAP, though, and gaps are routine here —
+    18.6 minutes on 2026-08-31 alone. Across a gap "nearest" can reach forward
+    by up to tolerance_secs of genuinely unknowable information, and
+    `zscore`/`regime`/`mom` from this join are what decide whether
+    find_boundary_no() fires. A signal selected on a regime that did not exist
+    yet is not a signal.
+
+    Rows with no snapshot at or before the tick, or one older than
+    tolerance_secs, are dropped rather than back-filled.
+    """
     regime_rows = [row for row in quotes if row.get("rg")]
     stamps = [dt.datetime.fromisoformat(row["t"]) for row in regime_rows]
     joined = []
     for row in universe:
         when = dt.datetime.fromisoformat(row["t"])
-        index = bisect.bisect_left(stamps, when)
-        best = None
-        for candidate in (index - 1, index):
-            if 0 <= candidate < len(stamps):
-                gap = abs((stamps[candidate] - when).total_seconds())
-                if best is None or gap < best[0]:
-                    best = (gap, regime_rows[candidate])
-        if best is None or best[0] > tolerance_secs:
+        # bisect_right - 1 is the last stamp <= when; a stamp exactly equal to
+        # the tick is contemporaneous, not future, so it is allowed.
+        index = bisect.bisect_right(stamps, when) - 1
+        if index < 0:
             continue
-        joined.append({**row, "rg": best[1]["rg"]})
+        age = (when - stamps[index]).total_seconds()
+        if age > tolerance_secs:
+            continue
+        joined.append({**row, "rg": regime_rows[index]["rg"]})
     return joined
 
 
