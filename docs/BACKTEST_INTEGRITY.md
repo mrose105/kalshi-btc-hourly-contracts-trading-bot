@@ -17,19 +17,34 @@ large factors, more than once — and each time it looked entirely plausible unt
 someone measured it. It catalogues every class of defect found so far, the
 evidence for each, and a checklist to run before quoting any figure.
 
-**Current status (2026-08-24): the backtest does not exercise the strategy that
-runs.** Under the live configuration it produces **zero** trades, because it
-generates no BOUNDARY_NO entries at all (§10). Every figure it reports comes
-from the YES and snipe lanes, which are switched off. That supersedes the older
-framing below in importance: the absolute return was never a forecast of live
-P&L, but the sharper problem is that it is not a measurement of the same
-strategy. Of the defects that remain when it *is* used as a simulator check,
-model-derived exit pricing (§3) still dominates.
+**Current status (2026-09-01): the backtest now runs the live strategy, and
+still must not be believed.** It produces 101 NO trades over 60 days at
++15.15%. The "zero trades" status that stood here since 2026-08-24 was a
+harness bug, not a gate that never cleared — the NO entry block sat under an
+argument about a *different* strategy that defaults to `None` (§10).
 
-The live strategy is measured instead by replaying recorded books against
-actual settlement — `boundary_no_quote_replay.py`, and the recorded-tick
-studies summarised in the README. Read a backtest number as a regression test
-on the simulator, nothing more.
+The reason not to believe it is §3. `no_edge_gone` fires **0 times in those 101
+trades** and 89 of 101 exits are hold-to-expiry, while live `edge_gone` is the
+dominant exit. The synthetic NO exit ask is built from the same DistModel that
+supplies `true_prob_curr`, so the overpricing ratio is structurally >= 1 and the
+tier is near-unreachable. The backtest is measuring "enter on BOUNDARY_NO and
+hold to expiry", which is not the strategy — the exits are where the design
+lives, and the synthetic path still cannot test them.
+
+**The two tools that can.** Entries: `boundary_no_quote_replay.py`, real quotes,
+held to settlement. Exits: `no_exit_replay.py`, which drives the bot's real
+`PositionManager` and `Portfolio` over recorded quotes and recorded book depth,
+filling by walking real resting size. Same 20 days, same strategy, three
+measurements:
+
+| | trades | return | edge_gone fires |
+|---|---|---|---|
+| synthetic backtest (60d) | 101 | +15.15% | 0 |
+| `no_exit_replay.py` (20d) | 50 | -0.68% | 38 |
+| live book (since 08-07) | 156 | -$14.18 | dominant |
+
+The replay lands on the live book and nowhere near the synthetic. Read a
+backtest number as a regression test on the simulator, nothing more.
 
 ---
 
@@ -38,19 +53,49 @@ on the simulator, nothing more.
 | Class | Status | Effect when present |
 |---|---|---|
 | 1. Lookahead bias | **fixed** (Jul 24) | inflated ~14x |
-| 2. Tautological exit tiers | **structural, cannot fix** | makes win rates meaningless |
-| 3. Model-derived exit pricing | **unfixed — root cause** | unbounded |
+| 2. Tautological exit tiers | **structural** (replay bypasses) | makes win rates meaningless |
+| 3. Model-derived exit pricing | **fixed for NO, Sep 1** (`no_exit_replay.py`); unfixed in the synthetic path | unbounded |
 | 4. Instrument mismatch | **fixed** (Jul 28) | 2.5x wrong contract width |
 | 5. Live/backtest parity | **fixed** (Jul 28) | attribution didn't transfer |
 | 6. Rolling window | inherent | ±5% run-to-run |
-| 7. Capacity constraint (size vs. real depth) | **modeled Aug 4** | flips the sign past ~$2-5K capital |
+| 7. Capacity constraint (size vs. real depth) | **re-measured Sep 1 on real depth** | flat to ~$10K; breaks at $20K |
 | 8. Synthetic posterior circularity | **fixed Aug 17** | synthetic prices became model evidence |
 | 9. Execution costs not charged | **fixed Aug 22** | ~2.5% per round trip, unmodelled |
-| 10. **Wrong strategy entirely** | **structural, open** | **measures a disabled lane** |
+| 10. Wrong strategy entirely | **harness bug fixed Sep 1**; synthetic path still holds-to-expiry | measured a disabled lane |
 
 ---
 
-## 10. The backtest measures a lane that does not trade — open
+## 10. The backtest measures a lane that does not trade — partially fixed Sep 1
+
+> **The "zero trades" diagnosis below was wrong, and the cause was a harness
+> bug, not a gate that never clears.** The entire NO entry block —
+> `find_boundary_no` included — sat under `if no_threshold is not None:`, and
+> `run_backtest` defaults that parameter to `None`. Any caller that did not pass
+> a *generic MISPRICE_NO* overpricing bar silently simulated **zero NO trades**.
+> One argument about one strategy switched off a different one. Worse,
+> `enable_yes`/`enable_snipe` defaulted to `True` while live runs both `False`,
+> so the default run measured a YES book the bot does not trade.
+>
+> Fixed 2026-09-01: the NO block is gated on `C.ENABLE_MISPRICE_NO` /
+> `C.ENABLE_BOUNDARY_NO` and the YES/SNIPE flags default to config, so the
+> backtest follows the bot unless a caller explicitly overrides. A 60-day run now
+> returns **101 NO trades, +15.15%, 84.2% win rate**.
+>
+> **Do not believe that +15.15%.** It is §3 in its purest form: `no_edge_gone`
+> fires **0 times in 101 trades** and 89 of 101 exits are hold-to-expiry, while
+> live `edge_gone` is the dominant exit. The synthetic NO exit ask is built from
+> the same DistModel that supplies `true_prob_curr`, making the overpricing ratio
+> structurally >= 1 and the tier close to unreachable. So the backtest still is
+> not measuring the strategy — it now measures "enter on BOUNDARY_NO and hold to
+> expiry". The same 20 days through `no_exit_replay.py` (real quotes, real depth)
+> return **-0.68%**, next to the live book's -$14.18 over 156 round trips.
+>
+> The lane is no longer silently empty. It is still not the live strategy until
+> §3 is closed for the synthetic path too — which is why `no_exit_replay.py`, not
+> the backtest, is now the reference for exits, as
+> `boundary_no_quote_replay.py` is for entries.
+
+### The original diagnosis
 
 The live configuration is `ENABLE_YES = False`, `ENABLE_SNIPE = False`, and the
 only strategy running is `BOUNDARY_NO`. A 60-day run under that exact config
@@ -295,7 +340,39 @@ inspection.
 
 ---
 
-## 7. Capacity constraint — modeled Aug 4, flips the sign at scale
+## 7. Capacity constraint — modeled Aug 4, superseded Sep 1
+
+> **SUPERSEDED 2026-09-01. The curve below describes the retired YES/Kelly
+> configuration, measured against a MODELLED impact penalty.** `no_exit_replay.py`
+> now measures capacity against recorded book depth, walking real resting size on
+> both legs, and gets a far flatter curve for the strategy the bot actually runs
+> (BOUNDARY_NO-only, `NO_TRADE_PCT = 0.02` flat sizing, no Kelly):
+>
+> | Capital | Entries | Return | | Capital | Entries | Return |
+> |---|---|---|---|---|---|---|
+> | $500 | 50 | -0.68% | | $5,000 | 47 | -0.93% |
+> | $1,000 | 48 | -0.76% | | $10,000 | 44 | -1.25% |
+> | $2,000 | 48 | -0.83% | | $20,000 | 13 | -2.84% |
+>
+> $500 to $10,000 is nearly flat — real depth absorbs 20x. The break is at
+> $20,000, and the failure mode is not worse fills but NO fills: `_walk_book`
+> cannot fill a ~500-contract order at the limit and rejects it, collapsing
+> entries to 13 (a thin survivor sample — win rate 53.8%, median book staleness
+> 69.5s — so treat -2.84% as directional only).
+>
+> The two curves are not comparable and the difference is not a contradiction:
+> different strategy (YES vs NO), different sizing (Kelly, 243-contract median,
+> vs flat 2%), different trade count (1,321 vs ~50 in 20 days), different exit
+> pricing (modelled vs recorded book). **What survives is the principle**: report
+> return as a function of capital, never as one number. What does not survive is
+> the specific claim that a few thousand dollars is the limit for the current
+> configuration. Capacity is not the binding constraint below ~$10k — see the
+> README capacity table and `docs/STATE.md` §3.
+>
+> Both curves share one blind spot: neither models our own order moving the book,
+> so both understate the constraint, increasingly so at size.
+
+### The original Aug 4 measurement (YES + Kelly)
 
 Neither `_exit_bid()` nor the entry sizing in `buy()`/`buy_no()` took position
 size into account at all. A 1-contract exit and a 1,000+-contract exit priced
@@ -367,7 +444,12 @@ Both need to hold for a number to be believed.
 
 0. **Check `no_trades` in the result JSON first.** If it is 0, the run measured
    the disabled YES/snipe lanes and says nothing about the live strategy (§10).
-   Nothing further on this list matters until this one passes.
+   Nothing further on this list matters until this one passes. Since 2026-09-01
+   the lane is gated on the bot's own `ENABLE_*` flags, so this should pass by
+   default — if it does not, a caller is overriding `enable_yes`/`enable_snipe`.
+0b. **Check `no_edge_gone` in the exit breakdown.** If it is 0 while the run has
+   NO trades, the exits were never exercised and the run measures hold-to-expiry,
+   not the live ladder (§3). Use `no_exit_replay.py` for any exit claim.
 1. **Does any tier report 100% win rate?** If yes, it is a profit-lock tier and
    its win rate is tautological. Check what fraction of total P&L it carries.
 2. **What prices the exit?** If it is the model rather than a recorded book, the

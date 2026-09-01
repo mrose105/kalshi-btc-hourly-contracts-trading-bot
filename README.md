@@ -285,11 +285,48 @@ corresponding synthetic scenario command is:
 PYTHONDONTWRITEBYTECODE=1 python3 kalshi_btc_backtest.py --days 60 --capital 500 --no-only
 ```
 
-There is still no single headline return — the strategy has a measured
-**capacity limit**, and which side of it you're on determines the sign of the
-result. Past roughly a few thousand dollars, Kelly sizing wants positions larger
-than Kalshi's real KXBTC book depth can absorb without severe exit slippage.
-Use capital sweeps before quoting scale-sensitive performance.
+There is still no single headline return, but **the capacity limit is not where
+the old curve put it, and capacity is not what is holding the strategy back.**
+
+Measured 2026-09-01 by `no_exit_replay.py` — the bot's real exit ladder driven
+over recorded quotes and recorded book depth, fills walking real resting size
+rather than a modelled impact curve. 20 days, 2026-08-12 to 08-31:
+
+| Capital | Entries | Return | Win rate |
+|---|---|---|---|
+| $500 | 50 | -0.68% | 76.0% |
+| $1,000 | 48 | -0.76% | 77.1% |
+| $2,000 | 48 | -0.83% | 77.1% |
+| $5,000 | 47 | -0.93% | 78.7% |
+| $10,000 | 44 | -1.25% | 79.5% |
+| $20,000 | 13 | -2.84% | 53.8% |
+
+$500 to $10,000 is nearly flat — real depth absorbs a 20x size increase, and
+entries only fall 50 -> 44. The break is at $20,000, and the failure mode is not
+worse fills but NO fills: `_walk_book` cannot fill a ~500-contract order at the
+limit and rejects it, so entries collapse to 13. Those 13 are a thin, biased
+survivor sample (win rate 53.8%, median book staleness 69.5s) — treat -2.84% as
+directionally right and numerically unreliable.
+
+**The honest reading: every scale from $500 to $10,000 lands between -0.68% and
+-1.25%, which is approximately zero, and the spread between them is inside the
+noise on ~50 trades.** Scaling capital does not fix a strategy with no edge; it
+multiplies a number near zero — see `docs/STATE.md` §3, "the model does not beat
+the Kalshi price", five independent tests.
+
+> **The older capacity curve (+412% at \$100 falling to -60% at \$10,000) is
+> superseded and describes a configuration the bot no longer runs.** It was
+> measured 2026-08-04 on the **YES** strategy with Kelly sizing — 1,321 trades,
+> 243-contract median position — against the *modelled* `_size_impact_penalty()`
+> rather than a recorded book. The bot is now BOUNDARY_NO-only with
+> `NO_TRADE_PCT = 0.02`, a flat 2% of portfolio with no Kelly, producing ~50
+> trades in 20 days. Different strategy, different sizing rule, different
+> pricing. It is kept in `docs/BACKTEST_INTEGRITY.md` §7 as the record of a real
+> constraint on that configuration, not as a live figure.
+
+Both curves understate the constraint in the same way: neither models our own
+order moving the book, so the true curve is worse everywhere, increasingly so at
+size. Use capital sweeps before quoting scale-sensitive performance.
 
 > **Earlier figures in this README were void and have been replaced.** Runs before 2026-08-07 simulated a 250-wide RANGE band on *every* contract, while **97% of real KXBTC hourly bands are 100 wide** — measured across ~700,000 `floor_strike`/`cap_strike` observations.
 >
