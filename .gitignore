@@ -98,3 +98,4 @@ montecarlo.png
 
 # Claude Code local state (worktrees, session scratch)
 .claude/worktrees/
+thesis_rows.npz

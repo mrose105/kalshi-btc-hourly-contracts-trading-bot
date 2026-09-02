@@ -197,8 +197,42 @@ LOOKBACKS = (120.0, 300.0, 600.0, 900.0, 1200.0)
 TIME_BUCKETS = ((0, 10), (10, 20), (20, 30), (30, 45), (45, 70))
 
 
-def snipe_sweep(ticks_iter, s_ts, s_sp, max_ask: float, settle_tol: float):
-    """Cheap bands that spot has just LEFT, across the whole hour.
+def snipe_sweep(ticks_iter, s_ts, s_sp, max_ask: float, settle_tol: float,
+                min_ask: float = 0.10):
+    """Cheap bands on the reversion side, across the whole hour. Two populations.
+
+    CAME-FROM (returned as `cells`, keyed by lookback x time-bucket) is the
+    thesis as literally stated: spot ACTUALLY occupied this band `lb` seconds
+    ago, left it, and the claim is reversion carries spot back in.
+
+    DIRECTIONAL (returned as `dir_cells`, keyed by time-bucket alone) is the
+    weaker, broader version: any non-occupied band on the side spot must travel
+    to in order to revert, whether or not spot was ever inside it. side_for()
+    calls that side "behind" — z>0 means spot is extended up, so reversion is
+    down, and the bands below spot are both where it came from and where it is
+    heading. The two coincide in direction and differ in membership.
+
+    Directional has no lookback axis because it does not consult the spot path,
+    which is the entire difference between them. It is a strict superset of
+    came-from: every came-from band is directional, most directional bands are
+    not came-from. If directional matches came-from, the spot path carries no
+    information and only the DIRECTION matters — which is a simpler and much
+    more robust rule. If came-from is materially better, the path is the signal
+    and the lookback becomes a real parameter that has to be fitted.
+
+    PRICE WINDOW [min_ask, max_ask]. The ceiling is the snipe premise: a band at
+    0.255 has not been written off. The FLOOR exists because the bottom of the
+    book is not a cheaper version of the same trade — sub-0.10 bands are the
+    ones far enough out that reversion cannot reach them inside the hour, and
+    the docstring's own calibration shows the $300+ bucket realizing 0.000. They
+    would otherwise dominate the population by count and drag every cell down
+    for a reason that has nothing to do with the thesis.
+
+    FEES ARE PER-OBSERVATION and computed from each band's own ask, never from a
+    cell's mean. Kalshi's taker fee is ceil(0.07*N*P*(1-P)) — a concave function
+    of price that peaks at the mid — so a 0.18 band pays ~1.0c and a 0.41 band
+    ~1.7c. Averaging asks first and taking one fee overstates the cost of a
+    cheap population, which is exactly the population under test here.
 
     Differs from the calibration above in three ways, all requested:
 
@@ -219,23 +253,28 @@ def snipe_sweep(ticks_iter, s_ts, s_sp, max_ask: float, settle_tol: float):
     overpriced" is the premise. Unconditioned, the ATM band was measured at
     -30.4% ROC, so the conditioning is the claim, not the band.
 
-    Returns cells keyed (lookback, time_bucket) -> list of (ask, won, expiry).
+    Returns (cells, dir_cells, qualifying, censored). `cells` is keyed
+    (lookback, time_bucket); `dir_cells` by time_bucket. Both hold
+    (ask, won, expiry) tuples.
     """
     cells: dict[tuple, list] = defaultdict(list)
+    dir_cells: dict[tuple, list] = defaultdict(list)
     seen: set[tuple] = set()
+    dir_seen: set[tuple] = set()
     censored_price = 0
     qualifying = 0
 
     for row, now, spot, regime in ticks_iter:
         if regime.get("regime") not in ("RANGING", "REVERTING"):
             continue
-        if abs(regime.get("zscore") or 0.0) < C.BOUNDARY_NO_ZSCORE_MIN:
+        z = regime.get("zscore") or 0.0
+        if abs(z) < C.BOUNDARY_NO_ZSCORE_MIN:
             continue
         qualifying += 1
         lad = normalize_universe(row, now)
         now_e = now.timestamp()
         for c in lad:
-            if float(c["ask"]) > max_ask:
+            if not (min_ask <= float(c["ask"]) <= max_ask):
                 censored_price += 1
                 continue
             mins = float(c["hours"]) * 60.0
@@ -256,6 +295,18 @@ def snipe_sweep(ticks_iter, s_ts, s_sp, max_ask: float, settle_tol: float):
                 continue                     # must have LEFT it
             won = 1.0 if lo <= ss < hi else 0.0
             exp = c["ticker"].rsplit("-", 1)[0]
+
+            # DIRECTIONAL: on the reversion side, path ignored. side_for()
+            # returns "behind" for the side spot came from, which is the same
+            # side reversion travels toward — z>0 is extended up, so both point
+            # down. No lookback axis: this deliberately does not look at where
+            # spot has been.
+            if side_for(c, float(spot), z) == "behind":
+                dkey = (c["ticker"], int(mins) // 2)
+                if dkey not in dir_seen:
+                    dir_seen.add(dkey)
+                    dir_cells[tb].append((float(c["ask"]), won, exp))
+
             for lb in LOOKBACKS:
                 past = band_spot_came_from(s_ts, s_sp, now_e, lb)
                 if past is None or not (lo <= past < hi):
@@ -265,7 +316,7 @@ def snipe_sweep(ticks_iter, s_ts, s_sp, max_ask: float, settle_tol: float):
                     continue
                 seen.add(key)
                 cells[(lb, tb)].append((float(c["ask"]), won, exp))
-    return cells, qualifying, censored_price
+    return cells, dir_cells, qualifying, censored_price
 
 
 def main() -> None:
@@ -285,9 +336,15 @@ def main() -> None:
                     help="sweep lookback x time-to-expiry for cheap came-from bands")
     ap.add_argument("--max-ask", type=float, default=0.21,
                     help="ask ceiling for the snipe sweep (default 0.21)")
+    ap.add_argument("--min-ask", type=float, default=0.10,
+                    help="ask floor for the snipe sweep (default 0.10). Below "
+                         "this the band is too far out for reversion to reach "
+                         "inside the hour, not a cheaper version of the trade.")
     args = ap.parse_args()
     if args.every < 1:
         ap.error("--every must be >= 1")
+    if not (0.0 <= args.min_ask < args.max_ask <= 1.0):
+        ap.error("--min-ask must be below --max-ask, both within [0, 1]")
 
     uni = daterange("universe", args.start, args.end)
     qs = daterange("quotes", args.start, args.end)
@@ -428,12 +485,13 @@ def main() -> None:
                     "regime": rg.get("r"), "direction": rg.get("d"), "vol": vol,
                     "zscore": rg.get("z") or 0.0, "mom": rg.get("m") or 0.0}
 
-        cells, qualifying, censored = snipe_sweep(
-            prepared(), s_ts, s_sp, args.max_ask, args.settle_tolerance)
-        print(f"\n  SNIPE SWEEP — bands spot has LEFT, ask <= {args.max_ask:.2f}, "
-              f"whole hour")
+        cells, dir_cells, qualifying, censored = snipe_sweep(
+            prepared(), s_ts, s_sp, args.max_ask, args.settle_tolerance,
+            args.min_ask)
+        print(f"\n  SNIPE SWEEP — reversion-side bands, ask in "
+              f"[{args.min_ask:.2f}, {args.max_ask:.2f}], whole hour")
         print(f"  regime-qualifying ticks: {qualifying:,}   "
-              f"band-observations censored by the ask ceiling: {censored:,}")
+              f"band-observations censored by the price window: {censored:,}")
         print(f"  REGIME conditioning kept (RANGING/REVERTING, |z| >= "
               f"{C.BOUNDARY_NO_ZSCORE_MIN}); hours gate dropped.\n")
         print(f"  {len(LOOKBACKS) * len(TIME_BUCKETS)} cells are swept — treat any "
@@ -476,6 +534,39 @@ def main() -> None:
                       f"mean {m:+.4f}  CI [{lo_:+.4f}, {hi_:+.4f}]  {v}")
         if not any_ci:
             print(f"    none reached MIN_CLUSTERS={MIN_CLUSTERS} independent expiries")
+
+        # DIRECTIONAL. One row, no lookback axis — the point of it is that it
+        # never consults the spot path. Read it against the came-from grid
+        # above: if this row matches the best came-from cells, the path adds
+        # nothing and the rule collapses to "buy the reversion side", which
+        # needs no fitted lookback and cannot overfit one.
+        print(f"\n  DIRECTIONAL — reversion-side bands, spot path IGNORED "
+              f"(no lookback axis)")
+        print(f"  {'window':<10}{'n':>7}{'expiries':>10}{'implied':>10}"
+              f"{'realized':>10}{'net/$1':>10}   95% CI (expiry-clustered)")
+        for tb in TIME_BUCKETS:
+            rows = dir_cells.get(tb) or []
+            label = f"{tb[0]}-{tb[1]}m"
+            if len(rows) < 20:
+                print(f"  {label:<10}{len(rows):>7}   (too few)")
+                continue
+            n = len(rows)
+            implied = sum(r[0] for r in rows) / n
+            realized = sum(r[1] for r in rows) / n
+            by_e: dict[str, list] = defaultdict(list)
+            for ask, won, exp in rows:
+                by_e[exp].append(won - ask - taker_fee(1, ask))
+            cm = [sum(v) / len(v) for v in by_e.values()]
+            m = sum(cm) / len(cm)
+            lo_, hi_ = percentile_bootstrap_interval(cm)
+            if lo_ is None:
+                ci = "(too few expiries)"
+            else:
+                v = ("POSITIVE" if lo_ > 0 else "NEGATIVE" if hi_ < 0
+                     else "INCLUDES ZERO")
+                ci = f"[{lo_:+.4f}, {hi_:+.4f}]  {v}"
+            print(f"  {label:<10}{n:>7}{len(by_e):>10}{implied:>10.3f}"
+                  f"{realized:>10.3f}{m:>+10.4f}   {ci}")
         return
 
     engine = SignalEngine(DistModel(), use_market_posterior=True)
