@@ -99,15 +99,49 @@ class DistModel:
         vol_h = max(_VOL_H_FLOOR, min(_VOL_H_CAP, vol_h))
         vol_t = vol_h * math.sqrt(hours)
 
-        # Regime-conditional drift (log-space)
+        # Regime-conditional drift (log-space). Coefficients live in config so
+        # they are sweepable; DRIFT_REVERTING_COEF defaults to 0.0 — OFF.
+        #
+        # WHY IT IS OFF. The reverting term was `-zscore * vol_t * 0.15`, a
+        # hardcoded mean-reversion prior that shifts the distribution AWAY from
+        # the direction of the move. BOUNDARY_NO buys NO on OTM bands in exactly
+        # that direction, so the term lowered true_prob on precisely the
+        # contracts the strategy trades.
+        #
+        # Measured 2026-09-01 over 17,613 band-observations at
+        # BOUNDARY_NO-qualifying moments, settlement resolved as-of close from
+        # the quotes stream (model_error_decomp.py):
+        #
+        #     side            n     model   no-drift  realized   ratio
+        #     continuation  6291   0.1196    0.1602    0.1725    1.44x under
+        #     occupied      3828   0.2559    0.2809    0.2503    0.98x
+        #     counter       7494   0.1910    0.1485    0.1536    0.80x over
+        #
+        # The term under-predicted continuation bands by 44% and over-predicted
+        # counter bands by 20%. In aggregate those cancel — the whole population
+        # reads 1.01x, which is why this survived review — but the strategy only
+        # ever buys the continuation side, so it took the full 44% error.
+        #
+        # Understated true_prob inflates ask/true_prob, which IS the entry gate
+        # (BOUNDARY_NO_OVERPRICING_MIN). So the signal was substantially
+        # manufactured by this term. On the 176 live NO round trips the model
+        # said those bands get hit 14.0% of the time; they were hit 27.3%.
+        #
+        # Disabling it fixes BOTH sides at once — continuation 1.44x -> 1.08x,
+        # counter 0.80x -> 1.03x — holding vol, tail shape and floors identical.
+        #
+        # EXPECT FEWER ENTRIES. Continuation true_prob rises ~34%, cutting the
+        # overpricing ratio ~25% against a 1.25 gate. That is the point: those
+        # entries were priced off the error, not off the market.
         r = regime["regime"]
         drift = 0.0
         if r == "TRENDING":
-            drift = regime["mom"] * 0.3
+            drift = regime["mom"] * getattr(_C, "DRIFT_TRENDING_COEF", 0.3)
         elif r == "REVERTING":
-            drift = -regime["zscore"] * vol_t * 0.15
+            drift = (-regime["zscore"] * vol_t
+                     * getattr(_C, "DRIFT_REVERTING_COEF", 0.0))
         elif r == "BREAKOUT":
-            drift = regime["mom"] * 0.5
+            drift = regime["mom"] * getattr(_C, "DRIFT_BREAKOUT_COEF", 0.5)
 
         # Real-measure GBM mean of log(S_T): E[log(S_T)] = log(S_0) + (μ − σ²/2)·T.
         # drift already carries the μ·T term; subtract the Itô convexity correction

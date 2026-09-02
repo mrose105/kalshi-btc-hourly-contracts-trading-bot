@@ -1378,3 +1378,59 @@ observation is over.
 Prior state: OFF since 2026-08-28 (`aa53649`), after being committed live by
 accident on the retracted analysis. Do not let that happen twice — this flag is
 now deliberately on, and the reason is above.
+
+## DRIFT_REVERTING_COEF
+
+**0.0 as of 2026-09-01 — the term is OFF.** Was a hardcoded 0.15 in
+`model.true_prob`.
+
+`drift = -zscore * vol_t * COEF` shifts the forecast distribution AWAY from the
+direction of the move — a mean-reversion prior. BOUNDARY_NO buys NO on OTM bands
+in exactly that direction, so the term lowered `true_prob` on precisely the
+contracts the strategy trades.
+
+Measured 2026-09-01 by `model_error_decomp.py` over 17,613 band-observations at
+BOUNDARY_NO-qualifying moments (RANGING/REVERTING, |z| >= 1.40), settlement
+resolved as-of close from the quotes stream:
+
+    side            n     model   no-drift  realized   ratio
+    continuation  6291   0.1196    0.1602    0.1725    1.44x under
+    occupied      3828   0.2559    0.2809    0.2503    0.98x
+    counter       7494   0.1910    0.1485    0.1536    0.80x over
+
+It under-predicted continuation bands by 44% and over-predicted counter bands by
+20%. THOSE CANCEL: the whole population reads 1.01x (model 0.1796 vs realized
+0.1813), which is why the error survived review for so long. But the strategy
+only ever buys the continuation side, so it took the full 44%.
+
+Disabling the term fixes both sides simultaneously, holding vol, tail shape and
+floors identical — continuation 1.44x -> 1.08x, counter 0.80x -> 1.03x. Nothing
+else in the model was touched, which is what makes this a clean attribution
+rather than a fit.
+
+WHY IT MATTERS BEYOND CALIBRATION. An understated `true_prob` inflates
+`ask / true_prob`, and that ratio IS the entry gate
+(`BOUNDARY_NO_OVERPRICING_MIN = 1.25`). At z=2.5 the term roughly HALVED
+true_prob (0.113 -> 0.0543), doubling the apparent overpricing. So the signal
+was substantially manufactured by the model's own prior, not observed in the
+market. `config.py`'s existing note on BOUNDARY_NO_OVERPRICING_MIN — "raising
+this selected for model error" — turns out to be true at the current value too.
+
+Corroborating: across 176 live NO round trips resolved against Kalshi
+settlement, the model said those bands get hit 14.0% of the time and they were
+hit 27.3% (1.95x). The market's own price said 22.6% — closer to the truth than
+our model by a wide margin.
+
+EXPECT FEWER ENTRIES. Continuation `true_prob` rises ~34%, cutting the
+overpricing ratio ~25% against a 1.25 gate, so many current signals will no
+longer clear it. That is the intended consequence: those entries were priced off
+the error.
+
+EVERY DOWNSTREAM NUMBER IS NOW STALE. The exit replay, the capacity curve, the
+60-day backtest and the wing calibration all consume `true_prob`. They were all
+measured under the biased version and must be re-run before being quoted.
+
+TRENDING (0.3) and BREAKOUT (0.5) are unchanged and UNMEASURED — TRENDING does
+not trade (find_boundary_no gates on RANGING/REVERTING) so there was no
+population to measure them on. They are config-gated now only so they are
+sweepable. Do not read their presence as validation.

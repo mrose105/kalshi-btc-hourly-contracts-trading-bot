@@ -279,6 +279,8 @@ def main() -> None:
                     help="max seconds a settlement spot may predate close")
     ap.add_argument("--lookback", type=float, default=600.0,
                     help="seconds back to locate the band spot came from")
+    ap.add_argument("--no-edge-map", action="store_true",
+                    help="NO net edge by regime x time-to-expiry, gated vs ungated")
     ap.add_argument("--snipe-sweep", action="store_true",
                     help="sweep lookback x time-to-expiry for cheap came-from bands")
     ap.add_argument("--max-ask", type=float, default=0.21,
@@ -315,6 +317,101 @@ def main() -> None:
             print(f"    {day}  {len(joined):,} ticks", flush=True)
             yield from joined
             del u, q, joined
+
+    if args.no_edge_map:
+        # IS THE MISPRICING HAPPENING WHERE WE ARE GATED OUT?
+        #
+        # BOUNDARY_NO fires only in RANGING/REVERTING, only at |z| >= 1.40, and
+        # only 4.8-18 minutes from expiry. Every one of those is a filter on WHEN,
+        # not on what. If the NO edge is real but lives outside them, the gates
+        # are not selecting the edge, they are missing it.
+        #
+        # Measures the NO side directly on bands the strategy targets by price
+        # (YES ask in [ASK_MIN, ASK_MAX]), with settlement as-of the close:
+        #     NO net = (1 - realized) - (1 - implied_bid) - fee
+        # and marks which cells the live gates would actually allow.
+        cells: dict[tuple, list] = defaultdict(list)
+        seen: set = set()
+        for row in day_ticks():
+            rg = row.get("rg") or {}
+            spot, vol = row.get("spot"), rg.get("v")
+            if spot is None or not vol:
+                continue
+            try:
+                now = dt.datetime.fromisoformat(row["t"])
+            except Exception:
+                continue
+            r = rg.get("r") or "?"
+            z = abs(rg.get("z") or 0.0)
+            for c in normalize_universe(row, now):
+                ask = float(c["ask"])
+                if not (C.BOUNDARY_NO_YES_ASK_MIN <= ask <= C.BOUNDARY_NO_YES_ASK_MAX):
+                    continue
+                mins = float(c["hours"]) * 60.0
+                tb = next((t for t in TIME_BUCKETS if t[0] <= mins < t[1]), None)
+                if tb is None:
+                    continue
+                try:
+                    close = dt.datetime.fromisoformat(
+                        str(c["close_time"]).replace("Z", "+00:00")).timestamp()
+                except Exception:
+                    continue
+                ss = spot_at(s_ts, s_sp, close, args.settle_tolerance)
+                if ss is None:
+                    continue
+                key = (c["ticker"], int(mins) // 2)
+                if key in seen:
+                    continue
+                seen.add(key)
+                lo, hi = float(c["low"]), float(c["high"])
+                yes_won = 1.0 if lo <= ss < hi else 0.0
+                no_cost = 1.0 - float(c["bid"])
+                no_net = (1.0 - yes_won) - no_cost - taker_fee(1, no_cost)
+                zb = "z>=1.4" if z >= C.BOUNDARY_NO_ZSCORE_MIN else "z<1.4"
+                cells[(r, zb, tb)].append((no_net, c["ticker"].rsplit("-", 1)[0]))
+
+        gate_lo = C.BOUNDARY_NO_HOURS_MIN * 60
+        gate_hi = C.BOUNDARY_NO_HOURS_MAX * 60
+        print(f"\n  NO NET EDGE per $1, by regime x |z| x time-to-expiry")
+        print(f"  bands priced in the strategy's own window "
+              f"(YES ask {C.BOUNDARY_NO_YES_ASK_MIN:.2f}-{C.BOUNDARY_NO_YES_ASK_MAX:.2f})")
+        print(f"  [G] = a cell the live gates ALLOW "
+              f"(RANGING/REVERTING, z>=1.4, {gate_lo:.0f}-{gate_hi:.0f} min)\n")
+        hdr = "  " + "regime / z".ljust(22) + "".join(
+            f"{lo}-{hi}m".rjust(15) for lo, hi in TIME_BUCKETS)
+        print(hdr)
+        for r in ("RANGING", "REVERTING", "TRENDING"):
+            for zb in ("z>=1.4", "z<1.4"):
+                line = "  " + f"{r} {zb}".ljust(22)
+                for tb in TIME_BUCKETS:
+                    rows = cells.get((r, zb, tb)) or []
+                    if len(rows) < 25:
+                        line += f"{'n=' + str(len(rows)):>15s}"
+                        continue
+                    m = sum(x[0] for x in rows) / len(rows)
+                    allowed = (r in ("RANGING", "REVERTING") and zb == "z>=1.4"
+                               and tb[0] >= gate_lo - 5 and tb[1] <= gate_hi + 12)
+                    line += f"{f'{m:+.3f}{"[G]" if allowed else ""}':>15s}"
+                print(line)
+
+        print("\n  cells with >= MIN_CLUSTERS expiries:")
+        for k in sorted(cells, key=lambda k: (k[0], k[1], k[2])):
+            rows = cells[k]
+            if len(rows) < 40:
+                continue
+            by_e: dict[str, list] = defaultdict(list)
+            for net, exp in rows:
+                by_e[exp].append(net)
+            cm = [sum(v) / len(v) for v in by_e.values()]
+            lo_, hi_ = percentile_bootstrap_interval(cm)
+            if lo_ is None:
+                continue
+            m = sum(cm) / len(cm)
+            v = ("POSITIVE" if lo_ > 0 else "NEGATIVE" if hi_ < 0 else "spans 0")
+            r, zb, tb = k
+            print(f"    {r:10s} {zb:7s} {tb[0]:>2}-{tb[1]:<3}m  n={len(rows):5d}  "
+                  f"{len(by_e):3d} exp  mean {m:+.4f}  CI [{lo_:+.4f}, {hi_:+.4f}]  {v}")
+        return
 
     if args.snipe_sweep:
         def prepared():

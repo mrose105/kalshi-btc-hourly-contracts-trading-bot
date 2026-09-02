@@ -35,6 +35,13 @@ MIN_VOLUME                  = 50
 # ---------------------------------------------------------------------------
 # Return distribution used by DistModel.true_prob
 # ---------------------------------------------------------------------------
+# ---------------------------------------------------------------------------
+# Model drift coefficients — log-space, per regime. Sweepable; see model.py.
+# ---------------------------------------------------------------------------
+DRIFT_REVERTING_COEF        = 0.0                              # OFF — it under-priced continuation bands 44%  → docs/CONFIG_RATIONALE.md#drift_reverting_coef
+DRIFT_TRENDING_COEF         = 0.3                              # unchanged, unmeasured (TRENDING does not trade)
+DRIFT_BREAKOUT_COEF         = 0.5                              # unchanged, unmeasured
+
 DIST_TAIL_DF                = 3.0                              # docs/CONFIG_RATIONALE.md#dist_tail_df
 MAX_ASK                     = 0.45
 MAX_SPREAD                  = 0.05                             # max 5c bid/ask spread
