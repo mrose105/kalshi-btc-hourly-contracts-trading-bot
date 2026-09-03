@@ -60,17 +60,94 @@ def tolerant_jsonl_gz(path: str) -> list[dict]:
     are unrecoverable, so dropping the day is not an option. Measured
     2026-08-31: recordings/*_2026-08-23 and the in-progress current day both hit
     this. Keep whatever decompressed cleanly and stop at the damage.
+
+    RESUMES past a corrupt member instead of stopping at it. The recorder opens
+    the file in append mode, so each session writes its own gzip MEMBER; one
+    damaged member used to cost every member after it, silently and with no
+    error. Measured 2026-09-02: universe_2026-09-01 is 5.86 MB and yielded
+    18,660 rows ending 12:05 UTC, against 37,444 rows to 23:54 for a comparable
+    full day — half the file discarded. 2026-09-02 lost ~90%, 2026-08-23 ~40%.
+
+    That loss is NOT random. Damage stops the reader partway through a day, so
+    what goes missing is always the BACK of the day — a systematic
+    time-of-day/time-to-expiry bias in the one axis these strategies turn on,
+    which is far worse than an equivalent amount of random missingness.
+
+    Scans for member boundaries by gzip magic and decompresses each
+    independently. The magic bytes can occur inside compressed data by chance,
+    so a candidate offset counts only if it actually decompresses to something.
+
+    Rows are returned sorted by timestamp: recovered members are not guaranteed
+    to be in file order, and several callers do as-of joins that assume sorted
+    input.
+    UNION of two passes, deduplicated. The sequential pass is what gzip.open
+    does and it is correct and fast on healthy files; the member-scan pass
+    recovers what lies beyond damage. Taking the union means the recovery path
+    can only ever ADD rows — an early version replaced the sequential read with
+    a scan and cut a healthy 37,444-row day to 123, because a false magic-byte
+    match inside compressed data split a good member mid-stream. A repair that
+    can silently delete data is worse than the truncation it fixes.
     """
-    rows = []
+    seen: set[bytes] = set()
+    lines: list[bytes] = []
+
+    def take(blob: bytes) -> None:
+        for ln in blob.split(b"\n"):
+            ln = ln.strip()
+            if ln and ln not in seen:
+                seen.add(ln)
+                lines.append(ln)
+
+    # Pass 1 — sequential, stopping at the damage (the original behaviour).
     try:
-        with gzip.open(path, "rt") as fh:
-            for line in fh:
-                try:
-                    rows.append(json.loads(line))
-                except (json.JSONDecodeError, TypeError):
-                    break
+        with gzip.open(path, "rb") as fh:
+            take(fh.read())
     except (EOFError, zlib.error, OSError):
-        pass
+        try:
+            with gzip.open(path, "rb") as fh:
+                buf = []
+                while True:
+                    try:
+                        chunk = fh.read(1 << 20)
+                    except (EOFError, zlib.error, OSError):
+                        break
+                    if not chunk:
+                        break
+                    buf.append(chunk)
+                take(b"".join(buf))
+        except (EOFError, zlib.error, OSError):
+            pass
+
+    # Pass 2 — resume past damaged members. Only reached when pass 1 could not
+    # read the file whole, so healthy files never pay for it.
+    with open(path, "rb") as fh:
+        data = fh.read()
+    pos, n = 0, len(data)
+    while 0 <= pos < n:
+        start = data.find(b"\x1f\x8b\x08", pos)
+        if start < 0:
+            break
+        dec = zlib.decompressobj(16 + zlib.MAX_WBITS)
+        out = []
+        try:
+            i, step = start, 1 << 20
+            while i < n and not dec.eof:
+                out.append(dec.decompress(data[i:i + step]))
+                i += step
+        except zlib.error:
+            pass                      # keep what decompressed before the damage
+        if out:
+            take(b"".join(out))
+        nxt = (n - len(dec.unused_data)) if dec.eof and dec.unused_data else -1
+        pos = nxt if nxt > start else start + 3
+
+    rows = []
+    for ln in lines:
+        try:
+            rows.append(json.loads(ln))
+        except (json.JSONDecodeError, TypeError, UnicodeDecodeError):
+            continue                  # a torn line, not a reason to drop the rest
+    rows.sort(key=lambda r: r.get("t", ""))
     return rows
 
 
